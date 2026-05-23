@@ -1,7 +1,7 @@
 "use client";
 
 import { useReducer, useCallback } from "react";
-import { motion, AnimatePresence, LayoutGroup } from "framer-motion";
+import { motion, AnimatePresence } from "framer-motion";
 import { X, ChevronLeft, ChevronRight } from "lucide-react";
 import type { Category } from "@/types";
 import { initialTryOnState, tryOnReducer } from "@/lib/tryOnReducer";
@@ -9,8 +9,8 @@ import { StepBar } from "./StepBar";
 import { PhotoGuide } from "./PhotoGuide";
 import { ImageUploader } from "./ImageUploader";
 import { ProductInput } from "./ProductInput";
-import { LoadingExperience } from "./LoadingExperience";
-import { CurtainReveal } from "./CurtainReveal";
+import { Stage } from "./Stage";
+import { LoadingScene } from "./LoadingScene";
 import { ResultView } from "./ResultView";
 import { PrivacyNote } from "./PrivacyNote";
 import { CategoryIcon } from "./CategoryIcon";
@@ -20,8 +20,6 @@ interface TryOnPanelProps {
   category: Category;
   onClose: () => void;
 }
-
-const LAUNCH_MORPH_ID = "launch-morph";
 
 export function TryOnPanel({ category, onClose }: TryOnPanelProps) {
   const [state, dispatch] = useReducer(tryOnReducer, initialTryOnState);
@@ -89,28 +87,15 @@ export function TryOnPanel({ category, onClose }: TryOnPanelProps) {
     }
   }, [state, category.id]);
 
-  const handleRevealComplete = useCallback(() => {
-    dispatch({ type: "SET_STATUS", status: "done" });
-  }, []);
-
-  const showResult =
-    state.status === "revealing" ||
-    state.status === "done" ||
-    (state.resultUrl && state.status !== "loading");
-
   const isLoading = state.status === "loading";
+  const showStage = isLoading || !!state.resultUrl;
 
   return (
-    <LayoutGroup id={`tryon-${category.id}`}>
+    <>
       <motion.div
         layoutId={`card-${category.id}`}
         initial={{ opacity: 0, y: 20 }}
-        animate={{
-          opacity: isLoading ? 0.35 : 1,
-          y: 0,
-          scale: isLoading ? 0.98 : 1,
-          filter: isLoading ? "blur(2px)" : "blur(0px)",
-        }}
+        animate={{ opacity: 1, y: 0 }}
         exit={{ opacity: 0, y: 20 }}
         transition={{ type: "spring", damping: 25, stiffness: 200 }}
         className="glass-card overflow-hidden p-6 sm:p-10"
@@ -141,19 +126,42 @@ export function TryOnPanel({ category, onClose }: TryOnPanelProps) {
           </button>
         </div>
 
-        {showResult && state.resultUrl ? (
-          <CurtainReveal onRevealComplete={handleRevealComplete}>
-            <ResultView
-              resultUrl={state.resultUrl}
-              onDownload={() => {}}
-              onRetry={() => dispatch({ type: "RESET_TRY_AGAIN" })}
-              onChangeProduct={() => dispatch({ type: "RESET_ARTICLES" })}
-              onClose={() => {
-                dispatch({ type: "RESET_ALL" });
-                onClose();
-              }}
-            />
-          </CurtainReveal>
+        {showStage ? (
+          <Stage>
+            <AnimatePresence mode="wait">
+              {isLoading ? (
+                <motion.div
+                  key="loading"
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0, scale: 0.98 }}
+                  transition={{ duration: 0.4 }}
+                >
+                  <LoadingScene category={category} />
+                </motion.div>
+              ) : state.resultUrl ? (
+                <motion.div
+                  key="result"
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  transition={{ duration: 0.5, ease: "easeOut" }}
+                >
+                  <ResultView
+                    resultUrl={state.resultUrl}
+                    onDownload={() => {}}
+                    onRetry={() => dispatch({ type: "RESET_TRY_AGAIN" })}
+                    onChangeProduct={() =>
+                      dispatch({ type: "RESET_ARTICLES" })
+                    }
+                    onClose={() => {
+                      dispatch({ type: "RESET_ALL" });
+                      onClose();
+                    }}
+                  />
+                </motion.div>
+              ) : null}
+            </AnimatePresence>
+          </Stage>
         ) : (
           <>
             <div className="mb-8">
@@ -273,11 +281,8 @@ export function TryOnPanel({ category, onClose }: TryOnPanelProps) {
                 )}
               </div>
 
-              {state.step === 3 && !isLoading && (
-                <LaunchButton
-                  layoutId={LAUNCH_MORPH_ID}
-                  onClick={validateAndSubmit}
-                />
+              {state.step === 3 && (
+                <LaunchButton onClick={validateAndSubmit} />
               )}
             </div>
 
@@ -287,16 +292,6 @@ export function TryOnPanel({ category, onClose }: TryOnPanelProps) {
           </>
         )}
       </motion.div>
-
-      <AnimatePresence>
-        {isLoading && (
-          <LoadingExperience
-            key="loading"
-            category={category}
-            layoutId={LAUNCH_MORPH_ID}
-          />
-        )}
-      </AnimatePresence>
-    </LayoutGroup>
+    </>
   );
 }

@@ -21,9 +21,10 @@ interface ResultViewProps {
   onClose: () => void;
 }
 
-// Wait for the curtain to open before starting the reveal sequence.
-const CURTAIN_DELAY_MS = 900;
-const REVEAL_DURATION_MS = 2200;
+// Curtains have already been open during loading; reveal starts almost
+// immediately when the result swaps in.
+const REVEAL_START_MS = 150;
+const REVEAL_DURATION_MS = 2000;
 
 type Phase = "waiting" | "revealing" | "done";
 
@@ -40,15 +41,15 @@ export function ResultView({
   useEffect(() => {
     const startTimer = setTimeout(
       () => setPhase("revealing"),
-      CURTAIN_DELAY_MS
+      REVEAL_START_MS
     );
     const burstTimer = setTimeout(
       () => setShowBurst(true),
-      CURTAIN_DELAY_MS + REVEAL_DURATION_MS - 200
+      REVEAL_START_MS + REVEAL_DURATION_MS - 200
     );
     const doneTimer = setTimeout(
       () => setPhase("done"),
-      CURTAIN_DELAY_MS + REVEAL_DURATION_MS
+      REVEAL_START_MS + REVEAL_DURATION_MS
     );
     return () => {
       clearTimeout(startTimer);

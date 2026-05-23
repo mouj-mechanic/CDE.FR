@@ -4,15 +4,13 @@ import { motion } from "framer-motion";
 import { Sparkles } from "lucide-react";
 
 interface LaunchButtonProps {
-  layoutId: string;
   onClick: () => void;
 }
 
-export function LaunchButton({ layoutId, onClick }: LaunchButtonProps) {
+export function LaunchButton({ onClick }: LaunchButtonProps) {
   return (
     <motion.button
       type="button"
-      layoutId={layoutId}
       onClick={onClick}
       className="relative w-full overflow-hidden rounded-2xl bg-bordeaux px-8 py-4 font-medium text-white shadow-soft transition-shadow hover:shadow-lifted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-bordeaux focus-visible:ring-offset-2 sm:w-auto"
       whileHover={{ scale: 1.02 }}

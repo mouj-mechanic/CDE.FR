@@ -69,7 +69,7 @@ export function tryOnReducer(
       return {
         ...state,
         resultUrl: action.resultUrl,
-        status: "revealing",
+        status: "done",
         error: null,
       };
     case "RESET_ARTICLES":
