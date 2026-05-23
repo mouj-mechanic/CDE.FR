@@ -10,11 +10,15 @@ import type { CategoryId, ProductItem } from "@/types";
 import { CategoryCard } from "./CategoryCard";
 import { TryOnPanel } from "./TryOnPanel";
 import { EmbedFlow } from "./EmbedFlow";
-import { generateId } from "@/lib/utils";
+import { generateId, resolveMediaUrl } from "@/lib/utils";
 
 export function EmbedExperience() {
   const searchParams = useSearchParams();
-  const productImage = searchParams.get("productImage");
+  const productImageRaw = searchParams.get("productImage");
+  const productImage = useMemo(
+    () => resolveMediaUrl(productImageRaw),
+    [productImageRaw]
+  );
   const productUrl = searchParams.get("productUrl");
   const productTitle = searchParams.get("productTitle");
 

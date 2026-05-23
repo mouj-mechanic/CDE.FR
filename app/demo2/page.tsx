@@ -1,21 +1,41 @@
 import Script from "next/script";
 import type { Metadata } from "next";
+import { headers } from "next/headers";
 
-const productImage = "/demo-watch-gold-green.svg";
+const PRODUCT_IMAGE_PATH = "/demo-watch-gold-green.svg";
 const productTitle = "Montre automatique « Émeraude » or & vert";
 
-export const metadata: Metadata = {
-  metadataBase: new URL("http://localhost:3000"),
-  title: "Démo PDP — Montre or & vert | CabinesDEssayage",
-  robots: { index: false, follow: false },
-  openGraph: {
-    type: "website",
-    title: productTitle,
-    images: [productImage],
-  },
-};
+async function getBaseUrl(): Promise<string> {
+  const hdrs = await headers();
+  const host =
+    hdrs.get("x-forwarded-host") || hdrs.get("host") || "localhost:3000";
+  const proto =
+    hdrs.get("x-forwarded-proto") ||
+    (host.includes("localhost") || host.startsWith("192.168.")
+      ? "http"
+      : "https");
+  return `${proto}://${host}`;
+}
 
-export default function Demo2Page() {
+export async function generateMetadata(): Promise<Metadata> {
+  const base = await getBaseUrl();
+  const imageUrl = `${base}${PRODUCT_IMAGE_PATH}`;
+  return {
+    metadataBase: new URL(base),
+    title: "Démo PDP — Montre or & vert | CabinesDEssayage",
+    robots: { index: false, follow: false },
+    openGraph: {
+      type: "website",
+      title: productTitle,
+      images: [{ url: imageUrl, width: 800, height: 1000, alt: productTitle }],
+    },
+  };
+}
+
+export default async function Demo2Page() {
+  const base = await getBaseUrl();
+  const productImageAbsolute = `${base}${PRODUCT_IMAGE_PATH}`;
+
   return (
     <div className="min-h-screen bg-[#0E1A14] text-[#E9EDE6]">
       <header className="border-b border-[#1F2D24]">
@@ -38,12 +58,16 @@ export default function Demo2Page() {
         </p>
 
         <div className="grid gap-12 lg:grid-cols-2">
-          <div className="overflow-hidden rounded-2xl bg-gradient-to-br from-[#1A2E22] via-[#0F1F17] to-[#0A1410] p-6 shadow-[0_30px_80px_rgba(0,0,0,0.5)] ring-1 ring-[#D4AF37]/30">
+          {/* Product image — explicit aspect-ratio so it never collapses to 0 height */}
+          <div className="relative aspect-[4/5] w-full overflow-hidden rounded-2xl bg-gradient-to-br from-[#1A2E22] via-[#0F1F17] to-[#0A1410] shadow-[0_30px_80px_rgba(0,0,0,0.5)] ring-1 ring-[#D4AF37]/30">
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
-              src={productImage}
+              src={PRODUCT_IMAGE_PATH}
               alt={productTitle}
-              className="h-full w-full rounded-xl object-cover"
+              width={800}
+              height={1000}
+              data-product-featured-image
+              className="absolute inset-0 h-full w-full object-contain p-4"
             />
           </div>
 
@@ -122,7 +146,6 @@ export default function Demo2Page() {
         </div>
       </main>
 
-      {/* Pas de data-app-url : embed.js utilise window.location.origin (localhost) */}
       <Script
         id="cabines-embed"
         src="/embed.js"
@@ -130,6 +153,7 @@ export default function Demo2Page() {
         data-label="Essayer virtuellement"
         data-pages="all"
         data-color="#1A4D33"
+        data-product-image={productImageAbsolute}
         strategy="afterInteractive"
       />
     </div>

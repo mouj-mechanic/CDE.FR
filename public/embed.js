@@ -58,8 +58,48 @@
     return false;
   }
 
+  /** Resolve relative / localhost image URLs to the current page origin (LAN-safe). */
+  function normalizeImageUrl(url) {
+    if (!url) return "";
+    var resolved = String(url).trim();
+
+    // Protocol-relative → current protocol
+    if (resolved.indexOf("//") === 0) {
+      resolved = window.location.protocol + resolved;
+    }
+    // Root-relative path → current origin
+    else if (resolved.charAt(0) === "/") {
+      resolved = window.location.origin + resolved;
+    }
+
+    // Rewrite localhost/127.0.0.1 to the host the user is actually visiting
+    // (e.g. phone opens 192.168.1.12:3000 but og:image says localhost:3000)
+    try {
+      var parsed = new URL(resolved);
+      var localHosts = ["localhost", "127.0.0.1"];
+      var curHost = window.location.hostname;
+      if (
+        localHosts.indexOf(parsed.hostname) !== -1 &&
+        localHosts.indexOf(curHost) === -1
+      ) {
+        parsed.hostname = curHost;
+        parsed.port = window.location.port;
+        parsed.protocol = window.location.protocol;
+        resolved = parsed.toString();
+      }
+    } catch (e) {}
+
+    return resolved;
+  }
+
   function detectProductInfo() {
     var info = { title: "", image: "", url: window.location.href };
+
+    // Explicit override from <script data-product-image="...">
+    if (ds.productImage) {
+      info.image = normalizeImageUrl(ds.productImage);
+    }
+
     try {
       if (window.ShopifyAnalytics && window.ShopifyAnalytics.meta &&
           window.ShopifyAnalytics.meta.product) {
@@ -73,25 +113,24 @@
       if (h1) info.title = h1.textContent.trim();
     }
 
-    var ogImage = document.querySelector('meta[property="og:image"]');
-    if (ogImage && ogImage.content) info.image = ogImage.content;
+    if (!info.image) {
+      var ogImage = document.querySelector('meta[property="og:image"]');
+      if (ogImage && ogImage.content) info.image = ogImage.content;
+    }
 
     if (!info.image) {
       var imgEl =
+        document.querySelector("[data-product-featured-image]") ||
         document.querySelector(".product__image img") ||
         document.querySelector(".product-single__photo img") ||
         document.querySelector(".product-gallery img") ||
-        document.querySelector("[data-product-featured-image]") ||
         document.querySelector("main img");
       if (imgEl) {
         info.image = imgEl.currentSrc || imgEl.src;
       }
     }
 
-    if (info.image && info.image.indexOf("//") === 0) {
-      info.image = "https:" + info.image;
-    }
-
+    info.image = normalizeImageUrl(info.image);
     return info;
   }
 

@@ -143,7 +143,13 @@ export function EmbedFlow({
           <img
             src={productImage}
             alt={productTitle ?? "Article"}
-            className="h-16 w-16 rounded-xl object-cover ring-1 ring-ink/10"
+            className="h-16 w-16 rounded-xl object-cover ring-1 ring-ink/10 bg-cream-dark"
+            onError={(e) => {
+              const img = e.currentTarget;
+              if (!img.src.endsWith("/demo-watch-gold-green.svg")) {
+                img.src = "/demo-watch-gold-green.svg";
+              }
+            }}
           />
           <div className="min-w-0 flex-1">
             <span className="inline-flex items-center gap-1 rounded-md bg-bordeaux/10 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-bordeaux">

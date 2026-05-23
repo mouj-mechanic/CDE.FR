@@ -55,3 +55,35 @@ export function isValidUrl(url: string): boolean {
 export function generateId(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
 }
+
+/** Resolve relative or localhost media URLs against the current browser origin (LAN-safe). */
+export function resolveMediaUrl(url: string | null | undefined): string | null {
+  if (!url) return null;
+  let resolved = url.trim();
+  if (typeof window === "undefined") return resolved;
+
+  if (resolved.startsWith("//")) {
+    resolved = `${window.location.protocol}${resolved}`;
+  } else if (resolved.startsWith("/")) {
+    resolved = `${window.location.origin}${resolved}`;
+  }
+
+  try {
+    const parsed = new URL(resolved);
+    const localHosts = ["localhost", "127.0.0.1"];
+    const curHost = window.location.hostname;
+    if (
+      localHosts.includes(parsed.hostname) &&
+      !localHosts.includes(curHost)
+    ) {
+      parsed.hostname = curHost;
+      parsed.port = window.location.port;
+      parsed.protocol = window.location.protocol;
+      return parsed.toString();
+    }
+  } catch {
+    return resolved;
+  }
+
+  return resolved;
+}
