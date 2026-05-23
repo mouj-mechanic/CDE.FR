@@ -15,7 +15,16 @@ const nextConfig = {
   async headers() {
     return [
       {
-        // Allow embedding /embed/* in iframes from any origin (Shopify, etc.)
+        // Allow embedding /embed in iframes from any origin (Shopify, etc.)
+        source: "/embed",
+        headers: [
+          {
+            key: "Content-Security-Policy",
+            value: "frame-ancestors *",
+          },
+        ],
+      },
+      {
         source: "/embed/:path*",
         headers: [
           {

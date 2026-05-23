@@ -4,37 +4,40 @@
  * Intégration Shopify (theme.liquid avant </body>) :
  *   <script src="https://cabinesdessayage.fr/embed.js"
  *           data-app-url="https://cabinesdessayage.fr"
- *           data-delay="3000"
+ *           data-delay="2500"
  *           data-label="Essayer virtuellement"
  *           async></script>
- *
- * Options data-* :
- *   data-app-url        URL absolue de l'app (https://cabinesdessayage.fr)
- *   data-delay          Délai (ms) avant apparition de la bulle (défaut 3000)
- *   data-label          Texte de la bulle (défaut "Essayer virtuellement")
- *   data-pages          Pages où afficher : "product" (défaut) | "all"
- *   data-position       "right" (défaut) | "left"
- *   data-color          Couleur de fond hex (défaut #7A1F2B)
  */
 (function () {
   if (window.__cabinesEmbedded) return;
   window.__cabinesEmbedded = true;
 
-  var currentScript =
-    document.currentScript ||
-    (function () {
-      var scripts = document.getElementsByTagName("script");
-      for (var i = scripts.length - 1; i >= 0; i--) {
-        if (scripts[i].src && scripts[i].src.indexOf("/embed.js") !== -1) {
-          return scripts[i];
-        }
+  function getConfigScript() {
+    var byId = document.getElementById("cabines-embed");
+    if (byId && byId.src && byId.src.indexOf("embed.js") !== -1) return byId;
+    if (document.currentScript) return document.currentScript;
+    var scripts = document.getElementsByTagName("script");
+    for (var i = scripts.length - 1; i >= 0; i--) {
+      if (scripts[i].src && scripts[i].src.indexOf("embed.js") !== -1) {
+        return scripts[i];
       }
-      return null;
-    })();
+    }
+    return null;
+  }
 
-  var ds = (currentScript && currentScript.dataset) || {};
-  var APP_URL =
-    (ds.appUrl || "https://cabinesdessayage.fr").replace(/\/$/, "");
+  function resolveAppUrl(ds) {
+    var fromAttr = ds.appUrl && String(ds.appUrl).trim();
+    if (fromAttr) return fromAttr.replace(/\/$/, "");
+    // Local dev / demo : même origine que la page marchande
+    if (typeof window !== "undefined" && window.location && window.location.origin) {
+      return window.location.origin.replace(/\/$/, "");
+    }
+    return "https://cabinesdessayage.fr";
+  }
+
+  var scriptEl = getConfigScript();
+  var ds = (scriptEl && scriptEl.dataset) || {};
+  var APP_URL = resolveAppUrl(ds);
   var DELAY = parseInt(ds.delay || "2500", 10);
   var LABEL = ds.label || "Essayer virtuellement";
   var PAGES = ds.pages || "product";
@@ -45,8 +48,11 @@
     if (PAGES === "all") return true;
     var path = window.location.pathname;
     if (path.indexOf("/products/") !== -1) return true;
-    if (window.ShopifyAnalytics && window.ShopifyAnalytics.meta &&
-        window.ShopifyAnalytics.meta.product) return true;
+    if (path.indexOf("/demo") !== -1) return true;
+    try {
+      if (window.ShopifyAnalytics && window.ShopifyAnalytics.meta &&
+          window.ShopifyAnalytics.meta.product) return true;
+    } catch (e) {}
     if (document.querySelector('meta[property="og:type"][content="product"]'))
       return true;
     return false;
@@ -68,15 +74,15 @@
     }
 
     var ogImage = document.querySelector('meta[property="og:image"]');
-    if (ogImage) info.image = ogImage.content;
+    if (ogImage && ogImage.content) info.image = ogImage.content;
 
     if (!info.image) {
       var imgEl =
         document.querySelector(".product__image img") ||
         document.querySelector(".product-single__photo img") ||
         document.querySelector(".product-gallery img") ||
-        document.querySelector('[data-product-featured-image]') ||
-        document.querySelector('.product__media img');
+        document.querySelector("[data-product-featured-image]") ||
+        document.querySelector("main img");
       if (imgEl) {
         info.image = imgEl.currentSrc || imgEl.src;
       }
@@ -98,6 +104,7 @@
       "@keyframes cab-pulse{0%{box-shadow:0 8px 24px rgba(122,31,43,.3),0 0 0 0 rgba(201,169,110,.5)}70%{box-shadow:0 8px 24px rgba(122,31,43,.3),0 0 0 14px rgba(201,169,110,0)}100%{box-shadow:0 8px 24px rgba(122,31,43,.3),0 0 0 0 rgba(201,169,110,0)}}",
       "@keyframes cab-fadein{from{opacity:0}to{opacity:1}}",
       "@keyframes cab-zoomin{from{transform:scale(.92);opacity:0}to{transform:scale(1);opacity:1}}",
+      "@keyframes cab-spin{to{transform:rotate(360deg)}}",
       ".cabines-bubble{position:fixed;bottom:24px;z-index:2147483646;display:flex;align-items:center;gap:10px;padding:14px 20px;border:none;border-radius:999px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;font-size:14px;font-weight:500;color:#fff;cursor:pointer;animation:cab-rise .55s cubic-bezier(.22,1,.36,1) both,cab-pulse 2.6s ease-out 1.2s 3;box-shadow:0 8px 24px rgba(122,31,43,.3);transition:transform .25s,box-shadow .25s}",
       ".cabines-bubble:hover{transform:translateY(-2px) scale(1.03);box-shadow:0 12px 32px rgba(122,31,43,.4)}",
       ".cabines-bubble svg{width:22px;height:22px;flex-shrink:0}",
@@ -105,6 +112,9 @@
       ".cabines-overlay{position:fixed;inset:0;z-index:2147483647;background:rgba(26,20,16,.65);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);display:flex;align-items:center;justify-content:center;padding:16px;animation:cab-fadein .3s ease-out}",
       ".cabines-modal{position:relative;width:100%;max-width:1080px;height:92vh;max-height:920px;background:#FBF7F2;border-radius:24px;overflow:hidden;box-shadow:0 28px 80px rgba(0,0,0,.45);animation:cab-zoomin .35s cubic-bezier(.22,1,.36,1) both}",
       ".cabines-iframe{width:100%;height:100%;border:none;display:block;background:#FBF7F2}",
+      ".cabines-loader{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;background:#FBF7F2;z-index:5}",
+      ".cabines-loader-spinner{width:44px;height:44px;border:3px solid rgba(122,31,43,.15);border-top-color:#7A1F2B;border-radius:50%;animation:cab-spin .8s linear infinite}",
+      ".cabines-loader p{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;font-size:14px;color:#4A4038;margin:0}",
       ".cabines-close{position:absolute;top:14px;right:14px;width:38px;height:38px;border:none;border-radius:50%;background:rgba(255,255,255,.95);color:#1A1410;font-size:18px;cursor:pointer;z-index:10;display:flex;align-items:center;justify-content:center;box-shadow:0 4px 16px rgba(0,0,0,.18);transition:transform .2s}",
       ".cabines-close:hover{transform:scale(1.1) rotate(90deg);background:#fff}",
       "@media (max-width:640px){.cabines-bubble .cab-label{display:none}.cabines-bubble{padding:14px;border-radius:50%}.cabines-overlay{padding:0}.cabines-modal{height:100vh;max-height:100vh;border-radius:0}.cabines-close{top:10px;right:10px}}"
@@ -143,8 +153,9 @@
     if (info.image) params.set("productImage", info.image);
     if (info.url) params.set("productUrl", info.url);
     if (info.title) params.set("productTitle", info.title);
-    var origin = window.location.origin;
-    if (origin) params.set("origin", origin);
+    if (window.location.origin) params.set("origin", window.location.origin);
+
+    var iframeSrc = APP_URL + "/embed?" + params.toString();
 
     var overlay = document.createElement("div");
     overlay.id = "cabines-overlay";
@@ -156,12 +167,40 @@
     var modal = document.createElement("div");
     modal.className = "cabines-modal";
 
+    var loader = document.createElement("div");
+    loader.className = "cabines-loader";
+    loader.id = "cabines-loader";
+    loader.innerHTML =
+      '<div class="cabines-loader-spinner" aria-hidden="true"></div>' +
+      "<p>Ouverture de la cabine d'essayage…</p>";
+
     var iframe = document.createElement("iframe");
     iframe.className = "cabines-iframe";
-    iframe.src = APP_URL + "/embed?" + params.toString();
+    iframe.src = iframeSrc;
     iframe.title = "Cabine d'essayage virtuelle";
     iframe.allow = "camera; clipboard-write; fullscreen";
     iframe.setAttribute("allowfullscreen", "");
+
+    iframe.addEventListener("load", function () {
+      var el = document.getElementById("cabines-loader");
+      if (el) {
+        el.style.opacity = "0";
+        el.style.transition = "opacity .3s";
+        setTimeout(function () {
+          if (el.parentNode) el.parentNode.removeChild(el);
+        }, 300);
+      }
+    });
+
+    iframe.addEventListener("error", function () {
+      var el = document.getElementById("cabines-loader");
+      if (el) {
+        el.innerHTML =
+          "<p style='color:#7A1F2B;text-align:center;padding:0 24px'>Impossible de charger la cabine.<br>Vérifiez l'URL : " +
+          escapeHtml(APP_URL) +
+          "</p>";
+      }
+    });
 
     var closeBtn = document.createElement("button");
     closeBtn.className = "cabines-close";
@@ -169,6 +208,7 @@
     closeBtn.innerHTML = "&times;";
     closeBtn.addEventListener("click", closeModal);
 
+    modal.appendChild(loader);
     modal.appendChild(iframe);
     modal.appendChild(closeBtn);
     overlay.appendChild(modal);
@@ -199,6 +239,16 @@
   function onMessage(e) {
     if (!e.data || typeof e.data !== "object") return;
     if (e.data.type === "cabines:close") closeModal();
+    if (e.data.type === "cabines:ready") {
+      var el = document.getElementById("cabines-loader");
+      if (el) {
+        el.style.opacity = "0";
+        el.style.transition = "opacity .3s";
+        setTimeout(function () {
+          if (el.parentNode) el.parentNode.removeChild(el);
+        }, 300);
+      }
+    }
   }
 
   function escapeHtml(s) {
@@ -211,12 +261,27 @@
 
   function lighten(hex, percent) {
     var h = hex.replace("#", "");
-    if (h.length === 3) h = h.split("").map(function (c) { return c + c; }).join("");
+    if (h.length === 3)
+      h = h
+        .split("")
+        .map(function (c) {
+          return c + c;
+        })
+        .join("");
     var num = parseInt(h, 16);
-    var r = Math.min(255, ((num >> 16) & 0xff) + Math.round(255 * (percent / 100)));
-    var g = Math.min(255, ((num >> 8) & 0xff) + Math.round(255 * (percent / 100)));
+    var r = Math.min(
+      255,
+      ((num >> 16) & 0xff) + Math.round(255 * (percent / 100))
+    );
+    var g = Math.min(
+      255,
+      ((num >> 8) & 0xff) + Math.round(255 * (percent / 100))
+    );
     var b = Math.min(255, (num & 0xff) + Math.round(255 * (percent / 100)));
-    return "#" + ((r << 16) | (g << 8) | b).toString(16).padStart(6, "0");
+    return (
+      "#" +
+      ((r << 16) | (g << 8) | b).toString(16).padStart(6, "0")
+    );
   }
 
   function init() {
@@ -231,7 +296,6 @@
     init();
   }
 
-  // Public API for advanced integrations
   window.CabinesDEssayage = {
     open: openModal,
     close: closeModal,
@@ -239,6 +303,9 @@
     hide: function () {
       var b = document.getElementById("cabines-bubble");
       if (b) b.remove();
-    }
+    },
+    getAppUrl: function () {
+      return APP_URL;
+    },
   };
 })();

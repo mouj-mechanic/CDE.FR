@@ -44,6 +44,12 @@ export function EmbedExperience() {
   }, []);
 
   useEffect(() => {
+    if (typeof window !== "undefined" && window.parent !== window) {
+      window.parent.postMessage({ type: "cabines:ready" }, "*");
+    }
+  }, []);
+
+  useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape" && !selectedId) sendClose();
     };
