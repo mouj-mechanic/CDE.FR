@@ -1,7 +1,7 @@
 "use client";
 
 import { useReducer, useCallback } from "react";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion, AnimatePresence, LayoutGroup } from "framer-motion";
 import { X, ChevronLeft, ChevronRight } from "lucide-react";
 import type { Category } from "@/types";
 import { initialTryOnState, tryOnReducer } from "@/lib/tryOnReducer";
@@ -20,6 +20,8 @@ interface TryOnPanelProps {
   category: Category;
   onClose: () => void;
 }
+
+const LAUNCH_MORPH_ID = "launch-morph";
 
 export function TryOnPanel({ category, onClose }: TryOnPanelProps) {
   const [state, dispatch] = useReducer(tryOnReducer, initialTryOnState);
@@ -96,12 +98,19 @@ export function TryOnPanel({ category, onClose }: TryOnPanelProps) {
     state.status === "done" ||
     (state.resultUrl && state.status !== "loading");
 
+  const isLoading = state.status === "loading";
+
   return (
-    <>
+    <LayoutGroup id={`tryon-${category.id}`}>
       <motion.div
         layoutId={`card-${category.id}`}
         initial={{ opacity: 0, y: 20 }}
-        animate={{ opacity: 1, y: 0 }}
+        animate={{
+          opacity: isLoading ? 0.35 : 1,
+          y: 0,
+          scale: isLoading ? 0.98 : 1,
+          filter: isLoading ? "blur(2px)" : "blur(0px)",
+        }}
         exit={{ opacity: 0, y: 20 }}
         transition={{ type: "spring", damping: 25, stiffness: 200 }}
         className="glass-card overflow-hidden p-6 sm:p-10"
@@ -264,9 +273,9 @@ export function TryOnPanel({ category, onClose }: TryOnPanelProps) {
                 )}
               </div>
 
-              {state.step === 3 && (
+              {state.step === 3 && !isLoading && (
                 <LaunchButton
-                  isLoading={state.status === "loading"}
+                  layoutId={LAUNCH_MORPH_ID}
                   onClick={validateAndSubmit}
                 />
               )}
@@ -280,10 +289,14 @@ export function TryOnPanel({ category, onClose }: TryOnPanelProps) {
       </motion.div>
 
       <AnimatePresence>
-        {state.status === "loading" && (
-          <LoadingExperience key="loading" category={category} />
+        {isLoading && (
+          <LoadingExperience
+            key="loading"
+            category={category}
+            layoutId={LAUNCH_MORPH_ID}
+          />
         )}
       </AnimatePresence>
-    </>
+    </LayoutGroup>
   );
 }
