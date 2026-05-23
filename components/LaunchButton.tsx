@@ -60,7 +60,14 @@ export function LaunchButton({ onClick }: LaunchButtonProps) {
       <span className="relative flex items-center justify-center gap-2">
         <motion.span
           animate={pressed ? { rotate: 360, scale: 1.15 } : { rotate: 0, scale: 1 }}
-          transition={{ duration: 0.6, ease: "easeOut" }}
+          transition={
+            pressed
+              ? {
+                  rotate: { duration: 1.2, repeat: Infinity, ease: "linear" },
+                  scale: { duration: 0.4, ease: "easeOut" },
+                }
+              : { duration: 0.4, ease: "easeOut" }
+          }
         >
           <Sparkles className="h-5 w-5" aria-hidden />
         </motion.span>

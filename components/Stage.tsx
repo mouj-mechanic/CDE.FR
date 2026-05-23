@@ -1,6 +1,7 @@
 "use client";
 
 import { motion } from "framer-motion";
+import { Sparkles } from "lucide-react";
 
 interface StageProps {
   children: React.ReactNode;
@@ -38,6 +39,27 @@ export function Stage({ children }: StageProps) {
         transition={{ duration: CURTAIN_DURATION_S, ease: [0.4, 0, 0.2, 1] }}
         aria-hidden
       />
+
+      {/* Transition spinner — visible from click until curtain fully opens */}
+      <motion.div
+        className="pointer-events-none absolute inset-0 z-30 flex items-center justify-center"
+        initial={{ opacity: 1 }}
+        animate={{ opacity: 0 }}
+        transition={{
+          duration: 0.5,
+          delay: CURTAIN_DURATION_S * 0.85,
+          ease: "easeOut",
+        }}
+        aria-hidden
+      >
+        <motion.div
+          className="flex items-center justify-center rounded-full bg-bordeaux/85 p-4 shadow-glow backdrop-blur-sm"
+          animate={{ rotate: 360 }}
+          transition={{ duration: 1.4, repeat: Infinity, ease: "linear" }}
+        >
+          <Sparkles className="h-7 w-7 text-gold-light" />
+        </motion.div>
+      </motion.div>
     </div>
   );
 }
