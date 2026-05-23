@@ -3,11 +3,19 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AnimatePresence, LayoutGroup } from "framer-motion";
 import { CATEGORIES } from "@/lib/categories";
-import type { Category, CategoryId } from "@/types";
+import type { Category, CategoryId, ProductItem } from "@/types";
 import { CategoryCard } from "./CategoryCard";
 import { TryOnPanel } from "./TryOnPanel";
 
-export function CategoryGrid() {
+interface CategoryGridProps {
+  initialProducts?: ProductItem[];
+  onAfterClose?: () => void;
+}
+
+export function CategoryGrid({
+  initialProducts,
+  onAfterClose,
+}: CategoryGridProps = {}) {
   const [selectedId, setSelectedId] = useState<CategoryId | null>(null);
   const panelRef = useRef<HTMLDivElement>(null);
 
@@ -21,7 +29,8 @@ export function CategoryGrid() {
 
   const handleClose = useCallback(() => {
     setSelectedId(null);
-  }, []);
+    if (onAfterClose) onAfterClose();
+  }, [onAfterClose]);
 
   useEffect(() => {
     if (selectedId && panelRef.current) {
@@ -56,6 +65,7 @@ export function CategoryGrid() {
               key={selectedId}
               category={selectedCategory}
               onClose={handleClose}
+              initialProducts={initialProducts}
             />
           </div>
         )}

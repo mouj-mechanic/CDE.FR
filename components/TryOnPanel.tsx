@@ -1,9 +1,9 @@
 "use client";
 
-import { useReducer, useCallback } from "react";
+import { useReducer, useCallback, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { X, ChevronLeft, ChevronRight } from "lucide-react";
-import type { Category } from "@/types";
+import type { Category, ProductItem } from "@/types";
 import { initialTryOnState, tryOnReducer } from "@/lib/tryOnReducer";
 import { StepBar } from "./StepBar";
 import { PhotoGuide } from "./PhotoGuide";
@@ -19,10 +19,24 @@ import { LaunchButton } from "./LaunchButton";
 interface TryOnPanelProps {
   category: Category;
   onClose: () => void;
+  initialProducts?: ProductItem[];
 }
 
-export function TryOnPanel({ category, onClose }: TryOnPanelProps) {
+export function TryOnPanel({
+  category,
+  onClose,
+  initialProducts,
+}: TryOnPanelProps) {
   const [state, dispatch] = useReducer(tryOnReducer, initialTryOnState);
+
+  useEffect(() => {
+    if (initialProducts && initialProducts.length > 0) {
+      initialProducts.forEach((product) => {
+        dispatch({ type: "ADD_PRODUCT", product });
+      });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const validateAndSubmit = useCallback(async () => {
     if (!state.userImage) {

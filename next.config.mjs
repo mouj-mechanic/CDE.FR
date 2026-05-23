@@ -7,7 +7,33 @@ const nextConfig = {
       { protocol: "https", hostname: "v2.fal.media" },
       { protocol: "https", hostname: "v3.fal.media" },
       { protocol: "https", hostname: "*.fal.media" },
+      { protocol: "https", hostname: "**.shopify.com" },
+      { protocol: "https", hostname: "**.shopifycdn.com" },
+      { protocol: "https", hostname: "cdn.shopify.com" },
     ],
+  },
+  async headers() {
+    return [
+      {
+        // Allow embedding /embed/* in iframes from any origin (Shopify, etc.)
+        source: "/embed/:path*",
+        headers: [
+          {
+            key: "Content-Security-Policy",
+            value: "frame-ancestors *",
+          },
+        ],
+      },
+      {
+        // Embed loader script — public, cached briefly, CORS open
+        source: "/embed.js",
+        headers: [
+          { key: "Access-Control-Allow-Origin", value: "*" },
+          { key: "Cache-Control", value: "public, max-age=300" },
+          { key: "Content-Type", value: "application/javascript; charset=utf-8" },
+        ],
+      },
+    ];
   },
 };
 

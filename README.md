@@ -13,6 +13,7 @@ MVP d'une **cabine d'essayage virtuelle** sans compte utilisateur. Importez votr
 - Téléchargement du résultat, réessayer, changer d'article
 - API `/api/try-on` avec mode mock (4–6 s)
 - Architecture prête pour brancher un provider IA réel
+- **Widget embarquable** (bulle de chat) intégrable sur n'importe quelle boutique Shopify ou site marchand
 
 ## Stack technique
 
@@ -103,6 +104,10 @@ Remplacez `mock-result.svg` par un `mock-result.jpg` réaliste si vous préfére
 app/
   api/try-on/route.ts      # API essayage (mock + provider IA)
   api/download/route.ts    # Proxy CORS pour télécharger l'image résultat
+  embed/                   # Mode iframe pour Shopify et autres boutiques
+    layout.tsx
+    page.tsx
+  demo/page.tsx            # Fausse PDP Shopify pour tester l'embed
   globals.css
   layout.tsx
   page.tsx
@@ -128,7 +133,59 @@ types/
   index.ts
 public/
   mock-result.svg
+  embed.js                 # Widget embarquable (bulle Shopify) — vanilla JS
 ```
+
+## Intégration Shopify (widget embarquable)
+
+Une **bulle de chat flottante** peut être ajoutée à n'importe quelle boutique pour proposer l'essayage virtuel directement sur la page produit (PDP).
+
+### Installation rapide (2 min)
+
+1. Dans l'admin Shopify : **Boutique en ligne → Thèmes → Modifier le code**
+2. Ouvrir `theme.liquid`
+3. Coller juste avant `</body>` :
+
+```html
+<script src="https://cabinesdessayage.fr/embed.js"
+        data-app-url="https://cabinesdessayage.fr"
+        data-delay="2500"
+        data-label="Essayer virtuellement"
+        async></script>
+```
+
+4. Sauvegarder. Visiter une fiche produit — la bulle bordeaux apparaît en bas à droite après 2,5 s.
+
+### Fonctionnement
+
+- La bulle ne s'affiche **que sur les pages produit** (détecté via `/products/*` et `ShopifyAnalytics.meta.product`).
+- Au clic : ouverture d'un **iframe modal plein écran** (escape, croix, clic-extérieur pour fermer).
+- L'image et le titre du produit sont **détectés automatiquement** depuis la PDP et pré-remplis comme article à essayer.
+- L'utilisateur n'a plus qu'à : choisir la zone (chapeau, montre, etc.) → uploader sa photo → générer.
+
+### Options de configuration
+
+| Attribut | Défaut | Description |
+|---|---|---|
+| `data-app-url` | `https://cabinesdessayage.fr` | URL de votre instance déployée |
+| `data-delay` | `2500` | Délai avant apparition de la bulle (ms) |
+| `data-label` | `Essayer virtuellement` | Texte de la bulle |
+| `data-pages` | `product` | `product` (PDP uniquement) ou `all` (toutes pages) |
+| `data-position` | `right` | `right` ou `left` |
+| `data-color` | `#7A1F2B` | Couleur de fond bordeaux par défaut |
+
+### API JavaScript
+
+```js
+window.CabinesDEssayage.open();   // Ouvre la cabine programmatiquement
+window.CabinesDEssayage.close();  // Ferme la cabine
+window.CabinesDEssayage.show();   // Affiche la bulle
+window.CabinesDEssayage.hide();   // Cache la bulle
+```
+
+### Tester l'intégration localement
+
+Une fausse boutique Shopify est servie sur **http://localhost:3000/demo** pour valider l'embed sans déployer.
 
 ## Limites du MVP
 
