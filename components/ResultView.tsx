@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import Image from "next/image";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Download,
@@ -12,6 +11,8 @@ import {
 } from "lucide-react";
 import { PrivacyNote } from "./PrivacyNote";
 import { SparkleBurst } from "./SparkleBurst";
+import { ShareMenu } from "./ShareMenu";
+import { MOCK_FALLBACK } from "@/lib/mockResults";
 
 interface ResultViewProps {
   resultUrl: string;
@@ -37,6 +38,11 @@ export function ResultView({
 }: ResultViewProps) {
   const [phase, setPhase] = useState<Phase>("waiting");
   const [showBurst, setShowBurst] = useState(false);
+  const [imgSrc, setImgSrc] = useState(resultUrl);
+
+  useEffect(() => {
+    setImgSrc(resultUrl);
+  }, [resultUrl]);
 
   useEffect(() => {
     const startTimer = setTimeout(
@@ -59,13 +65,13 @@ export function ResultView({
   }, []);
 
   const handleDownload = useCallback(async () => {
-    const isExternal = /^https?:\/\//.test(resultUrl);
+    const isExternal = /^https?:\/\//.test(imgSrc);
     const downloadHref = isExternal
-      ? `/api/download?url=${encodeURIComponent(resultUrl)}`
-      : resultUrl;
+      ? `/api/download?url=${encodeURIComponent(imgSrc)}`
+      : imgSrc;
     const ext = (() => {
-      const m = resultUrl.match(/\.(jpe?g|png|webp|svg)(\?|$)/i);
-      return m ? m[1].toLowerCase() : "png";
+      const m = imgSrc.match(/\.(jpe?g|png|webp|svg)(\?|$)/i);
+      return m ? m[1].toLowerCase() : "jpg";
     })();
     try {
       const response = await fetch(downloadHref);
@@ -80,11 +86,9 @@ export function ResultView({
       URL.revokeObjectURL(url);
       onDownload();
     } catch {
-      window.open(resultUrl, "_blank");
+      window.open(imgSrc, "_blank");
     }
-  }, [resultUrl, onDownload]);
-
-  const isSvg = /\.svg(\?|$)/i.test(resultUrl);
+  }, [imgSrc, onDownload]);
   const isWaiting = phase === "waiting";
   const isRevealing = phase === "revealing";
   const showProgressUI = isWaiting || isRevealing;
@@ -153,23 +157,25 @@ export function ResultView({
             transition={{ duration: 1.4, ease: [0.22, 1, 0.36, 1] }}
             className="relative"
           >
-            {isSvg ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
-                src={resultUrl}
-                alt="Résultat de votre essayage virtuel"
-                className="w-full object-contain"
-              />
-            ) : (
-              <Image
-                src={resultUrl}
-                alt="Résultat de votre essayage virtuel"
-                width={600}
-                height={800}
-                className="w-full object-contain"
-                unoptimized
-              />
-            )}
+            {/* Native <img> with onError fallback so the result is never empty,
+                even if the external mock CDN is unreachable. */}
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={imgSrc}
+              alt="Résultat de votre essayage virtuel"
+              width={600}
+              height={800}
+              loading="eager"
+              className="block w-full object-contain"
+              onError={() => {
+                if (imgSrc !== MOCK_FALLBACK) setImgSrc(MOCK_FALLBACK);
+              }}
+            />
+            {/* Skeleton in case the image is still resolving */}
+            <div
+              className="pointer-events-none absolute inset-0 -z-10 animate-pulse bg-gradient-to-br from-cream-dark via-cream to-cream-dark"
+              aria-hidden
+            />
           </motion.div>
 
           {/* Scan line during reveal */}
@@ -267,6 +273,7 @@ export function ResultView({
               <Download className="h-5 w-5" aria-hidden />
               Télécharger l&apos;image
             </button>
+            <ShareMenu resultUrl={imgSrc} />
             <button type="button" onClick={onRetry} className="btn-secondary">
               <RefreshCw className="h-5 w-5" aria-hidden />
               Réessayer

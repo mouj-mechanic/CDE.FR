@@ -6,6 +6,9 @@ const ALLOWED_HOSTS = [
   "fal.media",
   "v2.fal.media",
   "v3.fal.media",
+  "picsum.photos",
+  "fastly.picsum.photos",
+  "images.unsplash.com",
 ];
 
 export async function GET(request: NextRequest) {
@@ -38,7 +41,7 @@ export async function GET(request: NextRequest) {
     );
   }
 
-  const upstream = await fetch(parsed.toString());
+  const upstream = await fetch(parsed.toString(), { redirect: "follow" });
   if (!upstream.ok || !upstream.body) {
     return NextResponse.json(
       { error: "Impossible de récupérer le fichier." },
