@@ -50,6 +50,8 @@ export interface ProductItem {
   value: string;
   file?: File;
   previewUrl?: string;
+  source?: "user" | "shopify";
+  title?: string;
 }
 
 export interface TryOnRequest {

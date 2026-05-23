@@ -34,6 +34,8 @@ export function TryOnPanel({
       initialProducts.forEach((product) => {
         dispatch({ type: "ADD_PRODUCT", product });
       });
+      // Skip directly to the user photo step since the article is already filled
+      dispatch({ type: "SET_STEP", step: 2 });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);

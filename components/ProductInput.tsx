@@ -3,7 +3,7 @@
 import { useCallback, useState } from "react";
 import { useDropzone } from "react-dropzone";
 import { AnimatePresence, motion } from "framer-motion";
-import { Link2, ImagePlus, Plus, Trash2 } from "lucide-react";
+import { Link2, ImagePlus, Plus, Trash2, Store } from "lucide-react";
 import type { Category, ProductItem } from "@/types";
 import { generateId, isValidUrl, validateImageFile } from "@/lib/utils";
 
@@ -160,44 +160,68 @@ export function ProductInput({
       {products.length > 0 && (
         <ul className="space-y-2" role="list" aria-label="Articles ajoutés">
           <AnimatePresence>
-            {products.map((product) => (
-              <motion.li
-                key={product.id}
-                initial={{ opacity: 0, height: 0 }}
-                animate={{ opacity: 1, height: "auto" }}
-                exit={{ opacity: 0, height: 0 }}
-                className="flex items-center gap-3 rounded-xl border border-ink/10 bg-white p-3 shadow-soft"
-              >
-                {product.type === "image" && product.previewUrl ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img
-                    src={product.previewUrl}
-                    alt=""
-                    className="h-12 w-12 rounded-lg object-cover"
-                  />
-                ) : (
-                  <div className="flex h-12 w-12 items-center justify-center rounded-lg bg-cream-dark">
-                    <Link2 className="h-5 w-5 text-bordeaux" />
-                  </div>
-                )}
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm font-medium text-ink">
-                    {product.type === "url" ? "Lien produit" : "Image produit"}
-                  </p>
-                  <p className="truncate text-xs text-ink-muted">
-                    {product.value}
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => onRemove(product.id)}
-                  className="btn-ghost p-2 text-bordeaux"
-                  aria-label={`Supprimer ${product.value}`}
+            {products.map((product) => {
+              const fromShopify = product.source === "shopify";
+              const hasPreview = !!product.previewUrl;
+              const label = fromShopify
+                ? product.title ?? "Article de la boutique"
+                : product.type === "url"
+                  ? "Lien produit"
+                  : "Image produit";
+              const subtitle = fromShopify
+                ? "Pré-rempli depuis la boutique"
+                : product.value;
+              return (
+                <motion.li
+                  key={product.id}
+                  initial={{ opacity: 0, height: 0 }}
+                  animate={{ opacity: 1, height: "auto" }}
+                  exit={{ opacity: 0, height: 0 }}
+                  className={`flex items-center gap-3 rounded-xl border p-3 shadow-soft ${
+                    fromShopify
+                      ? "border-gold/40 bg-gradient-to-r from-gold/5 to-transparent"
+                      : "border-ink/10 bg-white"
+                  }`}
                 >
-                  <Trash2 className="h-4 w-4" />
-                </button>
-              </motion.li>
-            ))}
+                  {hasPreview ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={product.previewUrl}
+                      alt=""
+                      className="h-14 w-14 rounded-lg object-cover ring-1 ring-ink/5"
+                    />
+                  ) : (
+                    <div className="flex h-14 w-14 items-center justify-center rounded-lg bg-cream-dark">
+                      <Link2 className="h-5 w-5 text-bordeaux" />
+                    </div>
+                  )}
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
+                      <p className="truncate text-sm font-medium text-ink">
+                        {label}
+                      </p>
+                      {fromShopify && (
+                        <span className="inline-flex shrink-0 items-center gap-1 rounded-md bg-gold/20 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-bordeaux">
+                          <Store className="h-3 w-3" aria-hidden />
+                          Boutique
+                        </span>
+                      )}
+                    </div>
+                    <p className="truncate text-xs text-ink-muted">
+                      {subtitle}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => onRemove(product.id)}
+                    className="btn-ghost p-2 text-bordeaux"
+                    aria-label={`Supprimer ${product.value}`}
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </button>
+                </motion.li>
+              );
+            })}
           </AnimatePresence>
         </ul>
       )}

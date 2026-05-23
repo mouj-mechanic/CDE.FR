@@ -25,17 +25,13 @@ export function EmbedExperience() {
         id: generateId(),
         type: "url",
         value: productImage,
-      });
-    }
-    if (productUrl && productUrl !== productImage) {
-      items.push({
-        id: generateId(),
-        type: "url",
-        value: productUrl,
+        previewUrl: productImage,
+        source: "shopify",
+        title: productTitle ?? undefined,
       });
     }
     return items;
-  }, [productImage, productUrl]);
+  }, [productImage, productTitle]);
 
   const sendClose = useCallback(() => {
     if (typeof window !== "undefined" && window.parent !== window) {
@@ -65,36 +61,49 @@ export function EmbedExperience() {
     <div className="min-h-screen bg-gradient-to-b from-cream to-cream-dark/40 px-4 py-8 sm:px-6 sm:py-10">
       <div className="mx-auto max-w-5xl">
         {/* Embed header */}
-        <div className="mb-8 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <p className="font-display text-2xl font-semibold text-bordeaux sm:text-3xl">
-              Cabine d&apos;essayage virtuelle
-            </p>
-            <p className="text-sm text-ink-muted">
-              {productTitle
-                ? `Article : ${productTitle}`
-                : "Essayez avant d'acheter, instantanément."}
-            </p>
+        <div className="mb-8">
+          <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-gold">
+            <Sparkles className="h-3.5 w-3.5" aria-hidden />
+            Cabine d&apos;essayage virtuelle
           </div>
-          {productImage && !selectedId && (
-            <div className="flex items-center gap-3 rounded-2xl border border-ink/10 bg-white p-3 shadow-soft">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src={productImage}
-                alt={productTitle ?? "Article"}
-                className="h-12 w-12 rounded-lg object-cover"
-              />
-              <div className="text-left">
-                <p className="text-xs font-medium text-ink">
-                  Article pré-rempli
-                </p>
-                <p className="text-xs text-ink-muted">
-                  prêt pour l&apos;essayage
-                </p>
-              </div>
-            </div>
-          )}
+          <h1 className="mt-2 font-display text-2xl font-semibold text-ink sm:text-3xl">
+            {productTitle ? productTitle : "Essayez l'article virtuellement"}
+          </h1>
+          <p className="mt-1 text-sm text-ink-muted">
+            {productImage
+              ? "L'article est déjà chargé. Choisissez la zone à essayer."
+              : "Essayez avant d'acheter, instantanément."}
+          </p>
         </div>
+
+        {productImage && !selectedId && (
+          <motion.div
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.4 }}
+            className="mb-6 flex items-center gap-4 rounded-2xl border border-gold/40 bg-gradient-to-r from-gold/10 to-transparent p-4 shadow-soft"
+          >
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={productImage}
+              alt={productTitle ?? "Article"}
+              className="h-16 w-16 rounded-xl object-cover ring-1 ring-ink/10"
+            />
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-2">
+                <span className="inline-flex items-center gap-1 rounded-md bg-bordeaux/10 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-bordeaux">
+                  Article de la boutique
+                </span>
+              </div>
+              <p className="mt-1 truncate text-sm font-medium text-ink">
+                {productTitle ?? productImage}
+              </p>
+              <p className="text-xs text-ink-muted">
+                Prêt pour l&apos;essayage virtuel
+              </p>
+            </div>
+          </motion.div>
+        )}
 
         {!selected && (
           <motion.div
