@@ -84,7 +84,7 @@ export function ResultView({
     }
   }, [resultUrl, onDownload]);
 
-  const isSvg = resultUrl.endsWith(".svg");
+  const isSvg = /\.svg(\?|$)/i.test(resultUrl);
   const isWaiting = phase === "waiting";
   const isRevealing = phase === "revealing";
   const showProgressUI = isWaiting || isRevealing;

@@ -1,17 +1,16 @@
 import type { TryOnRequest, TryOnResponse } from "@/types";
 import { falTryOn } from "./providers/fal";
-
-const MOCK_RESULT_URL = "/mock-result.svg";
+import { pickMockResult } from "./mockResults";
 
 function randomDelay(minMs: number, maxMs: number): Promise<void> {
   const delay = minMs + Math.random() * (maxMs - minMs);
   return new Promise((resolve) => setTimeout(resolve, delay));
 }
 
-async function mockGenerate(_params: TryOnRequest): Promise<TryOnResponse> {
+async function mockGenerate(params: TryOnRequest): Promise<TryOnResponse> {
   await randomDelay(4000, 6000);
   return {
-    resultUrl: MOCK_RESULT_URL,
+    resultUrl: pickMockResult(params.category),
     generatedAt: Date.now(),
     mock: true,
   };

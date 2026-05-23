@@ -10,6 +10,7 @@ const nextConfig = {
       { protocol: "https", hostname: "**.shopify.com" },
       { protocol: "https", hostname: "**.shopifycdn.com" },
       { protocol: "https", hostname: "cdn.shopify.com" },
+      { protocol: "https", hostname: "images.unsplash.com" },
     ],
   },
   async headers() {
