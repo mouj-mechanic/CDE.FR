@@ -10,11 +10,11 @@ interface LoadingSceneProps {
 }
 
 const ORBITS = [
-  { delay: 1.2, duration: 2.6, radius: 90 },
-  { delay: 1.6, duration: 3.0, radius: 130 },
+  { delay: 0.9, duration: 2.6, radius: 90 },
+  { delay: 1.3, duration: 3.0, radius: 130 },
 ];
 
-const PROGRESS_DELAY_MS = 2000;
+const PROGRESS_DELAY_MS = 1500;
 const MILESTONES = [
   "Analyse de votre photo",
   "Préparation de l’article",
@@ -84,7 +84,7 @@ export function LoadingScene({ category }: LoadingSceneProps) {
       <motion.div
         initial={{ opacity: 0, scale: 0.85, y: 12 }}
         animate={{ opacity: 1, scale: 1, y: 0 }}
-        transition={{ delay: 0.6, duration: 0.7, ease: "easeOut" }}
+        transition={{ delay: 0.4, duration: 0.7, ease: "easeOut" }}
         className="relative mb-4 flex justify-center"
       >
         <ArtisanScene type={category.animationType} />
@@ -94,7 +94,7 @@ export function LoadingScene({ category }: LoadingSceneProps) {
       <motion.h3
         initial={{ opacity: 0, y: 8 }}
         animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: 1.0, duration: 0.55, ease: "easeOut" }}
+        transition={{ delay: 0.7, duration: 0.55, ease: "easeOut" }}
         className="font-display text-lg font-semibold text-ink sm:text-xl"
       >
         {category.loadingTitle}
@@ -103,7 +103,7 @@ export function LoadingScene({ category }: LoadingSceneProps) {
       <motion.p
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
-        transition={{ delay: 1.3, duration: 0.5 }}
+        transition={{ delay: 1.0, duration: 0.5 }}
         className="mt-2 text-sm text-ink-muted"
       >
         {category.loadingDescription}
