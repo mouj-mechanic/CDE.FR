@@ -2,8 +2,8 @@ import Script from "next/script";
 import type { Metadata } from "next";
 import { headers } from "next/headers";
 
-const PRODUCT_IMAGE_PATH = "/demo-watch-gold-green.svg";
-const productTitle = "Montre automatique « Émeraude » or & vert";
+const PRODUCT_IMAGE_PATH = "/demo2-product.png";
+const productTitle = "Montre rétro digitale or & vert";
 
 async function getBaseUrl(): Promise<string> {
   const hdrs = await headers();
@@ -53,8 +53,8 @@ export default async function Demo2Page() {
       </header>
 
       <main className="mx-auto max-w-7xl px-4 py-12 sm:px-6">
-        <p className="mb-6 text-xs uppercase tracking-wider text-[#8FA38F]">
-          Accueil / Horlogerie / Montre Émeraude or & vert
+          <p className="mb-6 text-xs uppercase tracking-wider text-[#8FA38F]">
+          Accueil / Horlogerie / Montre rétro digitale or &amp; vert
         </p>
 
         <div className="grid gap-12 lg:grid-cols-2">
@@ -90,25 +90,25 @@ export default async function Demo2Page() {
                 <p className="text-[10px] uppercase tracking-wider text-[#8FA38F]">
                   Boîtier
                 </p>
-                <p className="font-medium">Or jaune 18 ct · 40 mm</p>
+                <p className="font-medium">Acier doré or · 38 mm</p>
               </div>
               <div className="rounded-lg border border-[#1F2D24] bg-[#0B1510] p-3">
                 <p className="text-[10px] uppercase tracking-wider text-[#8FA38F]">
                   Cadran
                 </p>
-                <p className="font-medium">Vert émeraude soleillé</p>
+                <p className="font-medium">LCD vert mappemonde</p>
               </div>
               <div className="rounded-lg border border-[#1F2D24] bg-[#0B1510] p-3">
                 <p className="text-[10px] uppercase tracking-wider text-[#8FA38F]">
-                  Mouvement
+                  Style
                 </p>
-                <p className="font-medium">Automatique COSC</p>
+                <p className="font-medium">Rétro années 80 · Quartz</p>
               </div>
               <div className="rounded-lg border border-[#1F2D24] bg-[#0B1510] p-3">
                 <p className="text-[10px] uppercase tracking-wider text-[#8FA38F]">
                   Bracelet
                 </p>
-                <p className="font-medium">Cuir alligator vert</p>
+                <p className="font-medium">Silicone vert sapin</p>
               </div>
             </div>
 
