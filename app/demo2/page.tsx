@@ -1,11 +1,11 @@
 import Script from "next/script";
 import type { Metadata } from "next";
 
-const productImage =
-  "https://images.unsplash.com/photo-1606293459498-d50e9c9c0b2c?w=900&q=80";
+const productImage = "/demo-watch-gold-green.svg";
 const productTitle = "Montre automatique « Émeraude » or & vert";
 
 export const metadata: Metadata = {
+  metadataBase: new URL("http://localhost:3000"),
   title: "Démo PDP — Montre or & vert | CabinesDEssayage",
   robots: { index: false, follow: false },
   openGraph: {

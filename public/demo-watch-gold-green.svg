@@ -1,0 +1,157 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 1000" fill="none">
+  <defs>
+    <radialGradient id="bgRad" cx="50%" cy="40%" r="70%">
+      <stop offset="0%" stop-color="#1F3A2A"/>
+      <stop offset="55%" stop-color="#0F1F17"/>
+      <stop offset="100%" stop-color="#070D0A"/>
+    </radialGradient>
+    <linearGradient id="goldCase" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#F8E1A1"/>
+      <stop offset="35%" stop-color="#D4AF37"/>
+      <stop offset="70%" stop-color="#B8941F"/>
+      <stop offset="100%" stop-color="#7A5A12"/>
+    </linearGradient>
+    <linearGradient id="goldBezel" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#FFE9A8"/>
+      <stop offset="50%" stop-color="#D4AF37"/>
+      <stop offset="100%" stop-color="#8C6914"/>
+    </linearGradient>
+    <radialGradient id="dial" cx="50%" cy="42%" r="65%">
+      <stop offset="0%" stop-color="#2E7A55"/>
+      <stop offset="55%" stop-color="#0F4A2E"/>
+      <stop offset="100%" stop-color="#062416"/>
+    </radialGradient>
+    <linearGradient id="strapGradient" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#0E2A1B"/>
+      <stop offset="50%" stop-color="#1B4A30"/>
+      <stop offset="100%" stop-color="#0E2A1B"/>
+    </linearGradient>
+    <linearGradient id="reflection" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.35"/>
+      <stop offset="40%" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+    <filter id="softShadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="14"/>
+    </filter>
+  </defs>
+
+  <!-- Background -->
+  <rect width="800" height="1000" fill="url(#bgRad)"/>
+
+  <!-- Soft ground shadow -->
+  <ellipse cx="400" cy="820" rx="260" ry="36" fill="#000000" opacity="0.55" filter="url(#softShadow)"/>
+
+  <!-- Top strap -->
+  <path d="M340 110 L460 110 L470 280 L330 280 Z" fill="url(#strapGradient)"/>
+  <g stroke="#0a1a10" stroke-width="2" opacity="0.7">
+    <line x1="350" y1="140" x2="450" y2="140"/>
+    <line x1="350" y1="180" x2="450" y2="180"/>
+    <line x1="350" y1="220" x2="450" y2="220"/>
+    <line x1="350" y1="260" x2="450" y2="260"/>
+  </g>
+  <!-- Top alligator scales -->
+  <g fill="#0a1a10" opacity="0.45">
+    <rect x="345" y="118" width="36" height="22" rx="4"/>
+    <rect x="385" y="118" width="36" height="22" rx="4"/>
+    <rect x="425" y="118" width="36" height="22" rx="4"/>
+    <rect x="345" y="158" width="36" height="22" rx="4"/>
+    <rect x="385" y="158" width="36" height="22" rx="4"/>
+    <rect x="425" y="158" width="36" height="22" rx="4"/>
+    <rect x="345" y="198" width="36" height="22" rx="4"/>
+    <rect x="385" y="198" width="36" height="22" rx="4"/>
+    <rect x="425" y="198" width="36" height="22" rx="4"/>
+    <rect x="345" y="238" width="36" height="22" rx="4"/>
+    <rect x="385" y="238" width="36" height="22" rx="4"/>
+    <rect x="425" y="238" width="36" height="22" rx="4"/>
+  </g>
+
+  <!-- Bottom strap -->
+  <path d="M330 720 L470 720 L460 890 L340 890 Z" fill="url(#strapGradient)"/>
+  <g stroke="#0a1a10" stroke-width="2" opacity="0.7">
+    <line x1="350" y1="750" x2="450" y2="750"/>
+    <line x1="350" y1="790" x2="450" y2="790"/>
+    <line x1="350" y1="830" x2="450" y2="830"/>
+    <line x1="350" y1="870" x2="450" y2="870"/>
+  </g>
+  <g fill="#0a1a10" opacity="0.45">
+    <rect x="345" y="730" width="36" height="22" rx="4"/>
+    <rect x="385" y="730" width="36" height="22" rx="4"/>
+    <rect x="425" y="730" width="36" height="22" rx="4"/>
+    <rect x="345" y="770" width="36" height="22" rx="4"/>
+    <rect x="385" y="770" width="36" height="22" rx="4"/>
+    <rect x="425" y="770" width="36" height="22" rx="4"/>
+    <rect x="345" y="810" width="36" height="22" rx="4"/>
+    <rect x="385" y="810" width="36" height="22" rx="4"/>
+    <rect x="425" y="810" width="36" height="22" rx="4"/>
+    <rect x="345" y="850" width="36" height="22" rx="4"/>
+    <rect x="385" y="850" width="36" height="22" rx="4"/>
+    <rect x="425" y="850" width="36" height="22" rx="4"/>
+  </g>
+
+  <!-- Lugs (top) -->
+  <path d="M310 280 Q310 310 330 320 L470 320 Q490 310 490 280 Z" fill="url(#goldCase)"/>
+  <!-- Lugs (bottom) -->
+  <path d="M310 720 Q310 690 330 680 L470 680 Q490 690 490 720 Z" fill="url(#goldCase)"/>
+
+  <!-- Outer case -->
+  <circle cx="400" cy="500" r="210" fill="url(#goldCase)"/>
+  <!-- Inner bezel -->
+  <circle cx="400" cy="500" r="195" fill="url(#goldBezel)"/>
+  <!-- Bezel ridge -->
+  <circle cx="400" cy="500" r="180" fill="none" stroke="#7A5A12" stroke-width="2" opacity="0.6"/>
+
+  <!-- Dial -->
+  <circle cx="400" cy="500" r="170" fill="url(#dial)"/>
+  <!-- Dial sunburst lines -->
+  <g stroke="#3A8A60" stroke-width="0.6" opacity="0.35">
+    <line x1="400" y1="335" x2="400" y2="665"/>
+    <line x1="235" y1="500" x2="565" y2="500"/>
+    <line x1="285" y1="385" x2="515" y2="615"/>
+    <line x1="515" y1="385" x2="285" y2="615"/>
+    <line x1="320" y1="350" x2="480" y2="650"/>
+    <line x1="480" y1="350" x2="320" y2="650"/>
+    <line x1="260" y1="430" x2="540" y2="570"/>
+    <line x1="540" y1="430" x2="260" y2="570"/>
+  </g>
+
+  <!-- Hour markers (gold batons) -->
+  <g fill="#F0D27A">
+    <rect x="396" y="345" width="8" height="22" rx="2"/>          <!-- 12 -->
+    <rect x="396" y="633" width="8" height="22" rx="2"/>          <!-- 6 -->
+    <rect x="555" y="496" width="22" height="8" rx="2"/>          <!-- 3 -->
+    <rect x="223" y="496" width="22" height="8" rx="2"/>          <!-- 9 -->
+    <!-- 1, 2, 4, 5, 7, 8, 10, 11 -->
+    <circle cx="476" cy="362" r="5"/>
+    <circle cx="538" cy="424" r="5"/>
+    <circle cx="538" cy="576" r="5"/>
+    <circle cx="476" cy="638" r="5"/>
+    <circle cx="324" cy="638" r="5"/>
+    <circle cx="262" cy="576" r="5"/>
+    <circle cx="262" cy="424" r="5"/>
+    <circle cx="324" cy="362" r="5"/>
+  </g>
+
+  <!-- Brand text -->
+  <text x="400" y="430" text-anchor="middle" font-family="serif" font-size="20" fill="#E8C861" letter-spacing="4">ÉMERAUDE</text>
+  <text x="400" y="450" text-anchor="middle" font-family="serif" font-size="11" fill="#A8B89C" letter-spacing="3">AUTOMATIC · COSC</text>
+
+  <!-- Date window at 3 -->
+  <rect x="500" y="488" width="34" height="24" rx="2" fill="#F5F1E4" stroke="#7A5A12" stroke-width="2"/>
+  <text x="517" y="506" text-anchor="middle" font-family="sans-serif" font-size="13" font-weight="700" fill="#1A1410">24</text>
+
+  <!-- Hands -->
+  <line x1="400" y1="500" x2="400" y2="370" stroke="#F0D27A" stroke-width="6" stroke-linecap="round"/>
+  <line x1="400" y1="500" x2="490" y2="540" stroke="#F0D27A" stroke-width="5" stroke-linecap="round"/>
+  <line x1="400" y1="500" x2="350" y2="380" stroke="#D4AF37" stroke-width="2" stroke-linecap="round"/>
+  <circle cx="400" cy="500" r="7" fill="#D4AF37" stroke="#7A5A12" stroke-width="1.5"/>
+
+  <!-- Crown -->
+  <rect x="610" y="488" width="22" height="24" rx="3" fill="url(#goldCase)"/>
+  <rect x="608" y="494" width="6" height="12" fill="#7A5A12"/>
+
+  <!-- Glass reflection -->
+  <path d="M280 380 Q330 350 410 365 L405 410 Q345 410 295 450 Z" fill="url(#reflection)"/>
+
+  <!-- Subtle outer ring highlight -->
+  <circle cx="400" cy="500" r="208" fill="none" stroke="#FFE9A8" stroke-width="1.2" opacity="0.6"/>
+</svg>
