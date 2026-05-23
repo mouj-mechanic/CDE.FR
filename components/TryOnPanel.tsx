@@ -2,7 +2,7 @@
 
 import { useReducer, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { X, ChevronLeft, ChevronRight, Sparkles } from "lucide-react";
+import { X, ChevronLeft, ChevronRight } from "lucide-react";
 import type { Category } from "@/types";
 import { initialTryOnState, tryOnReducer } from "@/lib/tryOnReducer";
 import { StepBar } from "./StepBar";
@@ -14,6 +14,7 @@ import { CurtainReveal } from "./CurtainReveal";
 import { ResultView } from "./ResultView";
 import { PrivacyNote } from "./PrivacyNote";
 import { CategoryIcon } from "./CategoryIcon";
+import { LaunchButton } from "./LaunchButton";
 
 interface TryOnPanelProps {
   category: Category;
@@ -264,15 +265,10 @@ export function TryOnPanel({ category, onClose }: TryOnPanelProps) {
               </div>
 
               {state.step === 3 && (
-                <button
-                  type="button"
+                <LaunchButton
+                  isLoading={state.status === "loading"}
                   onClick={validateAndSubmit}
-                  disabled={state.status === "loading"}
-                  className="btn-primary w-full sm:w-auto"
-                >
-                  <Sparkles className="h-5 w-5" />
-                  Lancer l&apos;essayage IA
-                </button>
+                />
               )}
             </div>
 

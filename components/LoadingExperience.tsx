@@ -9,6 +9,12 @@ interface LoadingExperienceProps {
   category: Category;
 }
 
+const ORBITS = [
+  { delay: 0, duration: 2.2, radius: 80 },
+  { delay: 0.4, duration: 2.6, radius: 110 },
+  { delay: 0.8, duration: 3.0, radius: 65 },
+];
+
 export function LoadingExperience({ category }: LoadingExperienceProps) {
   const [progress, setProgress] = useState(0);
 
@@ -16,7 +22,7 @@ export function LoadingExperience({ category }: LoadingExperienceProps) {
     const interval = setInterval(() => {
       setProgress((p) => {
         if (p >= 90) return p;
-        return p + Math.random() * 8;
+        return p + Math.random() * 6;
       });
     }, 400);
     return () => clearInterval(interval);
@@ -24,16 +30,47 @@ export function LoadingExperience({ category }: LoadingExperienceProps) {
 
   return (
     <motion.div
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      exit={{ opacity: 0 }}
-      className="fixed inset-0 z-50 flex items-center justify-center bg-ink/40 backdrop-blur-sm"
+      initial={{ opacity: 0, backdropFilter: "blur(0px)" }}
+      animate={{ opacity: 1, backdropFilter: "blur(8px)" }}
+      exit={{ opacity: 0, backdropFilter: "blur(0px)" }}
+      transition={{ duration: 0.45, ease: "easeOut" }}
+      className="fixed inset-0 z-50 flex items-center justify-center bg-ink/40"
       role="status"
       aria-live="polite"
       aria-label="Génération en cours"
     >
-      <div className="mx-4 max-w-md rounded-4xl bg-white p-10 shadow-lifted text-center">
-        <div className="mb-6 flex justify-center">
+      <motion.div
+        initial={{ opacity: 0, scale: 0.85, y: 30 }}
+        animate={{ opacity: 1, scale: 1, y: 0 }}
+        exit={{ opacity: 0, scale: 0.92, y: 10 }}
+        transition={{
+          duration: 0.5,
+          ease: [0.22, 1, 0.36, 1],
+        }}
+        className="relative mx-4 max-w-md rounded-4xl bg-white p-10 text-center shadow-lifted"
+      >
+        {/* Pulsing rings around the scene */}
+        <div className="pointer-events-none absolute inset-0 flex items-center justify-center" aria-hidden>
+          {ORBITS.map((orbit, i) => (
+            <motion.span
+              key={i}
+              className="absolute rounded-full border border-gold/30"
+              style={{ width: orbit.radius * 2, height: orbit.radius * 2 }}
+              animate={{
+                scale: [0.8, 1.15, 0.8],
+                opacity: [0.0, 0.45, 0.0],
+              }}
+              transition={{
+                duration: orbit.duration,
+                delay: orbit.delay,
+                repeat: Infinity,
+                ease: "easeInOut",
+              }}
+            />
+          ))}
+        </div>
+
+        <div className="relative mb-6 flex justify-center">
           <ArtisanScene type={category.animationType} />
         </div>
 
@@ -46,10 +83,20 @@ export function LoadingExperience({ category }: LoadingExperienceProps) {
 
         <div className="mt-8 h-1.5 overflow-hidden rounded-full bg-cream-dark">
           <motion.div
-            className="h-full rounded-full bg-gradient-to-r from-bordeaux to-gold"
+            className="h-full rounded-full bg-gradient-to-r from-bordeaux via-gold to-bordeaux bg-[length:200%_100%]"
             initial={{ width: "0%" }}
-            animate={{ width: `${Math.min(progress, 95)}%` }}
-            transition={{ ease: "easeOut" }}
+            animate={{
+              width: `${Math.min(progress, 95)}%`,
+              backgroundPosition: ["0% 0%", "200% 0%"],
+            }}
+            transition={{
+              width: { ease: "easeOut" },
+              backgroundPosition: {
+                duration: 1.8,
+                repeat: Infinity,
+                ease: "linear",
+              },
+            }}
           />
         </div>
 
@@ -67,7 +114,7 @@ export function LoadingExperience({ category }: LoadingExperienceProps) {
             />
           ))}
         </div>
-      </div>
+      </motion.div>
     </motion.div>
   );
 }
