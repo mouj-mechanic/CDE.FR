@@ -55,6 +55,12 @@ const MEDIA_INDEX: Partial<
     background: { src: "/guide/hand-jewelry/background.png", kind: "image" },
     remove:     { src: "/guide/hand-jewelry/remove.png",     kind: "image" },
   },
+  clothes: {
+    frame:    { src: "/guide/clothes/frame.png",    kind: "image" },
+    pose:     { src: "/guide/clothes/pose.png",     kind: "image" },
+    outfit:   { src: "/guide/clothes/outfit.png",   kind: "image" },
+    lighting: { src: "/guide/clothes/lighting.png", kind: "image" },
+  },
 };
 
 /**
