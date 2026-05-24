@@ -1,51 +1,117 @@
 "use client";
 
-import { motion } from "framer-motion";
+import { motion, AnimatePresence } from "framer-motion";
 import type { CategoryId, PhotoSceneId } from "@/types";
+import { getGuideMedia } from "@/lib/guideMedia";
+import { cn } from "@/lib/utils";
 
 interface Props {
   category: CategoryId;
   scene: PhotoSceneId;
   /** Restart all animations when this key changes (step nav). */
   cycleKey: string | number;
+  /**
+   * When true, the registered media is treated as a full mockup card
+   * (already containing step number, title and hint). Renders edge-to-edge,
+   * larger, and with `object-contain` so nothing is cropped.
+   */
+  fullCard?: boolean;
 }
 
 /**
- * Tiny animated SVG vignette that demonstrates the action of the current
- * photo guide step, adapted to the targeted body part.
- *
- * Layout:
- *   [body silhouette with the targeted region highlighted]
- *   + scene-specific overlay (camera frame, light rays, plain background, ...)
+ * Animated vignette that demonstrates the action of the current photo guide
+ * step. If a custom GIF/video has been registered for the (category, scene)
+ * pair via lib/guideMedia, that media is shown — otherwise we fall back to
+ * the procedurally-drawn SVG animation (silhouette + scene overlay).
  */
-export function PhotoStepIllustration({ category, scene, cycleKey }: Props) {
+export function PhotoStepIllustration({
+  category,
+  scene,
+  cycleKey,
+  fullCard = false,
+}: Props) {
+  const media = getGuideMedia(category, scene);
+
+  return (
+    <div
+      className={cn(
+        "relative mx-auto aspect-square w-full overflow-hidden rounded-3xl bg-gradient-to-br from-cream-dark/70 via-cream to-cream-dark/40 ring-1 ring-ink/5",
+        fullCard ? "max-w-[640px]" : "max-w-[260px]"
+      )}
+    >
+      {/* Soft ambient grid */}
+      <div className="pointer-events-none absolute inset-0 opacity-30 [background-image:radial-gradient(circle_at_30%_25%,rgba(201,169,110,0.18),transparent_55%),radial-gradient(circle_at_75%_80%,rgba(122,31,43,0.12),transparent_60%)]" />
+
+      <AnimatePresence mode="wait">
+        {media ? (
+          <motion.div
+            key={`media-${cycleKey}`}
+            initial={{ opacity: 0, scale: 1.04 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0, scale: 0.98 }}
+            transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
+            className="relative h-full w-full"
+          >
+            {media.kind === "video" ? (
+              <video
+                src={media.src}
+                poster={media.poster}
+                autoPlay
+                loop
+                muted
+                playsInline
+                className={cn(
+                  "absolute inset-0 h-full w-full",
+                  fullCard ? "object-contain" : "object-cover"
+                )}
+              />
+            ) : (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={media.src}
+                alt=""
+                aria-hidden
+                className={cn(
+                  "absolute inset-0 h-full w-full",
+                  fullCard ? "object-contain" : "object-cover"
+                )}
+              />
+            )}
+          </motion.div>
+        ) : (
+          <SvgVignette
+            key={`svg-${cycleKey}`}
+            category={category}
+            scene={scene}
+            cycleKey={cycleKey}
+          />
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
+
+/** Default procedurally-drawn SVG fallback (used when no GIF/video is set). */
+function SvgVignette({ category, scene, cycleKey }: Props) {
   const region = getRegion(category);
   const body = renderBody(category, region);
 
   return (
-    <div className="relative mx-auto aspect-square w-full max-w-[260px] overflow-hidden rounded-3xl bg-gradient-to-br from-cream-dark/70 via-cream to-cream-dark/40 ring-1 ring-ink/5">
-      {/* Soft ambient grid */}
-      <div className="pointer-events-none absolute inset-0 opacity-30 [background-image:radial-gradient(circle_at_30%_25%,rgba(201,169,110,0.18),transparent_55%),radial-gradient(circle_at_75%_80%,rgba(122,31,43,0.12),transparent_60%)]" />
-
-      <svg
-        key={cycleKey}
-        viewBox="0 0 200 200"
-        className="relative h-full w-full"
-        aria-hidden
-      >
-        {/* Backdrop */}
-        <SceneBackdrop scene={scene} />
-
-        {/* Body */}
-        <g transform={bodyTransform(category)}>{body}</g>
-
-        {/* Region pulse */}
-        <RegionPulse region={region} />
-
-        {/* Scene-specific overlay */}
-        <SceneOverlay scene={scene} region={region} />
-      </svg>
-    </div>
+    <motion.svg
+      key={cycleKey}
+      viewBox="0 0 200 200"
+      className="relative h-full w-full"
+      aria-hidden
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      transition={{ duration: 0.3 }}
+    >
+      <SceneBackdrop scene={scene} />
+      <g transform={bodyTransform(category)}>{body}</g>
+      <RegionPulse region={region} />
+      <SceneOverlay scene={scene} region={region} />
+    </motion.svg>
   );
 }
 

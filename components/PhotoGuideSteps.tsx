@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import type { Category } from "@/types";
 import { PhotoStepIllustration } from "./PhotoStepIllustration";
+import { isFullCardMedia } from "@/lib/guideMedia";
 import { cn } from "@/lib/utils";
 
 interface PhotoGuideStepsProps {
@@ -220,83 +221,98 @@ export function PhotoGuideSteps({
       </div>
 
       {/* Main scene */}
-      <div className="grid gap-5 lg:grid-cols-[260px_1fr] lg:items-center">
-        <PhotoStepIllustration
-          category={category.id}
-          scene={step.scene}
-          cycleKey={`${category.id}-${active}`}
-        />
-
-        <div className="relative">
-          <AnimatePresence mode="wait">
-            <motion.div
-              key={active}
-              initial={{ opacity: 0, x: 16 }}
-              animate={{ opacity: 1, x: 0 }}
-              exit={{ opacity: 0, x: -16 }}
-              transition={{ duration: 0.32, ease: [0.22, 1, 0.36, 1] }}
-              className="space-y-2"
-            >
-              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-gold">
-                Étape {active + 1} / {total}
-              </p>
-              <h4 className="font-display text-2xl font-semibold text-ink sm:text-[26px]">
-                {step.title}
-              </h4>
-              <p className="text-sm leading-relaxed text-ink-muted sm:text-[15px]">
-                {step.hint}
-              </p>
-            </motion.div>
-          </AnimatePresence>
-
-          {/* Controls */}
-          <div className="mt-5 flex items-center justify-between">
-            <div className="flex items-center gap-1">
-              <button
-                type="button"
-                onClick={goPrev}
-                className="flex h-9 w-9 items-center justify-center rounded-full border border-ink/15 bg-white text-ink transition-colors hover:border-bordeaux hover:text-bordeaux"
-                aria-label="Étape précédente"
-              >
-                <ChevronLeft className="h-4 w-4" aria-hidden />
-              </button>
-              <button
-                type="button"
-                onClick={() => setPlaying((p) => !p)}
-                className="flex h-9 items-center gap-1.5 rounded-full border border-ink/15 bg-white px-3 text-xs font-medium text-ink transition-colors hover:border-bordeaux hover:text-bordeaux"
-                aria-pressed={playing}
-                aria-label={playing ? "Mettre en pause" : "Lecture automatique"}
-              >
-                {playing ? (
-                  <>
-                    <Pause className="h-3.5 w-3.5" aria-hidden />
-                    Auto
-                  </>
-                ) : (
-                  <>
-                    <Play className="h-3.5 w-3.5" aria-hidden />
-                    Lecture
-                  </>
-                )}
-              </button>
-              <button
-                type="button"
-                onClick={goNext}
-                className="flex h-9 w-9 items-center justify-center rounded-full border border-ink/15 bg-white text-ink transition-colors hover:border-bordeaux hover:text-bordeaux"
-                aria-label="Étape suivante"
-              >
-                <ChevronRight className="h-4 w-4" aria-hidden />
-              </button>
+      {(() => {
+        const fullCard = isFullCardMedia(category.id, step.scene);
+        return (
+          <div
+            className={cn(
+              "grid gap-5",
+              !fullCard && "lg:grid-cols-[260px_1fr] lg:items-center"
+            )}
+          >
+            <div className={fullCard ? "w-full" : ""}>
+              <PhotoStepIllustration
+                category={category.id}
+                scene={step.scene}
+                cycleKey={`${category.id}-${active}`}
+                fullCard={fullCard}
+              />
             </div>
 
-            <p className="hidden text-xs text-ink-muted sm:block">
-              {playing
-                ? "Lecture automatique des étapes"
-                : "Cliquez sur Lecture ou ▶ pour reprendre"}
-            </p>
+            <div className="relative">
+              {!fullCard && (
+                <AnimatePresence mode="wait">
+                  <motion.div
+                    key={active}
+                    initial={{ opacity: 0, x: 16 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    exit={{ opacity: 0, x: -16 }}
+                    transition={{ duration: 0.32, ease: [0.22, 1, 0.36, 1] }}
+                    className="space-y-2"
+                  >
+                    <p className="text-xs font-semibold uppercase tracking-[0.18em] text-gold">
+                      Étape {active + 1} / {total}
+                    </p>
+                    <h4 className="font-display text-2xl font-semibold text-ink sm:text-[26px]">
+                      {step.title}
+                    </h4>
+                    <p className="text-sm leading-relaxed text-ink-muted sm:text-[15px]">
+                      {step.hint}
+                    </p>
+                  </motion.div>
+                </AnimatePresence>
+              )}
+
+              {/* Controls */}
+              <div className={cn("flex items-center justify-between", !fullCard && "mt-5")}>
+                <div className="flex items-center gap-1">
+                  <button
+                    type="button"
+                    onClick={goPrev}
+                    className="flex h-9 w-9 items-center justify-center rounded-full border border-ink/15 bg-white text-ink transition-colors hover:border-bordeaux hover:text-bordeaux"
+                    aria-label="Étape précédente"
+                  >
+                    <ChevronLeft className="h-4 w-4" aria-hidden />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPlaying((p) => !p)}
+                    className="flex h-9 items-center gap-1.5 rounded-full border border-ink/15 bg-white px-3 text-xs font-medium text-ink transition-colors hover:border-bordeaux hover:text-bordeaux"
+                    aria-pressed={playing}
+                    aria-label={playing ? "Mettre en pause" : "Lecture automatique"}
+                  >
+                    {playing ? (
+                      <>
+                        <Pause className="h-3.5 w-3.5" aria-hidden />
+                        Auto
+                      </>
+                    ) : (
+                      <>
+                        <Play className="h-3.5 w-3.5" aria-hidden />
+                        Lecture
+                      </>
+                    )}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={goNext}
+                    className="flex h-9 w-9 items-center justify-center rounded-full border border-ink/15 bg-white text-ink transition-colors hover:border-bordeaux hover:text-bordeaux"
+                    aria-label="Étape suivante"
+                  >
+                    <ChevronRight className="h-4 w-4" aria-hidden />
+                  </button>
+                </div>
+
+                <p className="hidden text-xs text-ink-muted sm:block">
+                  {playing
+                    ? "Lecture automatique des étapes"
+                    : "Cliquez sur Lecture ou ▶ pour reprendre"}
+                </p>
+              </div>
+            </div>
           </div>
-        </div>
-      </div>
+        );
+      })()}
 
       {/* Achievement toast */}
       <AnimatePresence>
