@@ -62,20 +62,18 @@ function getRegion(category: CategoryId): Region {
     case "glasses":
       return { cx: 100, cy: 70, rx: 26, ry: 12 };
     case "watch":
-      return { cx: 138, cy: 132, rx: 14, ry: 14 };
+      // Centered on the wrist band of the new anatomical hand.
+      return { cx: 100, cy: 152, rx: 26, ry: 12 };
     case "hand-jewelry":
-      return { cx: 145, cy: 148, rx: 18, ry: 22 };
+      // Centered on the ring finger of the new hand.
+      return { cx: 110, cy: 80, rx: 14, ry: 16 };
     case "clothes":
     default:
       return { cx: 100, cy: 130, rx: 42, ry: 50 };
   }
 }
 
-function bodyTransform(category: CategoryId): string {
-  // Slight zoom on hand-only categories so the wrist/hand stays prominent.
-  if (category === "watch" || category === "hand-jewelry") {
-    return "translate(-10 0)";
-  }
+function bodyTransform(_category: CategoryId): string {
   return "translate(0 0)";
 }
 
@@ -116,32 +114,223 @@ function renderBody(category: CategoryId, _region: Region) {
     );
   }
 
-  // Hand / wrist focus — draw an arm + hand
+  return <Hand category={category} skin={skin} stroke={stroke} />;
+}
+
+/* ------------------------------------------------------------------ */
+/* Anatomical hand (palm-up, fingers spread)                           */
+/* ------------------------------------------------------------------ */
+
+interface HandProps {
+  category: CategoryId;
+  skin: string;
+  stroke: string;
+}
+
+function Hand({ category, skin, stroke }: HandProps) {
+  // Hand is drawn vertically, fingers up, wrist down — clearer "hand" silhouette
+  // than the previous horizontal forearm. Coordinate system: 200x200.
+  const skinDark = "#C8A581";
+  const skinLight = "#F4D9B8";
+
   return (
-    <>
+    <g>
+      {/* Cuff / sleeve hint at the bottom for context */}
+      <path
+        d="M68 192 L68 175 Q100 168 132 175 L132 192 Z"
+        fill="#7A1F2B"
+        stroke={stroke}
+        strokeWidth="1.2"
+        strokeLinejoin="round"
+      />
+
       {/* Forearm */}
       <path
-        d="M70 165 Q90 150 130 130 L160 145 Q120 175 80 180 Z"
+        d="M76 175 Q100 170 124 175 L122 158 Q100 154 78 158 Z"
         fill={skin}
         stroke={stroke}
         strokeWidth="1.2"
       />
+
+      {/* Wrist (slightly narrower) */}
+      <path
+        d="M78 158 Q100 152 122 158 L120 145 Q100 142 80 145 Z"
+        fill={skin}
+        stroke={stroke}
+        strokeWidth="1.2"
+      />
+
       {/* Wrist crease */}
       <path
-        d="M120 132 Q130 142 140 140"
+        d="M82 156 Q100 152 118 156"
         stroke={stroke}
         strokeOpacity="0.3"
         strokeWidth="1"
         fill="none"
       />
-      {/* Fingers (simplified) */}
-      <g fill={skin} stroke={stroke} strokeWidth="1">
-        <rect x="148" y="138" width="9" height="22" rx="4" />
-        <rect x="155" y="142" width="9" height="22" rx="4" />
-        <rect x="162" y="146" width="9" height="20" rx="4" />
-        <rect x="169" y="152" width="8" height="16" rx="4" />
+
+      {/* Watch on the wrist (only for the watch category) */}
+      {category === "watch" && (
+        <g>
+          {/* Strap */}
+          <rect x="80" y="146" width="40" height="14" rx="2" fill="#0E1A14" />
+          <rect x="80" y="146" width="40" height="14" rx="2" fill="none" stroke={stroke} strokeWidth="1" />
+          {/* Case */}
+          <rect x="89" y="142" width="22" height="22" rx="3" fill="#D4AF37" stroke={stroke} strokeWidth="1.2" />
+          {/* Dial */}
+          <rect x="91.5" y="144.5" width="17" height="17" rx="2" fill="#0F4A2E" />
+          {/* Hands */}
+          <line x1="100" y1="153" x2="100" y2="147" stroke="#F0D27A" strokeWidth="1.4" strokeLinecap="round" />
+          <line x1="100" y1="153" x2="105" y2="156" stroke="#F0D27A" strokeWidth="1.2" strokeLinecap="round" />
+          <circle cx="100" cy="153" r="1.2" fill="#F0D27A" />
+        </g>
+      )}
+
+      {/* Palm */}
+      <path
+        d="M80 145 Q78 122 84 102 Q92 92 100 92 Q108 92 116 102 Q122 122 120 145 Z"
+        fill={skin}
+        stroke={stroke}
+        strokeWidth="1.4"
+        strokeLinejoin="round"
+      />
+
+      {/* Palm shading */}
+      <path
+        d="M86 130 Q88 118 96 110"
+        stroke={skinDark}
+        strokeOpacity="0.45"
+        strokeWidth="1.6"
+        strokeLinecap="round"
+        fill="none"
+      />
+      <path
+        d="M114 130 Q112 118 104 110"
+        stroke={skinDark}
+        strokeOpacity="0.4"
+        strokeWidth="1.4"
+        strokeLinecap="round"
+        fill="none"
+      />
+
+      {/* Fingers — index, middle, ring, pinky (drawn back-to-front for layering) */}
+      {/* Pinky */}
+      <Finger
+        x={120}
+        baseY={102}
+        length={28}
+        width={11}
+        skin={skin}
+        stroke={stroke}
+        skinLight={skinLight}
+      />
+      {/* Index */}
+      <Finger
+        x={80}
+        baseY={102}
+        length={32}
+        width={11}
+        skin={skin}
+        stroke={stroke}
+        skinLight={skinLight}
+      />
+      {/* Middle */}
+      <Finger
+        x={94}
+        baseY={97}
+        length={42}
+        width={12}
+        skin={skin}
+        stroke={stroke}
+        skinLight={skinLight}
+      />
+      {/* Ring (with optional ring band when category === hand-jewelry) */}
+      <g>
+        <Finger
+          x={107}
+          baseY={97}
+          length={38}
+          width={12}
+          skin={skin}
+          stroke={stroke}
+          skinLight={skinLight}
+        />
+        {category === "hand-jewelry" && (
+          <g>
+            {/* Gold band on the ring finger */}
+            <rect x={107} y={75} width={12} height={5} rx={1.5} fill="#D4AF37" stroke={stroke} strokeWidth="0.8" />
+            <rect x={107} y={75} width={12} height={1.4} fill="#F0D27A" />
+            {/* Tiny gem */}
+            <circle cx={113} cy={73.5} r={2} fill="#7A1F2B" stroke="#F0D27A" strokeWidth="0.6" />
+          </g>
+        )}
       </g>
-    </>
+
+      {/* Thumb — to the left, bent outward */}
+      <path
+        d="M80 130 Q66 128 60 142 Q60 154 72 152 Q80 150 82 138 Z"
+        fill={skin}
+        stroke={stroke}
+        strokeWidth="1.2"
+        strokeLinejoin="round"
+      />
+      {/* Thumb nail */}
+      <ellipse cx="64" cy="142" rx="3" ry="2" fill={skinLight} opacity="0.8" />
+    </g>
+  );
+}
+
+/** A single finger with a fingernail. baseY is the top of the palm where it attaches. */
+function Finger({
+  x,
+  baseY,
+  length,
+  width,
+  skin,
+  stroke,
+  skinLight,
+}: {
+  x: number;
+  baseY: number;
+  length: number;
+  width: number;
+  skin: string;
+  stroke: string;
+  skinLight: string;
+}) {
+  const top = baseY - length;
+  const r = width / 2;
+  return (
+    <g>
+      <path
+        d={`M${x},${baseY}
+            L${x},${top + r}
+            Q${x + r},${top - r * 0.4} ${x + width},${top + r}
+            L${x + width},${baseY}
+            Z`}
+        fill={skin}
+        stroke={stroke}
+        strokeWidth="1.2"
+        strokeLinejoin="round"
+      />
+      {/* Knuckle line */}
+      <path
+        d={`M${x + 1.5},${top + length * 0.45} Q${x + width / 2},${top + length * 0.42} ${x + width - 1.5},${top + length * 0.45}`}
+        stroke="#C8A581"
+        strokeOpacity="0.5"
+        strokeWidth="0.8"
+        fill="none"
+      />
+      {/* Fingernail */}
+      <ellipse
+        cx={x + width / 2}
+        cy={top + r * 0.7}
+        rx={r * 0.55}
+        ry={r * 0.45}
+        fill={skinLight}
+        opacity="0.85"
+      />
+    </g>
   );
 }
 
@@ -446,25 +635,40 @@ function RemoveScene({ region }: { region: Region }) {
 }
 
 function StableScene({ region }: { region: Region }) {
+  // Use the bottom of the SVG as the "table" so the surface line is always
+  // under the forearm, regardless of region position.
+  const surfaceY = 190;
   return (
     <g>
-      {/* Surface line under the wrist */}
       <line
-        x1={region.cx - 60}
-        y1={region.cy + region.ry + 8}
-        x2={region.cx + 60}
-        y2={region.cy + region.ry + 8}
+        x1={20}
+        y1={surfaceY}
+        x2={180}
+        y2={surfaceY}
         stroke="#C9A96E"
         strokeWidth="2"
         strokeLinecap="round"
       />
-      {/* "Stable" radiating waves */}
+      {/* Hatching under the surface */}
+      {[0, 1, 2, 3, 4, 5].map((i) => (
+        <line
+          key={i}
+          x1={28 + i * 26}
+          y1={surfaceY + 1}
+          x2={20 + i * 26}
+          y2={surfaceY + 8}
+          stroke="#C9A96E"
+          strokeOpacity="0.6"
+          strokeWidth="1"
+        />
+      ))}
+      {/* "Stable" radiating waves on the region */}
       {[0, 1, 2].map((i) => (
         <motion.circle
           key={i}
           cx={region.cx}
           cy={region.cy}
-          r={region.rx + 6 + i * 6}
+          r={Math.max(region.rx, region.ry) + 6 + i * 6}
           fill="none"
           stroke="#3B7A4E"
           strokeWidth="1.5"
