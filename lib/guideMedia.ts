@@ -37,6 +37,12 @@ const MEDIA_INDEX: Partial<
     lighting:   { src: "/guide/headwear/lighting.png",   kind: "image" },
     background: { src: "/guide/headwear/background.png", kind: "image" },
   },
+  glasses: {
+    frame:    { src: "/guide/glasses/frame.png",    kind: "image" },
+    remove:   { src: "/guide/glasses/remove.png",   kind: "image" },
+    angle:    { src: "/guide/glasses/angle.png",    kind: "image" },
+    lighting: { src: "/guide/glasses/lighting.png", kind: "image" },
+  },
 };
 
 /**
