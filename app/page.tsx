@@ -12,8 +12,9 @@ export default function HomePage() {
         <section id="cabines" className="scroll-mt-24 px-4 pb-24 sm:px-6 lg:px-8">
           <div className="mx-auto max-w-6xl">
             <div className="mb-12 text-center">
-              <h2 className="font-display text-3xl font-semibold text-ink sm:text-4xl">
-                Choisissez votre cabine
+              <h2 className="font-display text-3xl font-bold sm:text-4xl">
+                <span className="text-ink">Choisissez votre </span>
+                <span className="text-gradient">cabine</span>
               </h2>
               <p className="mt-3 text-ink-muted">
                 Sélectionnez une catégorie pour commencer votre essayage virtuel

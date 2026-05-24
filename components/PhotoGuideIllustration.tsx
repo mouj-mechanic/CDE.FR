@@ -32,7 +32,7 @@ export function PhotoGuideIllustration({
           height={highlight.h}
           rx="4"
           fill="none"
-          stroke="#7A1F2B"
+          stroke="#7C3AED"
           strokeWidth="2"
           strokeDasharray="4 4"
           animate={{
@@ -45,7 +45,7 @@ export function PhotoGuideIllustration({
           cx={highlight.x + highlight.w / 2}
           cy={highlight.y + highlight.h / 2}
           r="3"
-          fill="#C9A96E"
+          fill="#EC4899"
           animate={{ scale: [1, 1.3, 1] }}
           transition={{ duration: 1.5, repeat: Infinity }}
         />

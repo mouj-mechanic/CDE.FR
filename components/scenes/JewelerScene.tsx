@@ -11,7 +11,7 @@ export function JewelerScene() {
       <path
         d="M55 130 Q70 120 85 125 L90 145 Q75 150 60 145 Z"
         fill="#E8D5C4"
-        stroke="#C9A96E"
+        stroke="#EC4899"
         strokeWidth="1"
       />
       {/* Ring */}
@@ -20,7 +20,7 @@ export function JewelerScene() {
         cy="132"
         r="10"
         fill="none"
-        stroke="#C9A96E"
+        stroke="#EC4899"
         strokeWidth="2"
         animate={{ scale: [1, 1.1, 1], opacity: [0.7, 1, 0.7] }}
         transition={{ duration: 2, repeat: Infinity }}
@@ -31,7 +31,7 @@ export function JewelerScene() {
         cy="128"
         rx="12"
         ry="6"
-        fill="#9B2D3C"
+        fill="#A855F7"
         opacity="0.4"
         animate={{ x: [0, 8, 0], opacity: [0.3, 0.6, 0.3] }}
         transition={{ duration: 1.8, repeat: Infinity }}
@@ -39,7 +39,7 @@ export function JewelerScene() {
       <motion.path
         d="M100 115 Q115 105 125 115"
         fill="none"
-        stroke="#C9A96E"
+        stroke="#EC4899"
         strokeWidth="2"
         strokeLinecap="round"
         animate={{ rotate: [-5, 5, -5] }}

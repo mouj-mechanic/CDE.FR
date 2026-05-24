@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Cormorant_Garamond, Inter } from "next/font/google";
 import "./globals.css";
+import { ColorfulBackdrop } from "@/components/ColorfulBackdrop";
 
 const cormorant = Cormorant_Garamond({
   subsets: ["latin"],
@@ -45,7 +46,10 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="fr" className={`${cormorant.variable} ${inter.variable}`}>
-      <body className="min-h-screen">{children}</body>
+      <body className="relative min-h-screen overflow-x-hidden">
+        <ColorfulBackdrop />
+        {children}
+      </body>
     </html>
   );
 }

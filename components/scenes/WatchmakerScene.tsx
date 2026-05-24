@@ -13,7 +13,7 @@ export function WatchmakerScene() {
         cy="110"
         r="18"
         fill="none"
-        stroke="#C9A96E"
+        stroke="#EC4899"
         strokeWidth="2"
         animate={{ scale: [1, 1.05, 1] }}
         transition={{ duration: 2, repeat: Infinity }}
@@ -23,7 +23,7 @@ export function WatchmakerScene() {
         y1="125"
         x2="160"
         y2="145"
-        stroke="#C9A96E"
+        stroke="#EC4899"
         strokeWidth="2"
         animate={{ rotate: [0, 5, 0] }}
         style={{ transformOrigin: "145px 125px" }}
@@ -35,15 +35,15 @@ export function WatchmakerScene() {
         style={{ transformOrigin: "75px 130px" }}
         transition={{ duration: 2.5, repeat: Infinity }}
       >
-        <ellipse cx="75" cy="130" rx="22" ry="10" fill="#7A1F2B" opacity="0.3" />
-        <rect x="62" y="118" width="26" height="22" rx="4" fill="#1A1410" />
-        <circle cx="75" cy="129" r="8" fill="#C9A96E" opacity="0.8" />
+        <ellipse cx="75" cy="130" rx="22" ry="10" fill="#7C3AED" opacity="0.3" />
+        <rect x="62" y="118" width="26" height="22" rx="4" fill="#1E1B4B" />
+        <circle cx="75" cy="129" r="8" fill="#EC4899" opacity="0.8" />
         <motion.line
           x1="75"
           y1="129"
           x2="75"
           y2="123"
-          stroke="#7A1F2B"
+          stroke="#7C3AED"
           strokeWidth="1.5"
           animate={{ rotate: 360 }}
           style={{ transformOrigin: "75px 129px" }}

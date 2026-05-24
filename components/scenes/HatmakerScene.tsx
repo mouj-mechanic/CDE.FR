@@ -13,15 +13,15 @@ export function HatmakerScene() {
         animate={{ y: [0, -4, 0], rotate: [-2, 2, -2] }}
         transition={{ duration: 2.5, repeat: Infinity, ease: "easeInOut" }}
       >
-        <ellipse cx="100" cy="95" rx="35" ry="8" fill="#7A1F2B" />
-        <path d="M75 95 Q100 60 125 95" fill="#9B2D3C" />
-        <rect x="88" y="88" width="24" height="12" rx="2" fill="#5C1720" />
+        <ellipse cx="100" cy="95" rx="35" ry="8" fill="#7C3AED" />
+        <path d="M75 95 Q100 60 125 95" fill="#A855F7" />
+        <rect x="88" y="88" width="24" height="12" rx="2" fill="#5B21B6" />
       </motion.g>
       {/* Hands adjusting */}
       <motion.path
         d="M60 100 Q75 85 90 95"
         fill="none"
-        stroke="#C9A96E"
+        stroke="#EC4899"
         strokeWidth="3"
         strokeLinecap="round"
         animate={{ d: ["M60 100 Q75 85 90 95", "M58 98 Q73 83 88 93", "M60 100 Q75 85 90 95"] }}
@@ -30,7 +30,7 @@ export function HatmakerScene() {
       <motion.path
         d="M140 100 Q125 85 110 95"
         fill="none"
-        stroke="#C9A96E"
+        stroke="#EC4899"
         strokeWidth="3"
         strokeLinecap="round"
         animate={{ d: ["M140 100 Q125 85 110 95", "M142 98 Q127 83 112 93", "M140 100 Q125 85 110 95"] }}

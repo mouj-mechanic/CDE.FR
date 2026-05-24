@@ -145,8 +145,8 @@ function bodyTransform(_category: CategoryId): string {
 
 function renderBody(category: CategoryId, _region: Region) {
   const skin = "#E8C9A5";
-  const torso = "#7A1F2B";
-  const stroke = "#1A1410";
+  const torso = "#7C3AED";
+  const stroke = "#1E1B4B";
 
   const head = (
     <>
@@ -204,7 +204,7 @@ function Hand({ category, skin, stroke }: HandProps) {
       {/* Cuff / sleeve hint at the bottom for context */}
       <path
         d="M68 192 L68 175 Q100 168 132 175 L132 192 Z"
-        fill="#7A1F2B"
+        fill="#7C3AED"
         stroke={stroke}
         strokeWidth="1.2"
         strokeLinejoin="round"
@@ -246,9 +246,9 @@ function Hand({ category, skin, stroke }: HandProps) {
           {/* Dial */}
           <rect x="91.5" y="144.5" width="17" height="17" rx="2" fill="#0F4A2E" />
           {/* Hands */}
-          <line x1="100" y1="153" x2="100" y2="147" stroke="#F0D27A" strokeWidth="1.4" strokeLinecap="round" />
-          <line x1="100" y1="153" x2="105" y2="156" stroke="#F0D27A" strokeWidth="1.2" strokeLinecap="round" />
-          <circle cx="100" cy="153" r="1.2" fill="#F0D27A" />
+          <line x1="100" y1="153" x2="100" y2="147" stroke="#F9A8D4" strokeWidth="1.4" strokeLinecap="round" />
+          <line x1="100" y1="153" x2="105" y2="156" stroke="#F9A8D4" strokeWidth="1.2" strokeLinecap="round" />
+          <circle cx="100" cy="153" r="1.2" fill="#F9A8D4" />
         </g>
       )}
 
@@ -325,9 +325,9 @@ function Hand({ category, skin, stroke }: HandProps) {
           <g>
             {/* Gold band on the ring finger */}
             <rect x={107} y={75} width={12} height={5} rx={1.5} fill="#D4AF37" stroke={stroke} strokeWidth="0.8" />
-            <rect x={107} y={75} width={12} height={1.4} fill="#F0D27A" />
+            <rect x={107} y={75} width={12} height={1.4} fill="#F9A8D4" />
             {/* Tiny gem */}
-            <circle cx={113} cy={73.5} r={2} fill="#7A1F2B" stroke="#F0D27A" strokeWidth="0.6" />
+            <circle cx={113} cy={73.5} r={2} fill="#7C3AED" stroke="#F9A8D4" strokeWidth="0.6" />
           </g>
         )}
       </g>
@@ -413,7 +413,7 @@ function RegionPulse({ region }: { region: Region }) {
         rx={region.rx}
         ry={region.ry}
         fill="none"
-        stroke="#C9A96E"
+        stroke="#EC4899"
         strokeWidth="2"
         strokeDasharray="3 4"
         initial={{ opacity: 0, scale: 0.85 }}
@@ -425,7 +425,7 @@ function RegionPulse({ region }: { region: Region }) {
         cx={region.cx}
         cy={region.cy}
         r="2.2"
-        fill="#7A1F2B"
+        fill="#7C3AED"
         animate={{ scale: [1, 1.6, 1], opacity: [1, 0.7, 1] }}
         transition={{ duration: 1.6, repeat: Infinity, ease: "easeInOut" }}
         style={{ transformOrigin: `${region.cx}px ${region.cy}px` }}
@@ -448,8 +448,8 @@ function SceneBackdrop({ scene }: { scene: PhotoSceneId }) {
         <defs>
           <radialGradient id="lightGrad" cx="20%" cy="20%" r="80%">
             <stop offset="0%" stopColor="#FFEFC7" stopOpacity="0.95" />
-            <stop offset="60%" stopColor="#FBF7F2" stopOpacity="0.4" />
-            <stop offset="100%" stopColor="#FBF7F2" stopOpacity="0" />
+            <stop offset="60%" stopColor="#FDF4FF" stopOpacity="0.4" />
+            <stop offset="100%" stopColor="#FDF4FF" stopOpacity="0" />
           </radialGradient>
         </defs>
         <rect x="0" y="0" width="200" height="200" fill="url(#lightGrad)" />
@@ -507,7 +507,7 @@ function FrameScene({ region }: { region: Region }) {
       transition={{ duration: 0.7, ease: [0.22, 1, 0.36, 1] }}
       style={{ transformOrigin: `${region.cx}px ${region.cy}px` }}
     >
-      <g stroke="#1A1410" strokeWidth="2.4" fill="none" strokeLinecap="round">
+      <g stroke="#1E1B4B" strokeWidth="2.4" fill="none" strokeLinecap="round">
         {/* TL */}
         <path d={`M${x},${y + corner} L${x},${y} L${x + corner},${y}`} />
         {/* TR */}
@@ -519,10 +519,10 @@ function FrameScene({ region }: { region: Region }) {
       </g>
       {/* Camera glyph above */}
       <g transform={`translate(${region.cx - 14},${y - 28})`}>
-        <rect x="0" y="6" width="28" height="20" rx="3" fill="#1A1410" />
-        <rect x="9" y="2" width="10" height="6" rx="1" fill="#1A1410" />
-        <circle cx="14" cy="16" r="5.5" fill="#FBF7F2" stroke="#1A1410" strokeWidth="1" />
-        <circle cx="14" cy="16" r="2.5" fill="#7A1F2B" />
+        <rect x="0" y="6" width="28" height="20" rx="3" fill="#1E1B4B" />
+        <rect x="9" y="2" width="10" height="6" rx="1" fill="#1E1B4B" />
+        <circle cx="14" cy="16" r="5.5" fill="#FDF4FF" stroke="#1E1B4B" strokeWidth="1" />
+        <circle cx="14" cy="16" r="2.5" fill="#7C3AED" />
       </g>
     </motion.g>
   );
@@ -537,7 +537,7 @@ function AngleScene({ region }: { region: Region }) {
     <g>
       <motion.path
         d={`M ${cx - r},${cy} A ${r} ${r} 0 0 1 ${cx + r * 0.6},${cy - r * 0.8}`}
-        stroke="#7A1F2B"
+        stroke="#7C3AED"
         strokeWidth="2.4"
         strokeLinecap="round"
         fill="none"
@@ -548,7 +548,7 @@ function AngleScene({ region }: { region: Region }) {
       />
       <motion.polygon
         points="0,-6 9,0 0,6"
-        fill="#7A1F2B"
+        fill="#7C3AED"
         initial={{ opacity: 0, scale: 0.6 }}
         animate={{ opacity: 1, scale: 1 }}
         transition={{ delay: 1.3, duration: 0.4 }}
@@ -559,7 +559,7 @@ function AngleScene({ region }: { region: Region }) {
         y={cy - r * 0.4}
         fontSize="11"
         fontWeight="700"
-        fill="#7A1F2B"
+        fill="#7C3AED"
         initial={{ opacity: 0, y: 4 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ delay: 1, duration: 0.4 }}
@@ -676,9 +676,9 @@ function RemoveScene({ region }: { region: Region }) {
           cy={region.cy}
           rx={region.rx}
           ry={region.ry * 0.6}
-          fill="#1A1410"
+          fill="#1E1B4B"
           fillOpacity="0.18"
-          stroke="#1A1410"
+          stroke="#1E1B4B"
           strokeDasharray="3 3"
           strokeWidth="1.4"
         />
@@ -692,7 +692,7 @@ function RemoveScene({ region }: { region: Region }) {
         <path
           d={`M${region.cx - 6},${region.cy - region.ry - 8} q6 -8 12 0 q4 6 -2 10 q-6 -2 -10 -10 z`}
           fill="#E8C9A5"
-          stroke="#1A1410"
+          stroke="#1E1B4B"
           strokeWidth="1.2"
         />
       </motion.g>
@@ -711,7 +711,7 @@ function StableScene({ region }: { region: Region }) {
         y1={surfaceY}
         x2={180}
         y2={surfaceY}
-        stroke="#C9A96E"
+        stroke="#EC4899"
         strokeWidth="2"
         strokeLinecap="round"
       />
@@ -723,7 +723,7 @@ function StableScene({ region }: { region: Region }) {
           y1={surfaceY + 1}
           x2={20 + i * 26}
           y2={surfaceY + 8}
-          stroke="#C9A96E"
+          stroke="#EC4899"
           strokeOpacity="0.6"
           strokeWidth="1"
         />
@@ -762,7 +762,7 @@ function PoseScene() {
         y1="32"
         x2="100"
         y2="180"
-        stroke="#C9A96E"
+        stroke="#EC4899"
         strokeWidth="1.4"
         strokeDasharray="3 4"
         initial={{ pathLength: 0 }}
@@ -793,7 +793,7 @@ function OutfitScene() {
     <motion.path
       d="M70 96 Q100 90 130 96 L132 142 Q100 150 68 142 Z"
       fill="#F5EFE6"
-      stroke="#1A1410"
+      stroke="#1E1B4B"
       strokeOpacity="0.5"
       strokeWidth="1.2"
       strokeDasharray="3 3"

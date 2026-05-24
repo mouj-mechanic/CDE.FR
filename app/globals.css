@@ -3,15 +3,15 @@
 @tailwind utilities;
 
 :root {
-  --cream: #fbf7f2;
-  --cream-dark: #f3ebe0;
-  --bordeaux: #7a1f2b;
-  --bordeaux-light: #9b2d3c;
-  --bordeaux-dark: #5c1720;
-  --gold: #c9a96e;
-  --gold-light: #e0c99a;
-  --ink: #1a1410;
-  --ink-muted: #4a4038;
+  --cream: #fbf5ff;
+  --cream-dark: #f3e8ff;
+  --bordeaux: #7c3aed;
+  --bordeaux-light: #a855f7;
+  --bordeaux-dark: #5b21b6;
+  --gold: #ec4899;
+  --gold-light: #f9a8d4;
+  --ink: #1e1b4b;
+  --ink-muted: #4c1d95;
 }
 
 @layer base {
@@ -20,42 +20,52 @@
   }
 
   body {
-    @apply bg-cream font-sans text-ink antialiased;
-    background-image:
+    @apply font-sans text-ink antialiased;
+    background:
       radial-gradient(
-        ellipse 80% 50% at 50% -20%,
-        rgba(201, 169, 110, 0.12),
-        transparent
+        ellipse 90% 60% at 15% -10%,
+        rgba(168, 85, 247, 0.28),
+        transparent 60%
       ),
       radial-gradient(
-        ellipse 60% 40% at 100% 100%,
-        rgba(122, 31, 43, 0.06),
-        transparent
+        ellipse 70% 50% at 90% 0%,
+        rgba(236, 72, 153, 0.22),
+        transparent 60%
       ),
-      linear-gradient(180deg, var(--cream) 0%, #fff9f4 50%, var(--cream) 100%);
+      radial-gradient(
+        ellipse 80% 60% at 100% 100%,
+        rgba(253, 164, 175, 0.22),
+        transparent 60%
+      ),
+      radial-gradient(
+        ellipse 70% 50% at 0% 100%,
+        rgba(125, 211, 252, 0.18),
+        transparent 60%
+      ),
+      linear-gradient(180deg, #fdf4ff 0%, #fae8ff 50%, #fce7f3 100%);
     min-height: 100vh;
   }
 
   ::selection {
-    @apply bg-bordeaux/20 text-bordeaux-dark;
+    @apply bg-bordeaux/25 text-bordeaux-dark;
   }
 }
 
 @layer components {
   .glass-card {
-    @apply rounded-4xl border border-white/60 bg-white/80 shadow-soft backdrop-blur-md;
+    @apply rounded-4xl border border-white/70 bg-white/75 shadow-soft backdrop-blur-md;
   }
 
   .btn-primary {
-    @apply inline-flex items-center justify-center gap-2 rounded-2xl bg-bordeaux px-8 py-4 font-medium text-white shadow-soft transition-all duration-300 hover:bg-bordeaux-light hover:shadow-lifted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-bordeaux focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50;
+    @apply relative inline-flex items-center justify-center gap-2 overflow-hidden rounded-2xl bg-gradient-to-r from-bordeaux via-fuchsia-500 to-gold bg-[length:200%_100%] px-8 py-4 font-semibold text-white shadow-soft transition-all duration-300 hover:bg-[position:100%_0] hover:shadow-lifted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-bordeaux focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50;
   }
 
   .btn-secondary {
-    @apply inline-flex items-center justify-center gap-2 rounded-2xl border border-bordeaux/20 bg-white px-8 py-4 font-medium text-bordeaux shadow-soft transition-all duration-300 hover:border-bordeaux/40 hover:bg-cream-dark focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-bordeaux focus-visible:ring-offset-2;
+    @apply inline-flex items-center justify-center gap-2 rounded-2xl border border-bordeaux/25 bg-white/90 px-8 py-4 font-medium text-bordeaux shadow-soft backdrop-blur-sm transition-all duration-300 hover:border-bordeaux/50 hover:bg-white hover:text-bordeaux-dark focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-bordeaux focus-visible:ring-offset-2;
   }
 
   .btn-ghost {
-    @apply inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2 text-ink-muted transition-colors hover:bg-cream-dark hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-bordeaux/50;
+    @apply inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2 text-ink-muted transition-colors hover:bg-cream-dark hover:text-bordeaux focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-bordeaux/50;
   }
 
   .step-indicator {
@@ -63,7 +73,7 @@
   }
 
   .step-indicator-active {
-    @apply bg-bordeaux text-white shadow-soft;
+    @apply bg-gradient-to-br from-bordeaux to-gold text-white shadow-soft;
   }
 
   .step-indicator-done {
@@ -75,26 +85,28 @@
   }
 
   .input-field {
-    @apply w-full rounded-xl border border-ink/10 bg-white px-4 py-3 text-ink placeholder:text-ink-light/60 transition-colors focus:border-bordeaux/40 focus:outline-none focus:ring-2 focus:ring-bordeaux/20;
+    @apply w-full rounded-xl border border-ink/10 bg-white px-4 py-3 text-ink placeholder:text-ink-light/60 transition-colors focus:border-bordeaux/50 focus:outline-none focus:ring-2 focus:ring-bordeaux/20;
   }
 
   .dropzone {
-    @apply flex min-h-[180px] cursor-pointer flex-col items-center justify-center rounded-2xl border-2 border-dashed border-bordeaux/20 bg-cream/50 p-6 text-center transition-all duration-300 hover:border-bordeaux/40 hover:bg-white;
+    @apply flex min-h-[180px] cursor-pointer flex-col items-center justify-center rounded-2xl border-2 border-dashed border-bordeaux/25 bg-white/50 p-6 text-center backdrop-blur-sm transition-all duration-300 hover:border-bordeaux/55 hover:bg-white;
   }
 
   .dropzone-active {
     @apply border-bordeaux bg-white shadow-glow;
   }
 
+  /* Vivid violet/pink curtain panels for the result reveal */
   .curtain-panel {
     background: linear-gradient(
       135deg,
-      #5c1720 0%,
-      #7a1f2b 40%,
-      #9b2d3c 70%,
-      #5c1720 100%
+      #5b21b6 0%,
+      #7c3aed 30%,
+      #a855f7 55%,
+      #ec4899 80%,
+      #5b21b6 100%
     );
-    box-shadow: inset -4px 0 12px rgba(0, 0, 0, 0.3);
+    box-shadow: inset -4px 0 12px rgba(0, 0, 0, 0.25);
   }
 
   .curtain-fold {
@@ -102,9 +114,23 @@
       90deg,
       transparent,
       transparent 8px,
-      rgba(0, 0, 0, 0.08) 8px,
-      rgba(0, 0, 0, 0.08) 10px
+      rgba(255, 255, 255, 0.06) 8px,
+      rgba(255, 255, 255, 0.06) 10px,
+      transparent 10px,
+      transparent 18px,
+      rgba(0, 0, 0, 0.1) 18px,
+      rgba(0, 0, 0, 0.1) 20px
     );
+  }
+
+  /* Gradient text helper for headlines */
+  .text-gradient {
+    @apply bg-gradient-to-r from-bordeaux via-fuchsia-500 to-gold bg-clip-text text-transparent;
+  }
+
+  /* Animated gradient mesh background blobs (used by <ColorfulBackdrop />) */
+  .bg-blob {
+    @apply pointer-events-none absolute rounded-full blur-3xl opacity-50 mix-blend-multiply;
   }
 }
 

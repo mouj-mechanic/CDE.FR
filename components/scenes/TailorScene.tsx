@@ -9,15 +9,15 @@ export function TailorScene() {
       <ellipse cx="100" cy="50" rx="15" ry="18" fill="#E8D5C4" opacity="0.6" />
       <path
         d="M75 70 Q100 65 125 70 L120 150 Q100 155 80 150 Z"
-        fill="#F3EBE0"
-        stroke="#C9A96E"
+        fill="#FDF4FF"
+        stroke="#EC4899"
         strokeWidth="1"
       />
       {/* Measuring tape */}
       <motion.path
         d="M70 90 Q100 85 130 90"
         fill="none"
-        stroke="#7A1F2B"
+        stroke="#7C3AED"
         strokeWidth="2"
         strokeDasharray="4 4"
         animate={{ pathLength: [0.5, 1, 0.5] }}
@@ -31,7 +31,7 @@ export function TailorScene() {
         y1="95"
         x2="120"
         y2="100"
-        stroke="#C9A96E"
+        stroke="#EC4899"
         strokeWidth="2"
         animate={{ rotate: [-3, 3, -3] }}
         style={{ transformOrigin: "145px 95px" }}
@@ -42,7 +42,7 @@ export function TailorScene() {
         y1="120"
         x2="70"
         y2="145"
-        stroke="#7A1F2B"
+        stroke="#7C3AED"
         strokeWidth="1.5"
         animate={{ y1: [120, 125, 120] }}
         transition={{ duration: 1.5, repeat: Infinity }}

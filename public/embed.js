@@ -42,7 +42,7 @@
   var LABEL = ds.label || "Essayer virtuellement";
   var PAGES = ds.pages || "product";
   var POSITION = ds.position === "left" ? "left" : "right";
-  var COLOR = ds.color || "#7A1F2B";
+  var COLOR = ds.color || "#7C3AED";
 
   function isProductPage() {
     if (PAGES === "all") return true;
@@ -313,7 +313,7 @@
       ".cabines-bubble{position:fixed;bottom:24px;z-index:2147483646;display:flex;align-items:center;gap:10px;padding:14px 20px;border:none;border-radius:999px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;font-size:14px;font-weight:500;color:#fff;cursor:pointer;animation:cab-rise .55s cubic-bezier(.22,1,.36,1) both,cab-pulse 2.6s ease-out 1.2s 3;box-shadow:0 10px 28px rgba(122,31,43,.32);transition:transform .25s,box-shadow .25s}",
       ".cabines-bubble:hover{transform:translateY(-2px) scale(1.03);box-shadow:0 14px 36px rgba(122,31,43,.45)}",
       ".cabines-bubble:hover .cab-callout{opacity:0;pointer-events:none}",
-      ".cabines-bubble .cab-tag{display:inline-block;background:linear-gradient(135deg,#C9A96E,#E0C99A);color:#1A1410;font-size:10px;font-weight:700;padding:2px 7px;border-radius:6px;margin-right:4px;letter-spacing:.3px}",
+      ".cabines-bubble .cab-tag{display:inline-block;background:linear-gradient(135deg,#EC4899,#F9A8D4);color:#fff;font-size:10px;font-weight:700;padding:2px 7px;border-radius:6px;margin-right:4px;letter-spacing:.3px}",
       // Animated character SVG
       ".cab-char{width:26px;height:30px;flex-shrink:0;overflow:visible}",
       ".cab-char .cab-shirt{transform-origin:center;transform-box:fill-box;animation:cab-shirt-cycle 3.6s cubic-bezier(.22,1,.36,1) infinite}",
@@ -332,13 +332,13 @@
       ".cabines-bubble .cab-callout-close{display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;border:none;background:rgba(26,20,16,.06);color:#4A4038;border-radius:50%;cursor:pointer;font-size:12px;line-height:1;margin-left:4px}",
       ".cabines-bubble .cab-callout-close:hover{background:rgba(26,20,16,.12)}",
       // Notification dot (mobile)
-      ".cabines-bubble .cab-dot{position:absolute;top:6px;right:6px;width:10px;height:10px;background:#C9A96E;border:2px solid #fff;border-radius:50%;animation:cab-dot-pulse 1.6s ease-in-out infinite}",
+      ".cabines-bubble .cab-dot{position:absolute;top:6px;right:6px;width:10px;height:10px;background:#EC4899;border:2px solid #fff;border-radius:50%;animation:cab-dot-pulse 1.6s ease-in-out infinite}",
       ".cabines-bubble[data-pos='left'] .cab-dot{right:auto;left:6px}",
       ".cabines-overlay{position:fixed;inset:0;z-index:2147483647;background:rgba(26,20,16,.65);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);display:flex;align-items:center;justify-content:center;padding:16px;animation:cab-fadein .3s ease-out}",
-      ".cabines-modal{position:relative;width:100%;max-width:1080px;height:92vh;max-height:920px;background:#FBF7F2;border-radius:24px;overflow:hidden;box-shadow:0 28px 80px rgba(0,0,0,.45);animation:cab-zoomin .35s cubic-bezier(.22,1,.36,1) both}",
-      ".cabines-iframe{width:100%;height:100%;border:none;display:block;background:#FBF7F2}",
-      ".cabines-loader{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;background:#FBF7F2;z-index:5}",
-      ".cabines-loader-spinner{width:44px;height:44px;border:3px solid rgba(122,31,43,.15);border-top-color:#7A1F2B;border-radius:50%;animation:cab-spin .8s linear infinite}",
+      ".cabines-modal{position:relative;width:100%;max-width:1080px;height:92vh;max-height:920px;background:#FDF4FF;border-radius:24px;overflow:hidden;box-shadow:0 28px 80px rgba(91,33,182,.35);animation:cab-zoomin .35s cubic-bezier(.22,1,.36,1) both}",
+      ".cabines-iframe{width:100%;height:100%;border:none;display:block;background:#FDF4FF}",
+      ".cabines-loader{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;background:#FDF4FF;z-index:5}",
+      ".cabines-loader-spinner{width:44px;height:44px;border:3px solid rgba(124,58,237,.15);border-top-color:#7C3AED;border-radius:50%;animation:cab-spin .8s linear infinite}",
       ".cabines-loader p{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;font-size:14px;color:#4A4038;margin:0}",
       ".cabines-close{position:absolute;top:14px;right:14px;width:38px;height:38px;border:none;border-radius:50%;background:rgba(255,255,255,.95);color:#1A1410;font-size:18px;cursor:pointer;z-index:10;display:flex;align-items:center;justify-content:center;box-shadow:0 4px 16px rgba(0,0,0,.18);transition:transform .2s}",
       ".cabines-close:hover{transform:scale(1.1) rotate(90deg);background:#fff}",
@@ -371,11 +371,11 @@
       // Body (torso) silhouette behind shirts
       '<path d="M9.5 16 Q11 12 14.5 11.5 L17.5 11.5 Q21 12 22.5 16 L21 25 Q16 26 11 25 Z" fill="currentColor" opacity=".55"/>',
       // Garment #1 — bordeaux/wine
-      '<path class="cab-shirt cab-shirt-1" d="M9 16 L13 12 L19 12 L23 16 L21 19 L19 17 L19 25 Q16 26 13 25 L13 17 L11 19 Z" fill="#7A1F2B"/>',
+      '<path class="cab-shirt cab-shirt-1" d="M9 16 L13 12 L19 12 L23 16 L21 19 L19 17 L19 25 Q16 26 13 25 L13 17 L11 19 Z" fill="#7C3AED"/>',
       // Garment #2 — gold
-      '<path class="cab-shirt cab-shirt-2" d="M9 16 L13 12 L19 12 L23 16 L21 19 L19 17 L19 25 Q16 26 13 25 L13 17 L11 19 Z" fill="#C9A96E"/>',
+      '<path class="cab-shirt cab-shirt-2" d="M9 16 L13 12 L19 12 L23 16 L21 19 L19 17 L19 25 Q16 26 13 25 L13 17 L11 19 Z" fill="#EC4899"/>',
       // Garment #3 — cream
-      '<path class="cab-shirt cab-shirt-3" d="M9 16 L13 12 L19 12 L23 16 L21 19 L19 17 L19 25 Q16 26 13 25 L13 17 L11 19 Z" fill="#FBF7F2"/>',
+      '<path class="cab-shirt cab-shirt-3" d="M9 16 L13 12 L19 12 L23 16 L21 19 L19 17 L19 25 Q16 26 13 25 L13 17 L11 19 Z" fill="#FDA4AF"/>',
       // Arms (raise during swap)
       '<g class="cab-arm-l"><path d="M11 16 L8 22" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" fill="none"/></g>',
       '<g class="cab-arm-r"><path d="M21 16 L24 22" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" fill="none"/></g>',
@@ -496,7 +496,7 @@
       var el = document.getElementById("cabines-loader");
       if (el) {
         el.innerHTML =
-          "<p style='color:#7A1F2B;text-align:center;padding:0 24px'>Impossible de charger la cabine.<br>Vérifiez l'URL : " +
+          "<p style='color:#7C3AED;text-align:center;padding:0 24px'>Impossible de charger la cabine.<br>Vérifiez l'URL : " +
           escapeHtml(APP_URL) +
           "</p>";
       }

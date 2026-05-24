@@ -1,7 +1,7 @@
 "use client";
 
 import { motion } from "framer-motion";
-import { Sparkles } from "lucide-react";
+import { Sparkles, Wand2 } from "lucide-react";
 
 export function Hero() {
   const scrollToCabines = () => {
@@ -9,56 +9,64 @@ export function Hero() {
   };
 
   return (
-    <section className="relative overflow-hidden px-4 py-16 sm:px-6 sm:py-24 lg:px-8">
-      <div className="pointer-events-none absolute inset-0 flex items-center justify-center opacity-30">
-        <svg
-          viewBox="0 0 400 200"
-          className="h-64 w-full max-w-2xl text-bordeaux/20"
-          aria-hidden
-        >
-          <path
-            d="M0 180 Q100 80 200 100 T400 180 L400 200 L0 200 Z"
-            fill="currentColor"
-          />
-          <path
-            d="M50 160 Q150 60 200 80 Q250 60 350 160"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            opacity="0.5"
-          />
-        </svg>
-      </div>
-
+    <section className="relative overflow-hidden px-4 py-20 sm:px-6 sm:py-28 lg:px-8">
       <div className="relative mx-auto max-w-4xl text-center">
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.6 }}
         >
-          <div className="mb-6 inline-flex items-center gap-2 rounded-full border border-gold/30 bg-white/60 px-4 py-1.5 text-sm text-ink-muted backdrop-blur-sm">
+          <motion.div
+            initial={{ opacity: 0, scale: 0.9 }}
+            animate={{ opacity: 1, scale: 1 }}
+            transition={{ delay: 0.1, duration: 0.5 }}
+            className="mb-6 inline-flex items-center gap-2 rounded-full border border-bordeaux/20 bg-white/80 px-4 py-1.5 text-sm font-medium text-bordeaux shadow-soft backdrop-blur-sm"
+          >
             <Sparkles className="h-4 w-4 text-gold" aria-hidden />
             <span>Cabine d&apos;essayage virtuelle — sans compte</span>
-          </div>
+          </motion.div>
 
-          <h1 className="font-display text-4xl font-semibold leading-tight text-ink text-balance sm:text-5xl lg:text-6xl">
-            Votre cabine d&apos;essayage virtuelle
+          <h1 className="font-display text-4xl font-bold leading-[1.05] text-balance sm:text-6xl lg:text-7xl">
+            <span className="text-ink">Votre cabine </span>
+            <span className="text-gradient">d&apos;essayage</span>
+            <br />
+            <span className="text-gradient">virtuelle</span>
           </h1>
 
-          <p className="mx-auto mt-6 max-w-2xl text-lg text-ink-muted sm:text-xl">
-            Importez votre photo, ajoutez un article, laissez l&apos;IA vous
-            montrer le résultat.
+          <p className="mx-auto mt-7 max-w-2xl text-lg text-ink-muted sm:text-xl">
+            Importez votre photo, ajoutez un article,{" "}
+            <span className="font-semibold text-bordeaux">
+              laissez l&apos;IA
+            </span>{" "}
+            vous montrer le résultat.
           </p>
 
           <motion.button
             type="button"
             onClick={scrollToCabines}
             className="btn-primary mt-10 text-lg"
-            whileHover={{ scale: 1.02 }}
-            whileTap={{ scale: 0.98 }}
+            whileHover={{ scale: 1.03 }}
+            whileTap={{ scale: 0.97 }}
           >
+            <Wand2 className="h-5 w-5" aria-hidden />
             Commencer l&apos;essayage
           </motion.button>
+
+          {/* Trio of trust badges */}
+          <div className="mt-10 flex flex-wrap items-center justify-center gap-3 text-xs text-ink-muted">
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-white/70 px-3 py-1.5 backdrop-blur-sm ring-1 ring-bordeaux/10">
+              <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+              Sans inscription
+            </span>
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-white/70 px-3 py-1.5 backdrop-blur-sm ring-1 ring-gold/30">
+              <span className="h-1.5 w-1.5 rounded-full bg-gold" />
+              Photo non conservée
+            </span>
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-white/70 px-3 py-1.5 backdrop-blur-sm ring-1 ring-bordeaux/10">
+              <span className="h-1.5 w-1.5 rounded-full bg-bordeaux" />
+              Résultat en moins d&apos;une minute
+            </span>
+          </div>
         </motion.div>
       </div>
     </section>

@@ -128,8 +128,8 @@ export function PhotoGuideSteps({
           <div className="relative">
             <motion.span
               key={xp}
-              initial={{ scale: 1.3, color: "#C9A96E" }}
-              animate={{ scale: 1, color: "#1A1410" }}
+              initial={{ scale: 1.3, color: "#EC4899" }}
+              animate={{ scale: 1, color: "#1E1B4B" }}
               transition={{ duration: 0.4 }}
               className="font-display text-lg font-semibold tabular-nums"
             >
@@ -362,7 +362,7 @@ function SparkleRow() {
             top: `${20 + Math.random() * 60}%`,
             left: `${10 + Math.random() * 80}%`,
             background:
-              i % 2 === 0 ? "#C9A96E" : "#7A1F2B",
+              i % 2 === 0 ? "#EC4899" : "#7C3AED",
           }}
           initial={{ opacity: 0, y: 8, scale: 0.6 }}
           animate={{

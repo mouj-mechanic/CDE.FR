@@ -76,11 +76,13 @@ interface Piece {
 }
 
 const COLORS = [
-  "#C9A96E", // gold
-  "#7A1F2B", // bordeaux
-  "#3B7A4E", // emerald
-  "#E8C99A", // light gold
-  "#FBF7F2", // cream
+  "#7C3AED", // violet
+  "#EC4899", // hot pink
+  "#A855F7", // purple
+  "#FDA4AF", // peach pink
+  "#F9A8D4", // soft pink
+  "#7DD3FC", // sky blue
+  "#FACC15", // lemon
 ];
 
 function buildPieces(count: number): Piece[] {

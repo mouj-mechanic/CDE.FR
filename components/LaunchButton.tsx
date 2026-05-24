@@ -21,7 +21,7 @@ export function LaunchButton({ onClick }: LaunchButtonProps) {
       type="button"
       onClick={handleClick}
       disabled={pressed}
-      className="relative w-full overflow-hidden rounded-2xl bg-bordeaux px-8 py-4 font-medium text-white shadow-soft transition-shadow hover:shadow-lifted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-bordeaux focus-visible:ring-offset-2 disabled:cursor-progress disabled:opacity-100 sm:w-auto"
+      className="relative w-full overflow-hidden rounded-2xl bg-gradient-to-r from-bordeaux via-fuchsia-500 to-gold bg-[length:200%_100%] px-8 py-4 font-semibold text-white shadow-soft transition-all duration-500 hover:bg-[position:100%_0] hover:shadow-lifted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-bordeaux focus-visible:ring-offset-2 disabled:cursor-progress disabled:opacity-100 sm:w-auto"
       whileHover={!pressed ? { scale: 1.02 } : undefined}
       whileTap={!pressed ? { scale: 0.94 } : undefined}
       animate={
@@ -29,9 +29,9 @@ export function LaunchButton({ onClick }: LaunchButtonProps) {
           ? {
               scale: [1, 1.06, 1],
               boxShadow: [
-                "0 0 0 0 rgba(201,169,110,0)",
-                "0 0 0 14px rgba(201,169,110,0.45)",
-                "0 0 0 28px rgba(201,169,110,0)",
+                "0 0 0 0 rgba(236,72,153,0)",
+                "0 0 0 14px rgba(236,72,153,0.45)",
+                "0 0 0 28px rgba(236,72,153,0)",
               ],
             }
           : {}
