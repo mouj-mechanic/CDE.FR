@@ -43,6 +43,12 @@ const MEDIA_INDEX: Partial<
     angle:    { src: "/guide/glasses/angle.png",    kind: "image" },
     lighting: { src: "/guide/glasses/lighting.png", kind: "image" },
   },
+  watch: {
+    frame:    { src: "/guide/watch/frame.png",    kind: "image" },
+    angle:    { src: "/guide/watch/angle.png",    kind: "image" },
+    stable:   { src: "/guide/watch/stable.png",   kind: "image" },
+    lighting: { src: "/guide/watch/lighting.png", kind: "image" },
+  },
 };
 
 /**
