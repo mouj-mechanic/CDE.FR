@@ -6,7 +6,7 @@ import { Settings2 } from "lucide-react";
 import type { Category, CategoryId, ProductItem } from "@/types";
 import { CATEGORIES, getCategory } from "@/lib/categories";
 import { initialTryOnState, tryOnReducer } from "@/lib/tryOnReducer";
-import { PhotoGuide } from "./PhotoGuide";
+import { PhotoGuideSteps } from "./PhotoGuideSteps";
 import { ImageUploader } from "./ImageUploader";
 import { LaunchButton } from "./LaunchButton";
 import { Stage } from "./Stage";
@@ -234,7 +234,7 @@ export function EmbedFlow({
 
       {/* Photo guide for the auto-selected category */}
       <div className="glass-card p-5 sm:p-6">
-        <PhotoGuide category={category} />
+        <PhotoGuideSteps category={category} />
       </div>
 
       {/* Photo upload */}

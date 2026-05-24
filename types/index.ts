@@ -21,12 +21,35 @@ export type IconName =
   | "shirt"
   | "glasses";
 
+/** Visual scene played in the animated photo guide for a single step. */
+export type PhotoSceneId =
+  | "frame"      // Frame the body part / set distance
+  | "angle"      // Hold the right angle
+  | "lighting"   // Soft, even, natural light
+  | "background" // Plain neutral background
+  | "remove"     // Remove existing accessory (e.g. glasses)
+  | "stable"     // Stay still, no motion blur
+  | "pose"       // Stand straight / posture
+  | "outfit";    // Wear something fitted underneath
+
+export interface PhotoStep {
+  /** Short, action-oriented title shown as the step header. */
+  title: string;
+  /** One-sentence elaboration shown under the title. */
+  hint: string;
+  /** Which scene to render in the central animated illustration. */
+  scene: PhotoSceneId;
+}
+
 export interface Category {
   id: CategoryId;
   label: string;
   shortDescription: string;
   bodyTarget: string;
+  /** Legacy plain instructions (kept for backward compatibility). */
   photoInstructions: string[];
+  /** Step-by-step animated guide. */
+  photoSteps: PhotoStep[];
   productInputMode: ProductInputMode;
   loadingTitle: string;
   loadingDescription: string;

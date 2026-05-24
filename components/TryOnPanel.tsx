@@ -6,7 +6,7 @@ import { X, ChevronLeft, ChevronRight } from "lucide-react";
 import type { Category, ProductItem } from "@/types";
 import { initialTryOnState, tryOnReducer } from "@/lib/tryOnReducer";
 import { StepBar } from "./StepBar";
-import { PhotoGuide } from "./PhotoGuide";
+import { PhotoGuideSteps } from "./PhotoGuideSteps";
 import { ImageUploader } from "./ImageUploader";
 import { ProductInput } from "./ProductInput";
 import { Stage } from "./Stage";
@@ -192,7 +192,7 @@ export function TryOnPanel({
                 exit={{ opacity: 0, x: -20 }}
                 transition={{ duration: 0.3 }}
               >
-                {state.step === 1 && <PhotoGuide category={category} />}
+                {state.step === 1 && <PhotoGuideSteps category={category} />}
                 {state.step === 2 && (
                   <div className="space-y-4">
                     <h3 className="font-display text-xl font-semibold text-ink">

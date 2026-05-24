@@ -62,18 +62,14 @@
   function normalizeImageUrl(url) {
     if (!url) return "";
     var resolved = String(url).trim();
+    if (!resolved) return "";
 
-    // Protocol-relative → current protocol
     if (resolved.indexOf("//") === 0) {
       resolved = window.location.protocol + resolved;
-    }
-    // Root-relative path → current origin
-    else if (resolved.charAt(0) === "/") {
+    } else if (resolved.charAt(0) === "/") {
       resolved = window.location.origin + resolved;
     }
 
-    // Rewrite localhost/127.0.0.1 to the host the user is actually visiting
-    // (e.g. phone opens 192.168.1.12:3000 but og:image says localhost:3000)
     try {
       var parsed = new URL(resolved);
       var localHosts = ["localhost", "127.0.0.1"];
@@ -92,45 +88,209 @@
     return resolved;
   }
 
+  /** Pick the largest variant from an `srcset` declaration. */
+  function bestFromSrcset(srcset) {
+    if (!srcset) return "";
+    var best = { url: "", w: 0 };
+    var parts = srcset.split(",");
+    for (var i = 0; i < parts.length; i++) {
+      var seg = parts[i].trim().split(/\s+/);
+      if (!seg[0]) continue;
+      var w = 0;
+      if (seg[1]) {
+        var m = seg[1].match(/(\d+)w/);
+        if (m) w = parseInt(m[1], 10);
+        else {
+          var d = seg[1].match(/([\d.]+)x/);
+          if (d) w = Math.round(parseFloat(d[1]) * 1000);
+        }
+      }
+      if (w >= best.w) best = { url: seg[0], w: w };
+    }
+    return best.url;
+  }
+
+  function isLikelyJunkUrl(url) {
+    if (!url) return true;
+    var u = url.toLowerCase();
+    if (u.indexOf("data:") === 0 && u.length < 1500) return true;
+    if (/(logo|icon|favicon|sprite|placeholder|swatch|thumb|loader|spinner)/.test(u))
+      return true;
+    return false;
+  }
+
+  /** Score a candidate {url, w, h, meta}. Higher is better. */
+  function scoreCandidate(c) {
+    if (!c.url || isLikelyJunkUrl(c.url)) return -1;
+    var w = c.w || 0;
+    var h = c.h || 0;
+    var area = w * h;
+    var score = 0;
+    score += Math.min(area, 4000000) / 1000;     // bigger = better, capped
+    score += Math.min(Math.max(w, h), 2000) / 5; // longest side bonus
+    if (c.priority) score += c.priority;          // explicit signal
+    if (w && h) {
+      var ratio = Math.max(w, h) / Math.max(1, Math.min(w, h));
+      if (ratio > 4) score -= 200; // very thin → likely banner
+    }
+    if (w > 0 && w < 200) score -= 300; // tiny
+    return score;
+  }
+
+  function pushCandidate(list, url, w, h, priority) {
+    if (!url) return;
+    list.push({
+      url: normalizeImageUrl(url),
+      w: w || 0,
+      h: h || 0,
+      priority: priority || 0,
+    });
+  }
+
+  /** Walk DOM + JSON-LD + meta tags to build candidates, then return the best. */
+  function findBestProductImage() {
+    var candidates = [];
+
+    // 1. Explicit override from <script data-product-image="...">
+    if (ds.productImage) {
+      pushCandidate(candidates, ds.productImage, 0, 0, 10000);
+    }
+
+    // 2. Shopify featured image (best signal on Shopify themes)
+    try {
+      var meta = window.ShopifyAnalytics &&
+        window.ShopifyAnalytics.meta &&
+        window.ShopifyAnalytics.meta.product;
+      if (meta) {
+        if (meta.featured_image) pushCandidate(candidates, meta.featured_image, 0, 0, 8000);
+        if (meta.images && meta.images.length) {
+          for (var i = 0; i < meta.images.length; i++) {
+            pushCandidate(candidates, meta.images[i], 0, 0, 4000 - i * 50);
+          }
+        }
+      }
+    } catch (e) {}
+
+    // 3. JSON-LD Product schema
+    try {
+      var ldScripts = document.querySelectorAll('script[type="application/ld+json"]');
+      for (var s = 0; s < ldScripts.length; s++) {
+        try {
+          var data = JSON.parse(ldScripts[s].textContent || "null");
+          var nodes = Array.isArray(data) ? data : [data];
+          for (var n = 0; n < nodes.length; n++) {
+            var node = nodes[n];
+            if (!node) continue;
+            // Handle @graph wrapper
+            var inner = node["@graph"] && Array.isArray(node["@graph"]) ? node["@graph"] : [node];
+            for (var k = 0; k < inner.length; k++) {
+              var d = inner[k];
+              if (!d) continue;
+              var type = d["@type"];
+              var isProduct = type === "Product" ||
+                (Array.isArray(type) && type.indexOf("Product") !== -1);
+              if (!isProduct) continue;
+              var img = d.image;
+              if (!img) continue;
+              if (typeof img === "string") {
+                pushCandidate(candidates, img, 0, 0, 7000);
+              } else if (Array.isArray(img)) {
+                for (var ii = 0; ii < img.length; ii++) {
+                  var v = img[ii];
+                  if (typeof v === "string") pushCandidate(candidates, v, 0, 0, 6000 - ii * 50);
+                  else if (v && v.url) pushCandidate(candidates, v.url, v.width || 0, v.height || 0, 6000 - ii * 50);
+                }
+              } else if (img && img.url) {
+                pushCandidate(candidates, img.url, img.width || 0, img.height || 0, 7000);
+              }
+            }
+          }
+        } catch (eIn) {}
+      }
+    } catch (e) {}
+
+    // 4. og:image / twitter:image
+    var og = document.querySelector('meta[property="og:image"]');
+    if (og && og.content) pushCandidate(candidates, og.content, 0, 0, 3000);
+    var ogW = parseInt((document.querySelector('meta[property="og:image:width"]') || {}).content || "0", 10);
+    var ogH = parseInt((document.querySelector('meta[property="og:image:height"]') || {}).content || "0", 10);
+    if (og && og.content && (ogW || ogH)) {
+      // patch the previous push with dimensions
+      var last = candidates[candidates.length - 1];
+      if (last) { last.w = ogW; last.h = ogH; }
+    }
+    var tw = document.querySelector('meta[name="twitter:image"]');
+    if (tw && tw.content) pushCandidate(candidates, tw.content, 0, 0, 2500);
+
+    // 5. <link rel="image_src">
+    var linkSrc = document.querySelector('link[rel="image_src"]');
+    if (linkSrc && linkSrc.href) pushCandidate(candidates, linkSrc.href, 0, 0, 2000);
+
+    // 6. DOM scan: prefer images inside known product containers
+    var productScopes = [
+      "[data-product-featured-image]",
+      ".product-single__photos",
+      ".product__media",
+      ".product-gallery",
+      ".product__photo",
+      "[data-product-media]",
+      "main [class*='product']",
+      "main",
+    ];
+    for (var p = 0; p < productScopes.length; p++) {
+      var roots = document.querySelectorAll(productScopes[p]);
+      for (var r = 0; r < roots.length; r++) {
+        // Try <picture><source srcset>
+        var sources = roots[r].querySelectorAll("source[srcset]");
+        for (var ss = 0; ss < sources.length; ss++) {
+          var url = bestFromSrcset(sources[ss].getAttribute("srcset"));
+          if (url) pushCandidate(candidates, url, 0, 0, 1500 - p * 100);
+        }
+        var imgs = roots[r].querySelectorAll("img");
+        for (var im = 0; im < imgs.length; im++) {
+          var el = imgs[im];
+          var srcset = el.getAttribute("srcset");
+          var u = (srcset && bestFromSrcset(srcset)) || el.currentSrc || el.src;
+          var w = el.naturalWidth || parseInt(el.getAttribute("width") || "0", 10) || 0;
+          var h = el.naturalHeight || parseInt(el.getAttribute("height") || "0", 10) || 0;
+          pushCandidate(candidates, u, w, h, 1000 - p * 100);
+        }
+      }
+    }
+
+    // Score & pick the best
+    var best = null;
+    var bestScore = -Infinity;
+    for (var c = 0; c < candidates.length; c++) {
+      var sc = scoreCandidate(candidates[c]);
+      if (sc > bestScore) {
+        bestScore = sc;
+        best = candidates[c];
+      }
+    }
+    return best ? best.url : "";
+  }
+
   function detectProductInfo() {
     var info = { title: "", image: "", url: window.location.href };
 
-    // Explicit override from <script data-product-image="...">
-    if (ds.productImage) {
-      info.image = normalizeImageUrl(ds.productImage);
-    }
+    info.image = findBestProductImage();
 
     try {
       if (window.ShopifyAnalytics && window.ShopifyAnalytics.meta &&
           window.ShopifyAnalytics.meta.product) {
-        var p = window.ShopifyAnalytics.meta.product;
-        info.title = p.title || info.title;
+        info.title = window.ShopifyAnalytics.meta.product.title || info.title;
       }
     } catch (e) {}
-
+    if (!info.title) {
+      var ogTitle = document.querySelector('meta[property="og:title"]');
+      if (ogTitle && ogTitle.content) info.title = ogTitle.content.trim();
+    }
     if (!info.title) {
       var h1 = document.querySelector("h1");
       if (h1) info.title = h1.textContent.trim();
     }
 
-    if (!info.image) {
-      var ogImage = document.querySelector('meta[property="og:image"]');
-      if (ogImage && ogImage.content) info.image = ogImage.content;
-    }
-
-    if (!info.image) {
-      var imgEl =
-        document.querySelector("[data-product-featured-image]") ||
-        document.querySelector(".product__image img") ||
-        document.querySelector(".product-single__photo img") ||
-        document.querySelector(".product-gallery img") ||
-        document.querySelector("main img");
-      if (imgEl) {
-        info.image = imgEl.currentSrc || imgEl.src;
-      }
-    }
-
-    info.image = normalizeImageUrl(info.image);
     return info;
   }
 

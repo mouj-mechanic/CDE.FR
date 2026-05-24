@@ -1,10 +1,11 @@
 "use client";
 
-import { useCallback } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useDropzone } from "react-dropzone";
 import { motion, AnimatePresence } from "framer-motion";
-import { ImagePlus, Trash2, Upload } from "lucide-react";
+import { Check, ImagePlus, Sparkles, Trash2, Upload } from "lucide-react";
 import { formatBytes, validateImageFile } from "@/lib/utils";
+import { ConfettiBurst } from "./ConfettiBurst";
 
 interface ImageUploaderProps {
   previewUrl: string | null;
@@ -19,6 +20,22 @@ export function ImageUploader({
   onImageClear,
   error,
 }: ImageUploaderProps) {
+  const [confettiTrigger, setConfettiTrigger] = useState(0);
+  const [showXp, setShowXp] = useState(false);
+  const previousPreview = useRef<string | null>(previewUrl);
+
+  useEffect(() => {
+    // Trigger celebration only on transition from "no photo" → "photo".
+    if (previewUrl && !previousPreview.current) {
+      setConfettiTrigger((n) => n + 1);
+      setShowXp(true);
+      const t = setTimeout(() => setShowXp(false), 1800);
+      previousPreview.current = previewUrl;
+      return () => clearTimeout(t);
+    }
+    previousPreview.current = previewUrl;
+  }, [previewUrl]);
+
   const onDrop = useCallback(
     (acceptedFiles: File[]) => {
       const file = acceptedFiles[0];
@@ -46,7 +63,8 @@ export function ImageUploader({
   const rejectionError = fileRejections[0]?.errors[0]?.message;
 
   return (
-    <div className="space-y-4">
+    <div className="relative space-y-4">
+      <ConfettiBurst trigger={confettiTrigger} />
       <AnimatePresence mode="wait">
         {previewUrl ? (
           <motion.div
@@ -62,6 +80,34 @@ export function ImageUploader({
               alt="Aperçu de votre photo"
               className="mx-auto max-h-80 w-full object-contain"
             />
+
+            {/* Success badge in top-left */}
+            <motion.div
+              initial={{ opacity: 0, y: -8, scale: 0.9 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              transition={{ delay: 0.15, duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
+              className="absolute left-3 top-3 flex items-center gap-1.5 rounded-full bg-emerald-600/95 px-3 py-1 text-xs font-semibold text-white shadow-soft"
+            >
+              <Check className="h-3.5 w-3.5" aria-hidden />
+              Photo capturée
+            </motion.div>
+
+            <AnimatePresence>
+              {showXp && (
+                <motion.div
+                  key="xp"
+                  initial={{ opacity: 0, y: 10, scale: 0.9 }}
+                  animate={{ opacity: 1, y: -8, scale: 1 }}
+                  exit={{ opacity: 0, y: -28 }}
+                  transition={{ duration: 0.7 }}
+                  className="absolute left-1/2 top-1/2 flex -translate-x-1/2 items-center gap-1.5 rounded-full bg-gold px-4 py-1.5 text-sm font-bold text-ink shadow-lifted"
+                >
+                  <Sparkles className="h-4 w-4" aria-hidden />
+                  +50 XP
+                </motion.div>
+              )}
+            </AnimatePresence>
+
             <div className="absolute bottom-4 right-4 flex gap-2">
               <button
                 type="button"
