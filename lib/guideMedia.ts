@@ -49,6 +49,12 @@ const MEDIA_INDEX: Partial<
     stable:   { src: "/guide/watch/stable.png",   kind: "image" },
     lighting: { src: "/guide/watch/lighting.png", kind: "image" },
   },
+  "hand-jewelry": {
+    frame:      { src: "/guide/hand-jewelry/frame.png",      kind: "image" },
+    angle:      { src: "/guide/hand-jewelry/angle.png",      kind: "image" },
+    background: { src: "/guide/hand-jewelry/background.png", kind: "image" },
+    remove:     { src: "/guide/hand-jewelry/remove.png",     kind: "image" },
+  },
 };
 
 /**
