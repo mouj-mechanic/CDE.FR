@@ -98,9 +98,16 @@ export function TryOnPanel({
       });
       const data = (await response.json()) as TryOnResponse & {
         error?: string;
+        details?: string;
+        provider?: string;
       };
 
       if (!response.ok) {
+        if (data.provider === "fal") {
+          throw new Error(
+            "Le mode IA réel est actif, mais la génération a échoué. Vérifiez la clé API, les crédits fal.ai ou les logs serveur."
+          );
+        }
         throw new Error(data.error ?? "Erreur lors de la génération.");
       }
 

@@ -3,6 +3,19 @@ import { pickMockResult } from "./mockResults";
 import { falKontextTryOn, FAL_KONTEXT_MODEL } from "./providers/falKontext";
 import { fashnTryOn } from "./providers/fashn";
 
+/**
+ * Custom error raised when the configured provider cannot be honored —
+ * e.g. `AI_TRYON_PROVIDER=fal` but `FAL_KEY` is missing. The API route
+ * uses this to distinguish "misconfiguration" (500 with explicit message)
+ * from a transient network/model error.
+ */
+export class ProviderConfigError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ProviderConfigError";
+  }
+}
+
 function randomDelay(minMs: number, maxMs: number): Promise<void> {
   const delay = minMs + Math.random() * (maxMs - minMs);
   return new Promise((resolve) => setTimeout(resolve, delay));
@@ -65,14 +78,14 @@ export async function generateTryOnImage(
 
   if (provider === "fal") {
     if (!falKey) {
-      throw new Error(
-        "Clé API fal.ai manquante. Définissez FAL_KEY dans .env.local."
+      throw new ProviderConfigError(
+        "FAL_KEY is missing. AI_TRYON_PROVIDER=fal but no fal.ai key is configured."
       );
     }
     return runFal(params, falKey, fashnKey);
   }
 
-  throw new Error(
+  throw new ProviderConfigError(
     `Provider IA "${provider}" inconnu. Valeurs supportées : "mock", "auto", "fal".`
   );
 }

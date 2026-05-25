@@ -101,6 +101,8 @@ export interface TryOnResponse {
   provider?: string;
   model?: string;
   category?: CategoryId;
+  /** Server-side generation duration in milliseconds. */
+  durationMs?: number;
 }
 
 export interface ProductResolveResult {

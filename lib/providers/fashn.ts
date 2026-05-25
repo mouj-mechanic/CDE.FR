@@ -20,7 +20,11 @@ import type { TryOnRequest, TryOnResponse } from "@/types";
  * If the call fails, the caller is expected to fall back to FLUX Kontext.
  */
 
-const FASHN_MODEL_IDS = ["fashn/tryon/v1.6", "fal-ai/fashn/tryon"];
+const FASHN_MODEL_IDS = [
+  "fal-ai/fashn/tryon/v1.6",
+  "fashn/tryon/v1.6",
+  "fal-ai/fashn/tryon",
+];
 
 interface FashnOutput {
   // The fashn output can come back under different keys depending on the

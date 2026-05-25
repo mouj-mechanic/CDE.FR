@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { isValidCategoryId } from "@/lib/categories";
-import { generateTryOnImage } from "@/lib/tryOnService";
+import { generateTryOnImage, ProviderConfigError } from "@/lib/tryOnService";
 import { ACCEPTED_IMAGE_TYPES, MAX_FILE_SIZE } from "@/lib/utils";
 import { trackTryOnUsage } from "@/lib/usage";
 import type { CategoryId, TryOnRequest } from "@/types";
@@ -29,9 +29,37 @@ function looksLikeImageUrl(url: string): boolean {
   }
 }
 
+/**
+ * Sanitize any error message coming from a provider before sending it to the
+ * client. We strip anything that could leak the FAL_KEY value or query params
+ * that contain credentials.
+ */
+function safeErrorMessage(err: unknown): string {
+  const raw =
+    err instanceof Error
+      ? err.message
+      : typeof err === "string"
+        ? err
+        : "Unknown error";
+  const falKey = process.env.FAL_KEY?.trim();
+  let cleaned = raw;
+  if (falKey) {
+    cleaned = cleaned.split(falKey).join("[REDACTED]");
+  }
+  // Remove any obvious "key=xxx" / "Authorization: ..." pairs just in case.
+  cleaned = cleaned.replace(/(api[_-]?key|authorization|bearer)[=:\s]+\S+/gi, "$1=[REDACTED]");
+  return cleaned;
+}
+
 export async function POST(request: NextRequest) {
   const startedAt = Date.now();
   let categoryForUsage: CategoryId | null = null;
+
+  const envProvider =
+    process.env.AI_TRYON_PROVIDER?.trim().toLowerCase() || "mock";
+  const hasFalKey = Boolean(
+    process.env.FAL_KEY?.trim() || process.env.AI_TRYON_API_KEY?.trim()
+  );
 
   try {
     const formData = await request.formData();
@@ -122,7 +150,16 @@ export async function POST(request: NextRequest) {
       merchantId,
     };
 
+    console.info(
+      `[try-on] start provider=${envProvider} category=${category} hasFalKey=${hasFalKey} productImages=${productImages.length} productUrls=${productUrls.length}`
+    );
+
     const result = await generateTryOnImage(params);
+    const durationMs = Date.now() - startedAt;
+
+    console.info(
+      `[try-on] success provider=${result.provider} model=${result.model} mock=${Boolean(result.mock)} durationMs=${durationMs}`
+    );
 
     trackTryOnUsage({
       merchantId,
@@ -131,17 +168,67 @@ export async function POST(request: NextRequest) {
       model: result.model ?? "unknown",
       mock: Boolean(result.mock),
       success: true,
-      durationMs: Date.now() - startedAt,
+      durationMs,
     });
 
-    return NextResponse.json(result);
+    return NextResponse.json({ ...result, durationMs });
   } catch (error) {
-    console.error("[try-on]", error);
-    const message =
-      error instanceof Error
-        ? error.message
-        : "Une erreur est survenue lors de la génération.";
+    const durationMs = Date.now() - startedAt;
+    const safeMessage = safeErrorMessage(error);
 
+    // Misconfiguration (e.g. FAL_KEY missing while provider=fal) — explicit 500.
+    if (error instanceof ProviderConfigError) {
+      console.error(
+        `[try-on] config-error provider=${envProvider} hasFalKey=${hasFalKey} durationMs=${durationMs} message=${safeMessage}`
+      );
+      if (categoryForUsage) {
+        trackTryOnUsage({
+          category: categoryForUsage,
+          provider: envProvider,
+          model: "unknown",
+          mock: false,
+          success: false,
+          durationMs,
+          errorCode: "ProviderConfigError",
+        });
+      }
+      return NextResponse.json(
+        {
+          error: safeMessage,
+          details: safeMessage,
+          provider: envProvider,
+        },
+        { status: 500 }
+      );
+    }
+
+    // Real generation failure on fal (network, model error, quota, etc.)
+    if (envProvider === "fal" || envProvider === "auto") {
+      console.error(
+        `[try-on] generation-failed provider=${envProvider} category=${categoryForUsage} durationMs=${durationMs} message=${safeMessage}`
+      );
+      if (categoryForUsage) {
+        trackTryOnUsage({
+          category: categoryForUsage,
+          provider: envProvider,
+          model: "unknown",
+          mock: false,
+          success: false,
+          durationMs,
+          errorCode: error instanceof Error ? error.name : "Error",
+        });
+      }
+      return NextResponse.json(
+        {
+          error: "Real AI generation failed",
+          details: safeMessage,
+          provider: "fal",
+        },
+        { status: 500 }
+      );
+    }
+
+    console.error("[try-on] unexpected-error", safeMessage);
     if (categoryForUsage) {
       trackTryOnUsage({
         category: categoryForUsage,
@@ -149,11 +236,10 @@ export async function POST(request: NextRequest) {
         model: "unknown",
         mock: false,
         success: false,
-        durationMs: Date.now() - startedAt,
+        durationMs,
         errorCode: error instanceof Error ? error.name : "Error",
       });
     }
-
-    return NextResponse.json({ error: message }, { status: 500 });
+    return NextResponse.json({ error: safeMessage }, { status: 500 });
   }
 }

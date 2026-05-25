@@ -167,21 +167,28 @@ export function ResultView({
           transition={{ delay: 0.2, duration: 0.4 }}
           className="flex items-center justify-center"
         >
-          <span
-            className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-[11px] font-bold uppercase tracking-wider ${
-              mock
-                ? "bg-amber-100 text-amber-800"
-                : "bg-gradient-to-r from-bordeaux/15 to-gold/15 text-bordeaux"
-            }`}
-          >
-            <Sparkles className="h-3 w-3" aria-hidden />
-            {mock ? "Mode démo" : "Généré avec IA"}
-            {!mock && model && (
-              <span className="ml-1 font-normal normal-case opacity-70">
-                · {prettyModel(model, provider)}
+          <div className="flex flex-col items-center gap-1">
+            <span
+              className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-[11px] font-bold uppercase tracking-wider ${
+                mock
+                  ? "bg-amber-100 text-amber-800"
+                  : "bg-gradient-to-r from-bordeaux/15 to-gold/15 text-bordeaux"
+              }`}
+            >
+              <Sparkles className="h-3 w-3" aria-hidden />
+              {mock ? "Mode démo" : "Généré avec IA"}
+              {!mock && model && (
+                <span className="ml-1 font-normal normal-case opacity-70">
+                  · {prettyModel(model, provider)}
+                </span>
+              )}
+            </span>
+            {!mock && provider === "fal" && (
+              <span className="text-[10px] uppercase tracking-wider text-ink-muted/70">
+                Provider: fal.ai
               </span>
             )}
-          </span>
+          </div>
         </motion.div>
       )}
 

@@ -37,6 +37,7 @@ Useful pages while developing:
 | `/demo2`         | Fake PDP — gold & green watch                            |
 | `/embed`         | The try-on experience itself (loaded inside the iframe)  |
 | `/api/try-on`    | Generation endpoint (mock or fal)                        |
+| `/api/ai-status` | Diagnostic — reports active provider and key presence    |
 | `/api/product/resolve` | Resolves a product URL → title + best image URL    |
 
 ---
@@ -67,6 +68,100 @@ Copy `.env.example` to `.env.local` and fill in what you need.
     prompts (see `lib/providers/prompts.ts`).
 - **`auto`**: uses `fal` if `FAL_KEY` is present, otherwise `mock`. Recommended
   for CI / preview deployments.
+
+> **Strict fal mode:** when `AI_TRYON_PROVIDER=fal`, the API will **never**
+> silently fall back to mock. If `FAL_KEY` is missing, `/api/try-on` returns
+> a `500` with an explicit error and `/api/ai-status` reports
+> `mode: "fal-configured-but-missing-key"`.
+
+---
+
+## Activer la génération IA réelle avec fal.ai
+
+By default the project runs in **mock** mode (no API key, deterministic
+placeholder image). Follow these steps to enable real AI generation:
+
+### Local
+
+1. Create a fal.ai API key on [fal.ai/dashboard/keys](https://fal.ai/dashboard/keys).
+2. Add credits to your fal.ai account (FLUX Kontext and FASHN are paid models).
+3. Create a `.env.local` file at the project root (this file is git-ignored):
+
+   ```env
+   AI_TRYON_PROVIDER=fal
+   FAL_KEY=your_fal_key_here
+   NEXT_PUBLIC_AI_PROVIDER=fal
+   ```
+
+4. Restart the dev server:
+
+   ```bash
+   npm run dev
+   ```
+
+5. Verify the configuration is picked up:
+
+   ```bash
+   curl http://localhost:3000/api/ai-status
+   ```
+
+   Expected JSON:
+
+   ```json
+   {
+     "ok": true,
+     "provider": "fal",
+     "publicProvider": "fal",
+     "hasFalKey": true,
+     "mode": "real-ai"
+   }
+   ```
+
+6. Run a try-on through the UI (`/embed` or `/`). The API response from
+   `/api/try-on` should now include:
+
+   ```json
+   {
+     "mock": false,
+     "provider": "fal",
+     "model": "fal-ai/flux-pro/kontext/max/multi",
+     "category": "watch",
+     "resultUrl": "https://fal.media/files/...",
+     "generatedAt": 1234567890,
+     "durationMs": 8732
+   }
+   ```
+
+   The ResultView badge will read **"Généré avec IA · FLUX Kontext"** with a
+   small **"Provider: fal.ai"** line underneath.
+
+### Vercel (production)
+
+1. Open the Vercel project → **Settings** → **Environment Variables**.
+2. Add (for `Production`, optionally also `Preview` and `Development`):
+
+   | Variable                  | Value                  |
+   | ------------------------- | ---------------------- |
+   | `AI_TRYON_PROVIDER`       | `fal`                  |
+   | `FAL_KEY`                 | `<your fal.ai key>`    |
+   | `NEXT_PUBLIC_AI_PROVIDER` | `fal`                  |
+
+3. **Redeploy** the project (environment variable changes do not apply to
+   already-running deployments).
+4. Verify in production:
+
+   ```bash
+   curl https://your-domain.com/api/ai-status
+   ```
+
+### Security notes
+
+- `FAL_KEY` is read **server-side only** (`process.env.FAL_KEY`). It is
+  never sent to the browser.
+- Never prefix the fal key with `NEXT_PUBLIC_*`.
+- Never commit `.env.local` — `.gitignore` already excludes `.env*.local`.
+- Errors returned by `/api/try-on` are sanitized to redact any occurrence
+  of the key value before being sent to the client.
 
 ---
 
