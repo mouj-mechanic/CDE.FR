@@ -67,13 +67,21 @@ export type TryOnStatus =
   | "done"
   | "error";
 
+export type ProductSource =
+  | "user"
+  | "shopify"
+  | "opengraph"
+  | "jsonld"
+  | "direct-image"
+  | "unknown";
+
 export interface ProductItem {
   id: string;
   type: "url" | "image";
   value: string;
   file?: File;
   previewUrl?: string;
-  source?: "user" | "shopify";
+  source?: ProductSource;
   title?: string;
 }
 
@@ -83,11 +91,27 @@ export interface TryOnRequest {
   productImages: File[];
   productUrls: string[];
   notes?: string;
+  merchantId?: string;
 }
 
 export interface TryOnResponse {
   resultUrl: string;
   generatedAt: number;
+  mock?: boolean;
+  provider?: string;
+  model?: string;
+  category?: CategoryId;
+}
+
+export interface ProductResolveResult {
+  title?: string;
+  imageUrl?: string;
+  source: ProductSource;
+}
+
+export interface TryOnResultMeta {
+  provider?: string;
+  model?: string;
   mock?: boolean;
 }
 
@@ -100,6 +124,7 @@ export interface TryOnState {
   status: TryOnStatus;
   error: string | null;
   resultUrl: string | null;
+  resultMeta: TryOnResultMeta | null;
 }
 
 export type TryOnAction =
@@ -112,7 +137,7 @@ export type TryOnAction =
   | { type: "SET_NOTES"; notes: string }
   | { type: "SET_STATUS"; status: TryOnStatus }
   | { type: "SET_ERROR"; error: string | null }
-  | { type: "SET_RESULT"; resultUrl: string }
+  | { type: "SET_RESULT"; resultUrl: string; meta?: TryOnResultMeta }
   | { type: "RESET_ARTICLES" }
   | { type: "RESET_TRY_AGAIN" }
   | { type: "RESET_ALL" };

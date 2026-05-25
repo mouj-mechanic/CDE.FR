@@ -1,17 +1,20 @@
 import type { CategoryId, PhotoSceneId } from "@/types";
 
 /**
- * Custom GIF / video media that overrides the default animated SVG vignette
- * for a given (category, scene) pair.
+ * Custom GIF / video / image media that overrides the default animated SVG
+ * vignette for a given (category, scene) pair.
  *
- * To add a media:
+ * To add a new media:
  *   1. Drop your file into  public/guide/<categoryId>/<sceneId>.<ext>
- *   2. Add it to MEDIA_INDEX below (or follow the convention by exporting a
- *      list of available files via getGuideMedia).
+ *   2. Add a corresponding entry to MEDIA_INDEX below.
  *
- * Supported formats: .gif, .webp (animated), .webm, .mp4 (muted, autoplay,
- * loop). MP4 / WebM produce smaller files than GIF and are preferred for
- * any clip larger than ~1 MB.
+ * Supported formats: .png, .jpg, .webp, .gif (image) ; .webm, .mp4 (video).
+ * Videos must be muted, autoplay, loop, playsInline — handled by
+ * <PhotoStepIllustration />.
+ *
+ * Fallback: if a file is missing or fails to load, <PhotoStepIllustration />
+ * automatically falls back to the procedurally-drawn SVG vignette and emits
+ * a console.warn in development.
  */
 export type GuideMediaKind = "image" | "video";
 
@@ -20,62 +23,60 @@ export interface GuideMedia {
   kind: GuideMediaKind;
   /** Optional poster image used for video media. */
   poster?: string;
+  /**
+   * `true` when the asset already contains the step number, title and hint —
+   * we render it edge-to-edge and hide the duplicated text column.
+   * Default = `false` (the asset is a small illustration combined with text).
+   */
+  fullCard?: boolean;
 }
 
-/**
- * Manual map. Edit this when you add new GIFs.
- * The convention used here is `/guide/<category>/<scene>.<ext>` so we just
- * need the extension. Set `null` (or remove the entry) to fall back to the
- * default SVG animation.
- */
 const MEDIA_INDEX: Partial<
   Record<CategoryId, Partial<Record<PhotoSceneId, GuideMedia>>>
 > = {
   headwear: {
-    frame:      { src: "/guide/headwear/frame.png",      kind: "image" },
-    angle:      { src: "/guide/headwear/angle.png",      kind: "image" },
-    lighting:   { src: "/guide/headwear/lighting.png",   kind: "image" },
-    background: { src: "/guide/headwear/background.png", kind: "image" },
+    frame:      { src: "/guide/headwear/frame.png",      kind: "image", fullCard: true },
+    angle:      { src: "/guide/headwear/angle.png",      kind: "image", fullCard: true },
+    lighting:   { src: "/guide/headwear/lighting.png",   kind: "image", fullCard: true },
+    background: { src: "/guide/headwear/background.png", kind: "image", fullCard: true },
   },
   glasses: {
-    frame:    { src: "/guide/glasses/frame.png",    kind: "image" },
-    remove:   { src: "/guide/glasses/remove.png",   kind: "image" },
-    angle:    { src: "/guide/glasses/angle.png",    kind: "image" },
-    lighting: { src: "/guide/glasses/lighting.png", kind: "image" },
+    frame:    { src: "/guide/glasses/frame.png",    kind: "image", fullCard: true },
+    remove:   { src: "/guide/glasses/remove.png",   kind: "image", fullCard: true },
+    angle:    { src: "/guide/glasses/angle.png",    kind: "image", fullCard: true },
+    lighting: { src: "/guide/glasses/lighting.png", kind: "image", fullCard: true },
   },
   watch: {
-    frame:    { src: "/guide/watch/frame.png",    kind: "image" },
-    angle:    { src: "/guide/watch/angle.png",    kind: "image" },
-    stable:   { src: "/guide/watch/stable.png",   kind: "image" },
-    lighting: { src: "/guide/watch/lighting.png", kind: "image" },
+    frame:    { src: "/guide/watch/frame.png",    kind: "image", fullCard: true },
+    angle:    { src: "/guide/watch/angle.png",    kind: "image", fullCard: true },
+    stable:   { src: "/guide/watch/stable.png",   kind: "image", fullCard: true },
+    lighting: { src: "/guide/watch/lighting.png", kind: "image", fullCard: true },
   },
   "hand-jewelry": {
-    frame:      { src: "/guide/hand-jewelry/frame.png",      kind: "image" },
-    angle:      { src: "/guide/hand-jewelry/angle.png",      kind: "image" },
-    background: { src: "/guide/hand-jewelry/background.png", kind: "image" },
-    remove:     { src: "/guide/hand-jewelry/remove.png",     kind: "image" },
+    frame:      { src: "/guide/hand-jewelry/frame.png",      kind: "image", fullCard: true },
+    angle:      { src: "/guide/hand-jewelry/angle.png",      kind: "image", fullCard: true },
+    background: { src: "/guide/hand-jewelry/background.png", kind: "image", fullCard: true },
+    remove:     { src: "/guide/hand-jewelry/remove.png",     kind: "image", fullCard: true },
   },
   clothes: {
-    frame:    { src: "/guide/clothes/frame.png",    kind: "image" },
-    pose:     { src: "/guide/clothes/pose.png",     kind: "image" },
-    outfit:   { src: "/guide/clothes/outfit.png",   kind: "image" },
-    lighting: { src: "/guide/clothes/lighting.png", kind: "image" },
+    frame:    { src: "/guide/clothes/frame.png",    kind: "image", fullCard: true },
+    pose:     { src: "/guide/clothes/pose.png",     kind: "image", fullCard: true },
+    outfit:   { src: "/guide/clothes/outfit.png",   kind: "image", fullCard: true },
+    lighting: { src: "/guide/clothes/lighting.png", kind: "image", fullCard: true },
   },
 };
 
 /**
- * Whether the registered media is a "full card" mockup (already contains the
- * step number, title, hint, etc.) or just a vignette to be combined with the
- * default text layout. Full cards are rendered edge-to-edge and the
- * duplicated text column is hidden.
- *
- * Default = "full" because the current images we ship are full mockups.
+ * Whether the registered media is a "full card" mockup that already contains
+ * the step number, title and hint. When true, the duplicated text column is
+ * hidden and the asset is rendered edge-to-edge.
  */
 export function isFullCardMedia(
   category: CategoryId,
   scene: PhotoSceneId
 ): boolean {
-  return Boolean(MEDIA_INDEX[category]?.[scene]);
+  const m = MEDIA_INDEX[category]?.[scene];
+  return Boolean(m?.fullCard);
 }
 
 export function getGuideMedia(

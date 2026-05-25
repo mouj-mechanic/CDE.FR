@@ -3,8 +3,21 @@
 import { useCallback, useState } from "react";
 import { useDropzone } from "react-dropzone";
 import { AnimatePresence, motion } from "framer-motion";
-import { Link2, ImagePlus, Plus, Trash2, Store } from "lucide-react";
-import type { Category, ProductItem } from "@/types";
+import {
+  Link2,
+  ImagePlus,
+  Plus,
+  Trash2,
+  Store,
+  Loader2,
+  AlertTriangle,
+} from "lucide-react";
+import type {
+  Category,
+  ProductItem,
+  ProductResolveResult,
+  ProductSource,
+} from "@/types";
 import { generateId, isValidUrl, validateImageFile } from "@/lib/utils";
 
 interface ProductInputProps {
@@ -24,11 +37,16 @@ export function ProductInput({
 }: ProductInputProps) {
   const [urlInput, setUrlInput] = useState("");
   const [urlError, setUrlError] = useState<string | null>(null);
+  const [warning, setWarning] = useState<string | null>(null);
+  const [resolving, setResolving] = useState(false);
   const isMulti = category.productInputMode === "multi";
   const canAddMore = isMulti || products.length === 0;
 
-  const handleAddUrl = () => {
+  const handleAddUrl = useCallback(async () => {
     const trimmed = urlInput.trim();
+    setUrlError(null);
+    setWarning(null);
+
     if (!trimmed) {
       setUrlError("Veuillez saisir une URL.");
       return;
@@ -41,10 +59,50 @@ export function ProductInput({
       setUrlError("Un seul article suffit pour cette catégorie.");
       return;
     }
-    onAdd({ id: generateId(), type: "url", value: trimmed });
+
+    setResolving(true);
+    let resolved: ProductResolveResult | null = null;
+    try {
+      const res = await fetch("/api/product/resolve", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url: trimmed }),
+      });
+      if (res.ok) {
+        resolved = (await res.json()) as ProductResolveResult;
+      }
+    } catch {
+      // network errors are non-fatal; we still let the user add the raw URL
+    } finally {
+      setResolving(false);
+    }
+
+    if (resolved?.imageUrl) {
+      onAdd({
+        id: generateId(),
+        type: "url",
+        value: resolved.imageUrl,
+        previewUrl: resolved.imageUrl,
+        source: resolved.source as ProductSource,
+        title: resolved.title,
+      });
+      setUrlInput("");
+      return;
+    }
+
+    // No image detected — still let user add the page URL as a hint.
+    onAdd({
+      id: generateId(),
+      type: "url",
+      value: trimmed,
+      source: "unknown",
+      title: resolved?.title,
+    });
     setUrlInput("");
-    setUrlError(null);
-  };
+    setWarning(
+      "Image produit non détectée automatiquement. Importez une image produit pour un meilleur résultat."
+    );
+  }, [urlInput, canAddMore, onAdd]);
 
   const onDrop = useCallback(
     (acceptedFiles: File[]) => {
@@ -68,6 +126,7 @@ export function ProductInput({
         previewUrl,
       });
       setUrlError(null);
+      setWarning(null);
     },
     [canAddMore, isMulti, onAdd]
   );
@@ -81,7 +140,7 @@ export function ProductInput({
     },
     maxFiles: 1,
     maxSize: 10 * 1024 * 1024,
-    disabled: !canAddMore,
+    disabled: !canAddMore || resolving,
   });
 
   return (
@@ -116,22 +175,42 @@ export function ProductInput({
                 setUrlInput(e.target.value);
                 setUrlError(null);
               }}
-              onKeyDown={(e) => e.key === "Enter" && (e.preventDefault(), handleAddUrl())}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  void handleAddUrl();
+                }
+              }}
               placeholder="https://boutique.com/produit..."
               className="input-field pl-10"
-              disabled={!canAddMore}
+              disabled={!canAddMore || resolving}
             />
           </div>
           <button
             type="button"
-            onClick={handleAddUrl}
-            disabled={!canAddMore}
+            onClick={() => {
+              void handleAddUrl();
+            }}
+            disabled={!canAddMore || resolving}
             className="btn-secondary shrink-0 px-4"
             aria-label="Ajouter le lien"
           >
-            <Plus className="h-5 w-5" />
+            {resolving ? (
+              <Loader2 className="h-5 w-5 animate-spin" aria-hidden />
+            ) : (
+              <Plus className="h-5 w-5" aria-hidden />
+            )}
           </button>
         </div>
+        {resolving && (
+          <p className="text-xs text-ink-muted">Analyse du produit…</p>
+        )}
+        {warning && (
+          <p className="flex items-start gap-1.5 text-xs text-amber-700">
+            <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
+            {warning}
+          </p>
+        )}
       </div>
 
       <div className="relative">
@@ -161,15 +240,19 @@ export function ProductInput({
         <ul className="space-y-2" role="list" aria-label="Articles ajoutés">
           <AnimatePresence>
             {products.map((product) => {
-              const fromShopify = product.source === "shopify";
+              const fromBoutique =
+                product.source === "shopify" ||
+                product.source === "jsonld" ||
+                product.source === "opengraph" ||
+                product.source === "direct-image";
               const hasPreview = !!product.previewUrl;
-              const label = fromShopify
-                ? product.title ?? "Article de la boutique"
+              const label = product.title
+                ? product.title
                 : product.type === "url"
                   ? "Lien produit"
                   : "Image produit";
-              const subtitle = fromShopify
-                ? "Pré-rempli depuis la boutique"
+              const subtitle = fromBoutique
+                ? `Détecté via ${formatSource(product.source)}`
                 : product.value;
               return (
                 <motion.li
@@ -178,7 +261,7 @@ export function ProductInput({
                   animate={{ opacity: 1, height: "auto" }}
                   exit={{ opacity: 0, height: 0 }}
                   className={`flex items-center gap-3 rounded-xl border p-3 shadow-soft ${
-                    fromShopify
+                    fromBoutique
                       ? "border-gold/40 bg-gradient-to-r from-gold/5 to-transparent"
                       : "border-ink/10 bg-white"
                   }`}
@@ -200,7 +283,7 @@ export function ProductInput({
                       <p className="truncate text-sm font-medium text-ink">
                         {label}
                       </p>
-                      {fromShopify && (
+                      {fromBoutique && (
                         <span className="inline-flex shrink-0 items-center gap-1 rounded-md bg-gold/20 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-bordeaux">
                           <Store className="h-3 w-3" aria-hidden />
                           Boutique
@@ -215,7 +298,7 @@ export function ProductInput({
                     type="button"
                     onClick={() => onRemove(product.id)}
                     className="btn-ghost p-2 text-bordeaux"
-                    aria-label={`Supprimer ${product.value}`}
+                    aria-label={`Supprimer ${product.title ?? product.value}`}
                   >
                     <Trash2 className="h-4 w-4" />
                   </button>
@@ -233,4 +316,19 @@ export function ProductInput({
       )}
     </div>
   );
+}
+
+function formatSource(source: ProductSource | undefined): string {
+  switch (source) {
+    case "shopify":
+      return "Shopify";
+    case "jsonld":
+      return "JSON-LD";
+    case "opengraph":
+      return "OpenGraph";
+    case "direct-image":
+      return "image directe";
+    default:
+      return "URL";
+  }
 }

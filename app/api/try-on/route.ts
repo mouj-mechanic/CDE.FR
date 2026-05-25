@@ -2,10 +2,13 @@ import { NextRequest, NextResponse } from "next/server";
 import { isValidCategoryId } from "@/lib/categories";
 import { generateTryOnImage } from "@/lib/tryOnService";
 import { ACCEPTED_IMAGE_TYPES, MAX_FILE_SIZE } from "@/lib/utils";
+import { trackTryOnUsage } from "@/lib/usage";
 import type { CategoryId, TryOnRequest } from "@/types";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
+
+const IMAGE_PATH_RX = /\.(jpe?g|png|webp|gif|avif)(?:\?.*)?(?:#.*)?$/i;
 
 function validateImageFile(file: File, label: string): string | null {
   if (!ACCEPTED_IMAGE_TYPES.includes(file.type)) {
@@ -17,7 +20,19 @@ function validateImageFile(file: File, label: string): string | null {
   return null;
 }
 
+function looksLikeImageUrl(url: string): boolean {
+  try {
+    const u = new URL(url);
+    return IMAGE_PATH_RX.test(u.pathname);
+  } catch {
+    return false;
+  }
+}
+
 export async function POST(request: NextRequest) {
+  const startedAt = Date.now();
+  let categoryForUsage: CategoryId | null = null;
+
   try {
     const formData = await request.formData();
 
@@ -29,6 +44,7 @@ export async function POST(request: NextRequest) {
       );
     }
     const category = categoryRaw as CategoryId;
+    categoryForUsage = category;
 
     const userImage = formData.get("userImage");
     if (!(userImage instanceof File) || userImage.size === 0) {
@@ -54,13 +70,13 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    let productUrls: string[] = [];
+    let productUrlsRaw: string[] = [];
     const urlsRaw = formData.get("productUrls");
     if (typeof urlsRaw === "string" && urlsRaw.trim()) {
       try {
         const parsed: unknown = JSON.parse(urlsRaw);
         if (Array.isArray(parsed)) {
-          productUrls = parsed.filter(
+          productUrlsRaw = parsed.filter(
             (u): u is string => typeof u === "string" && u.trim().length > 0
           );
         }
@@ -72,14 +88,17 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    // Only pass URLs that look like image URLs through to the AI model — raw
+    // product page URLs (e.g. https://shop.com/products/foo) confuse FLUX.
+    const productUrls = productUrlsRaw.filter(looksLikeImageUrl);
+    const droppedUrls = productUrlsRaw.length - productUrls.length;
+
     if (productImages.length === 0 && productUrls.length === 0) {
-      return NextResponse.json(
-        {
-          error:
-            "Veuillez ajouter au moins un article (lien produit ou image).",
-        },
-        { status: 400 }
-      );
+      const reason =
+        droppedUrls > 0
+          ? "Aucune image produit exploitable. Importez une image ou utilisez un lien produit dont l'image a été détectée."
+          : "Veuillez ajouter au moins un article (lien produit ou image).";
+      return NextResponse.json({ error: reason }, { status: 400 });
     }
 
     const notesRaw = formData.get("notes");
@@ -88,15 +107,32 @@ export async function POST(request: NextRequest) {
         ? notesRaw.trim()
         : undefined;
 
+    const merchantIdRaw = formData.get("merchantId");
+    const merchantId =
+      typeof merchantIdRaw === "string" && merchantIdRaw.trim()
+        ? merchantIdRaw.trim()
+        : undefined;
+
     const params: TryOnRequest = {
       category,
       userImage,
       productImages,
       productUrls,
       notes,
+      merchantId,
     };
 
     const result = await generateTryOnImage(params);
+
+    trackTryOnUsage({
+      merchantId,
+      category,
+      provider: result.provider ?? "unknown",
+      model: result.model ?? "unknown",
+      mock: Boolean(result.mock),
+      success: true,
+      durationMs: Date.now() - startedAt,
+    });
 
     return NextResponse.json(result);
   } catch (error) {
@@ -105,6 +141,19 @@ export async function POST(request: NextRequest) {
       error instanceof Error
         ? error.message
         : "Une erreur est survenue lors de la génération.";
+
+    if (categoryForUsage) {
+      trackTryOnUsage({
+        category: categoryForUsage,
+        provider: "unknown",
+        model: "unknown",
+        mock: false,
+        success: false,
+        durationMs: Date.now() - startedAt,
+        errorCode: error instanceof Error ? error.name : "Error",
+      });
+    }
+
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }

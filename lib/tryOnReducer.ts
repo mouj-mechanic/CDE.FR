@@ -9,6 +9,7 @@ export const initialTryOnState: TryOnState = {
   status: "idle",
   error: null,
   resultUrl: null,
+  resultMeta: null,
 };
 
 export function tryOnReducer(
@@ -69,6 +70,7 @@ export function tryOnReducer(
       return {
         ...state,
         resultUrl: action.resultUrl,
+        resultMeta: action.meta ?? null,
         status: "done",
         error: null,
       };
@@ -83,6 +85,7 @@ export function tryOnReducer(
         status: "idle",
         error: null,
         resultUrl: null,
+        resultMeta: null,
       };
     case "RESET_TRY_AGAIN":
       state.products.forEach((p) => {
@@ -95,6 +98,7 @@ export function tryOnReducer(
         status: "idle",
         error: null,
         resultUrl: null,
+        resultMeta: null,
       };
     case "RESET_ALL":
       if (state.userImagePreview) {

@@ -6,24 +6,28 @@ import { Sparkles } from "lucide-react";
 
 interface LaunchButtonProps {
   onClick: () => void;
+  disabled?: boolean;
 }
 
-export function LaunchButton({ onClick }: LaunchButtonProps) {
+export function LaunchButton({ onClick, disabled }: LaunchButtonProps) {
   const [pressed, setPressed] = useState(false);
 
   const handleClick = () => {
+    if (disabled) return;
     setPressed(true);
     onClick();
   };
+
+  const isDisabled = disabled || pressed;
 
   return (
     <motion.button
       type="button"
       onClick={handleClick}
-      disabled={pressed}
-      className="relative w-full overflow-hidden rounded-2xl bg-gradient-to-r from-bordeaux via-fuchsia-500 to-gold bg-[length:200%_100%] px-8 py-4 font-semibold text-white shadow-soft transition-all duration-500 hover:bg-[position:100%_0] hover:shadow-lifted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-bordeaux focus-visible:ring-offset-2 disabled:cursor-progress disabled:opacity-100 sm:w-auto"
-      whileHover={!pressed ? { scale: 1.02 } : undefined}
-      whileTap={!pressed ? { scale: 0.94 } : undefined}
+      disabled={isDisabled}
+      className="relative w-full overflow-hidden rounded-2xl bg-gradient-to-r from-bordeaux via-fuchsia-500 to-gold bg-[length:200%_100%] px-8 py-4 font-semibold text-white shadow-soft transition-all duration-500 hover:bg-[position:100%_0] hover:shadow-lifted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-bordeaux focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto"
+      whileHover={!isDisabled ? { scale: 1.02 } : undefined}
+      whileTap={!isDisabled ? { scale: 0.94 } : undefined}
       animate={
         pressed
           ? {

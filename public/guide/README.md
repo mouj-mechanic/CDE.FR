@@ -93,6 +93,6 @@ l'animation SVG par défaut. Aucune scène n'est obligatoire.
 - **Résolution** : 480×480 ou 720×720 suffit largement.
 - **Boucle** : transition propre (debut == fin) — le composant met
   automatiquement `loop` pour les vidéos.
-- **Couleurs** : fond clair / crème pour s'intégrer au design (palette
-  `#FBF7F2` cream, `#7A1F2B` bordeaux, `#C9A96E` or).
+- **Couleurs** : fond clair pour s'intégrer au design (palette TryWithAI :
+  `#FDF4FF` lavande, `#7C3AED` violet, `#EC4899` rose).
 - **Durée** : 2 à 4 secondes idéal pour boucler sans saturer le regard.

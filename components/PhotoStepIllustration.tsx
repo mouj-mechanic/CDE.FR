@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import type { CategoryId, PhotoSceneId } from "@/types";
 import { getGuideMedia } from "@/lib/guideMedia";
@@ -21,8 +22,8 @@ interface Props {
 /**
  * Animated vignette that demonstrates the action of the current photo guide
  * step. If a custom GIF/video has been registered for the (category, scene)
- * pair via lib/guideMedia, that media is shown — otherwise we fall back to
- * the procedurally-drawn SVG animation (silhouette + scene overlay).
+ * pair via lib/guideMedia, that media is shown — otherwise (or if loading
+ * the media fails) we fall back to the procedurally-drawn SVG animation.
  */
 export function PhotoStepIllustration({
   category,
@@ -31,6 +32,16 @@ export function PhotoStepIllustration({
   fullCard = false,
 }: Props) {
   const media = getGuideMedia(category, scene);
+  const [mediaFailed, setMediaFailed] = useState(false);
+  const [mediaLoading, setMediaLoading] = useState(!!media);
+
+  // Reset state when the (category, scene) pair changes
+  useEffect(() => {
+    setMediaFailed(false);
+    setMediaLoading(!!media);
+  }, [category, scene, media]);
+
+  const showMedia = media && !mediaFailed;
 
   return (
     <div
@@ -39,11 +50,10 @@ export function PhotoStepIllustration({
         fullCard ? "max-w-[640px]" : "max-w-[260px]"
       )}
     >
-      {/* Soft ambient grid */}
-      <div className="pointer-events-none absolute inset-0 opacity-30 [background-image:radial-gradient(circle_at_30%_25%,rgba(201,169,110,0.18),transparent_55%),radial-gradient(circle_at_75%_80%,rgba(122,31,43,0.12),transparent_60%)]" />
+      <div className="pointer-events-none absolute inset-0 opacity-30 [background-image:radial-gradient(circle_at_30%_25%,rgba(236,72,153,0.18),transparent_55%),radial-gradient(circle_at_75%_80%,rgba(124,58,237,0.12),transparent_60%)]" />
 
       <AnimatePresence mode="wait">
-        {media ? (
+        {showMedia ? (
           <motion.div
             key={`media-${cycleKey}`}
             initial={{ opacity: 0, scale: 1.04 }}
@@ -60,6 +70,15 @@ export function PhotoStepIllustration({
                 loop
                 muted
                 playsInline
+                onLoadedData={() => setMediaLoading(false)}
+                onError={() => {
+                  if (process.env.NODE_ENV !== "production") {
+                    console.warn(
+                      `[PhotoGuide] Missing media for ${category}/${scene}: ${media.src}. Falling back to SVG vignette.`
+                    );
+                  }
+                  setMediaFailed(true);
+                }}
                 className={cn(
                   "absolute inset-0 h-full w-full",
                   fullCard ? "object-contain" : "object-cover"
@@ -71,10 +90,27 @@ export function PhotoStepIllustration({
                 src={media.src}
                 alt=""
                 aria-hidden
+                onLoad={() => setMediaLoading(false)}
+                onError={() => {
+                  if (process.env.NODE_ENV !== "production") {
+                    console.warn(
+                      `[PhotoGuide] Missing media for ${category}/${scene}: ${media.src}. Falling back to SVG vignette.`
+                    );
+                  }
+                  setMediaFailed(true);
+                }}
                 className={cn(
                   "absolute inset-0 h-full w-full",
                   fullCard ? "object-contain" : "object-cover"
                 )}
+              />
+            )}
+
+            {/* Loading shimmer */}
+            {mediaLoading && (
+              <div
+                className="absolute inset-0 animate-pulse bg-gradient-to-br from-cream-dark via-cream to-cream-dark"
+                aria-hidden
               />
             )}
           </motion.div>

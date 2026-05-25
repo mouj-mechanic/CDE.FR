@@ -8,11 +8,14 @@ import {
   ShoppingBag,
   RotateCcw,
   Sparkles,
+  Link as LinkIcon,
+  CheckCheck,
 } from "lucide-react";
 import { PrivacyNote } from "./PrivacyNote";
 import { SparkleBurst } from "./SparkleBurst";
 import { ShareMenu } from "./ShareMenu";
 import { MOCK_FALLBACK } from "@/lib/mockResults";
+import { brand } from "@/lib/brand";
 
 interface ResultViewProps {
   resultUrl: string;
@@ -20,10 +23,11 @@ interface ResultViewProps {
   onRetry: () => void;
   onChangeProduct: () => void;
   onClose: () => void;
+  provider?: string;
+  model?: string;
+  mock?: boolean;
 }
 
-// Curtains have already been open during loading; reveal starts almost
-// immediately when the result swaps in.
 const REVEAL_START_MS = 150;
 const REVEAL_DURATION_MS = 2000;
 
@@ -35,20 +39,21 @@ export function ResultView({
   onRetry,
   onChangeProduct,
   onClose,
+  provider,
+  model,
+  mock,
 }: ResultViewProps) {
   const [phase, setPhase] = useState<Phase>("waiting");
   const [showBurst, setShowBurst] = useState(false);
   const [imgSrc, setImgSrc] = useState(resultUrl);
+  const [copied, setCopied] = useState(false);
 
   useEffect(() => {
     setImgSrc(resultUrl);
   }, [resultUrl]);
 
   useEffect(() => {
-    const startTimer = setTimeout(
-      () => setPhase("revealing"),
-      REVEAL_START_MS
-    );
+    const startTimer = setTimeout(() => setPhase("revealing"), REVEAL_START_MS);
     const burstTimer = setTimeout(
       () => setShowBurst(true),
       REVEAL_START_MS + REVEAL_DURATION_MS - 200
@@ -75,27 +80,43 @@ export function ResultView({
     })();
     try {
       const response = await fetch(downloadHref);
+      if (!response.ok) throw new Error("download failed");
       const blob = await response.blob();
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `essayage-cabines-${Date.now()}.${ext}`;
+      a.download = `trywithai-essayage-${Date.now()}.${ext}`;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
       onDownload();
     } catch {
-      window.open(imgSrc, "_blank");
+      // Fallback: open in a new tab so the user can save it manually
+      window.open(imgSrc, "_blank", "noopener,noreferrer");
     }
   }, [imgSrc, onDownload]);
+
+  const handleCopyLink = useCallback(async () => {
+    const isExternal = /^https?:\/\//.test(imgSrc);
+    if (!isExternal) return;
+    try {
+      await navigator.clipboard.writeText(imgSrc);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1800);
+    } catch {
+      setCopied(false);
+    }
+  }, [imgSrc]);
+
   const isWaiting = phase === "waiting";
   const isRevealing = phase === "revealing";
   const showProgressUI = isWaiting || isRevealing;
+  const isExternalUrl = /^https?:\/\//.test(imgSrc);
 
   return (
     <div className="space-y-6 text-center">
-      {/* Title swap : reveal progress -> "essayage prêt" */}
+      {/* Title swap */}
       <div className="relative h-16 sm:h-20">
         <AnimatePresence mode="wait">
           {showProgressUI ? (
@@ -138,9 +159,35 @@ export function ResultView({
         </AnimatePresence>
       </div>
 
+      {/* Provider badge */}
+      {phase === "done" && (
+        <motion.div
+          initial={{ opacity: 0, y: 4 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.2, duration: 0.4 }}
+          className="flex items-center justify-center"
+        >
+          <span
+            className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-[11px] font-bold uppercase tracking-wider ${
+              mock
+                ? "bg-amber-100 text-amber-800"
+                : "bg-gradient-to-r from-bordeaux/15 to-gold/15 text-bordeaux"
+            }`}
+          >
+            <Sparkles className="h-3 w-3" aria-hidden />
+            {mock ? "Mode démo" : "Généré avec IA"}
+            {!mock && model && (
+              <span className="ml-1 font-normal normal-case opacity-70">
+                · {prettyModel(model, provider)}
+              </span>
+            )}
+          </span>
+        </motion.div>
+      )}
+
       {/* Image with progressive reveal */}
       <div className="relative mx-auto max-w-lg">
-        <div className="relative overflow-hidden rounded-2xl border border-ink/10 bg-cream-dark shadow-lifted">
+        <div className="relative overflow-hidden rounded-2xl border border-ink/10 bg-cream-dark shadow-lifted ring-1 ring-bordeaux/10">
           <motion.div
             initial={{
               filter: "blur(28px) grayscale(0.9) brightness(1.05)",
@@ -157,8 +204,6 @@ export function ResultView({
             transition={{ duration: 1.4, ease: [0.22, 1, 0.36, 1] }}
             className="relative"
           >
-            {/* Native <img> with onError fallback so the result is never empty,
-                even if the external mock CDN is unreachable. */}
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
               src={imgSrc}
@@ -171,14 +216,12 @@ export function ResultView({
                 if (imgSrc !== MOCK_FALLBACK) setImgSrc(MOCK_FALLBACK);
               }}
             />
-            {/* Skeleton in case the image is still resolving */}
             <div
               className="pointer-events-none absolute inset-0 -z-10 animate-pulse bg-gradient-to-br from-cream-dark via-cream to-cream-dark"
               aria-hidden
             />
           </motion.div>
 
-          {/* Scan line during reveal */}
           <AnimatePresence>
             {phase === "revealing" && (
               <motion.div
@@ -190,15 +233,14 @@ export function ResultView({
                 transition={{ duration: 2.0, ease: "easeInOut" }}
                 style={{
                   background:
-                    "linear-gradient(180deg, transparent 0%, rgba(201,169,110,0.15) 35%, rgba(201,169,110,0.55) 50%, rgba(201,169,110,0.15) 65%, transparent 100%)",
-                  boxShadow: "0 0 24px rgba(201, 169, 110, 0.4)",
+                    "linear-gradient(180deg, transparent 0%, rgba(236,72,153,0.15) 35%, rgba(236,72,153,0.55) 50%, rgba(236,72,153,0.15) 65%, transparent 100%)",
+                  boxShadow: "0 0 24px rgba(236, 72, 153, 0.4)",
                 }}
                 aria-hidden
               />
             )}
           </AnimatePresence>
 
-          {/* Vertical sweep highlight */}
           <AnimatePresence>
             {phase === "revealing" && (
               <motion.div
@@ -220,7 +262,6 @@ export function ResultView({
           {showBurst && <SparkleBurst />}
         </div>
 
-        {/* Progress bar with milestones */}
         <AnimatePresence>
           {showProgressUI && (
             <motion.div
@@ -271,9 +312,29 @@ export function ResultView({
               className="btn-primary"
             >
               <Download className="h-5 w-5" aria-hidden />
-              Télécharger l&apos;image
+              Télécharger
             </button>
             <ShareMenu resultUrl={imgSrc} />
+            {isExternalUrl && (
+              <button
+                type="button"
+                onClick={handleCopyLink}
+                className="btn-secondary"
+                aria-live="polite"
+              >
+                {copied ? (
+                  <>
+                    <CheckCheck className="h-5 w-5" aria-hidden />
+                    Copié !
+                  </>
+                ) : (
+                  <>
+                    <LinkIcon className="h-5 w-5" aria-hidden />
+                    Copier le lien
+                  </>
+                )}
+              </button>
+            )}
             <button type="button" onClick={onRetry} className="btn-secondary">
               <RefreshCw className="h-5 w-5" aria-hidden />
               Réessayer
@@ -294,14 +355,29 @@ export function ResultView({
         )}
       </AnimatePresence>
 
-      {phase === "done" && <PrivacyNote />}
+      {phase === "done" && (
+        <>
+          <p className="mx-auto max-w-md text-xs italic text-ink-muted">
+            Le rendu est une prévisualisation IA. Le résultat réel peut varier
+            selon la photo et le produit. © {brand.name}
+          </p>
+          <PrivacyNote />
+        </>
+      )}
     </div>
   );
 }
 
+function prettyModel(model: string, provider?: string): string {
+  if (model.includes("fashn")) return "FASHN";
+  if (model.includes("kontext")) return "FLUX Kontext";
+  if (provider) return provider;
+  return model;
+}
+
 const MILESTONES = [
   "Analyse de votre photo",
-  "Préparation de l’article",
+  "Préparation de l'article",
   "Composition du rendu",
   "Finalisation",
 ];

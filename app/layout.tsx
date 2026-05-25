@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Cormorant_Garamond, Inter } from "next/font/google";
 import "./globals.css";
 import { ColorfulBackdrop } from "@/components/ColorfulBackdrop";
+import { brand } from "@/lib/brand";
 
 const cormorant = Cormorant_Garamond({
   subsets: ["latin"],
@@ -17,19 +18,21 @@ const inter = Inter({
 });
 
 export const metadata: Metadata = {
-  title: "CabinesDEssayage.fr — Votre cabine d'essayage virtuelle",
-  description:
-    "Essayez avant d'acheter, instantanément. Importez votre photo, ajoutez un article, laissez l'IA vous montrer le résultat.",
+  metadataBase: new URL(brand.appDomain),
+  title: `${brand.name} — ${brand.positioningFr}`,
+  description: `${brand.tagline} ${brand.positioningFr}.`,
   keywords: [
+    "TryWithAI",
     "essayage virtuel",
-    "try-on",
-    "mode",
-    "IA",
-    "cabine d'essayage",
+    "virtual try-on",
+    "Shopify",
+    "widget IA",
+    "AI try-on",
+    "e-commerce",
   ],
   openGraph: {
-    title: "CabinesDEssayage.fr",
-    description: "Essayez avant d'acheter, instantanément.",
+    title: brand.name,
+    description: brand.taglineFr,
     type: "website",
     locale: "fr_FR",
     images: ["/og-image.svg"],
@@ -45,7 +48,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="fr" className={`${cormorant.variable} ${inter.variable}`}>
+    <html lang={brand.defaultLocale} className={`${cormorant.variable} ${inter.variable}`}>
       <body className="relative min-h-screen overflow-x-hidden">
         <ColorfulBackdrop />
         {children}

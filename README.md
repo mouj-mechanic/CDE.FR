@@ -1,208 +1,252 @@
-# CabinesDEssayage.fr
+# TryWithAI
 
-MVP d'une **cabine d'essayage virtuelle** sans compte utilisateur. Importez votre photo, ajoutez un article (lien ou image), et visualisez un rendu généré par IA — ou un aperçu mock en l'absence de clé API.
+> _Try with AI before you buy._
+> AI Try-On Widget for Shopify Stores.
 
-## Fonctionnalités
+TryWithAI is a virtual try-on widget that lets shoppers preview a product on
+themselves directly from the Product Detail Page (PDP) of any Shopify store —
+no account, no app install, no upload to permanent storage.
 
-- Landing page premium (hero, cartes catégories, animations)
-- 5 catégories : couvre-chef, lunettes, montre, bijou de main, vêtements
-- Parcours en 3 étapes : guide photo → upload → article(s)
-- Validation élégante des formulaires
-- Animations de chargement par métier (chapelier, opticien, horloger…)
-- Révélation théâtrale par rideau bordeaux
-- Téléchargement du résultat, réessayer, changer d'article
-- API `/api/try-on` avec mode mock (4–6 s)
-- Architecture prête pour brancher un provider IA réel
-- **Widget embarquable** (bulle de chat) intégrable sur n'importe quelle boutique Shopify ou site marchand
+This repository is the MVP: a Next.js app that serves both:
 
-## Stack technique
+- The **B2B landing page** (homepage) targeting Shopify merchants.
+- The **try-on experience** (`/embed`) that runs inside an iframe injected by
+  a single `<script>` tag on the merchant's PDP.
 
-- **Next.js 15** (App Router)
-- **React 19** + **TypeScript**
-- **Tailwind CSS** + **tailwindcss-animate**
-- **Framer Motion** (animations)
-- **react-dropzone** (upload)
-- **lucide-react** (icônes)
+> The product was previously named **CabinesDEssayage.fr**; the brand is now
+> centralised in `lib/brand.ts`. The legacy embed global
+> `window.CabinesDEssayage` is still exposed for backward compatibility.
 
-## Lancement local
+---
 
-### Prérequis
-
-- [Node.js](https://nodejs.org/) 18.18 ou supérieur (recommandé : 20 LTS)
-- npm
-
-### Installation
+## Local setup
 
 ```bash
-cd CDE.FR
 npm install
-cp .env.example .env.local
 npm run dev
 ```
 
-Ouvrez [http://localhost:3000](http://localhost:3000).
+The app runs on http://localhost:3000.
 
-### Commandes
+Useful pages while developing:
 
-| Commande        | Description              |
-|-----------------|--------------------------|
-| `npm install`   | Installe les dépendances |
-| `npm run dev`   | Serveur de développement |
-| `npm run build` | Build de production      |
-| `npm run start` | Lance le build           |
-| `npm run lint`  | Vérification ESLint      |
+| Path             | Description                                              |
+| ---------------- | -------------------------------------------------------- |
+| `/`              | Landing page (hero, demo, pricing, privacy, CTA)         |
+| `/demo`          | Fake Shopify PDP with the widget embedded (casquette)    |
+| `/demo2`         | Fake PDP — gold & green watch                            |
+| `/embed`         | The try-on experience itself (loaded inside the iframe)  |
+| `/api/try-on`    | Generation endpoint (mock or fal)                        |
+| `/api/product/resolve` | Resolves a product URL → title + best image URL    |
 
-## Connecter une vraie API IA
+---
 
-### Option par défaut : fal.ai (FLUX.1 Kontext multi-image)
+## Environment variables
 
-Le projet est livré avec une intégration **fal.ai** prête à l'emploi. FLUX.1 Kontext est un modèle d'édition d'image multi-entrée qui couvre les 5 catégories (chapeau, lunettes, montre, bijou, vêtements) via un prompt adapté.
+Copy `.env.example` to `.env.local` and fill in what you need.
 
-1. Crée un compte sur **https://fal.ai**
-2. Génère une clé API : **https://fal.ai/dashboard/keys**
-3. Ajoute du crédit : **https://fal.ai/dashboard/billing** (~0.04–0.05 $/image avec `flux-pro/kontext`, ~0.10 $ avec la variante `max`)
-4. Dans `.env.local` :
+| Key                       | Purpose                                                                 |
+| ------------------------- | ----------------------------------------------------------------------- |
+| `AI_TRYON_PROVIDER`       | `mock` (default), `fal`, or `auto`                                      |
+| `FAL_KEY`                 | fal.ai API key — required for `AI_TRYON_PROVIDER=fal`                   |
+| `FASHN_API_KEY`           | Optional, reserved for a future direct FASHN integration                |
+| `AI_TRYON_API_KEY`        | Legacy generic fallback (also accepted as `FAL_KEY`)                    |
+| `NEXT_PUBLIC_AI_PROVIDER` | Mirrors the provider name on the client (used by the privacy note)      |
 
-```env
-AI_TRYON_PROVIDER=fal
-FAL_KEY=ta_cle_fal
-NEXT_PUBLIC_AI_PROVIDER=fal.ai
-```
+### Provider modes
 
-5. Redémarre `npm run dev` — le mode mock est désactivé, les vraies générations IA sont utilisées.
+- **`mock`** (default): no API key required. Returns a deterministic local
+  image (`/demo2-result.png` for watches, otherwise category-specific
+  Picsum.photos seeds). Useful to demo the widget without any cost.
+- **`fal`**: routes to **fal.ai**.
+  - **Clothes** → FASHN (`fashn/tryon/v1.6`, fallback `fal-ai/fashn/tryon`).
+    If the FASHN call fails for any reason, the service automatically falls
+    back to FLUX Kontext so the user always gets a result.
+  - **Headwear / glasses / watch / hand-jewelry** → FLUX Kontext multi-image
+    edit (`fal-ai/flux-pro/kontext/max/multi`) with category-specific
+    prompts (see `lib/providers/prompts.ts`).
+- **`auto`**: uses `fal` if `FAL_KEY` is present, otherwise `mock`. Recommended
+  for CI / preview deployments.
 
-Le modèle utilisé est défini dans [`lib/providers/fal.ts`](lib/providers/fal.ts) : `fal-ai/flux-pro/kontext/max/multi`. Pour une variante moins coûteuse, remplace par `fal-ai/flux-pro/kontext/multi`.
+---
 
-### Ajouter un autre provider
-
-Crée un fichier `lib/providers/<nom>.ts` exposant `<provider>TryOn(params, apiKey)`, puis ajoute-le au switch dans [`lib/tryOnService.ts`](lib/tryOnService.ts) :
-
-```ts
-case "replicate":
-  return replicateTryOn(params, process.env.AI_TRYON_API_KEY!);
-```
-
-Providers courants :
-- **fal.ai** — FLUX Kontext, IDM-VTON, Leffa (intégré par défaut)
-- **Replicate** — IDM-VTON, OOTDiffusion
-- **Fashn AI** — API dédiée fashion try-on
-- **OpenAI** — image editing (gpt-image)
-
-## Mode mock
-
-Si `AI_TRYON_PROVIDER` est vide ou absent :
-
-- Délai artificiel de **4 à 6 secondes**
-- Retour de l'image [`/public/mock-result.svg`](public/mock-result.svg)
-- Champ `mock: true` dans la réponse JSON
-
-Remplacez `mock-result.svg` par un `mock-result.jpg` réaliste si vous préférez un placeholder photo.
-
-## Structure du projet
+## Architecture
 
 ```
 app/
-  api/try-on/route.ts      # API essayage (mock + provider IA)
-  api/download/route.ts    # Proxy CORS pour télécharger l'image résultat
-  embed/                   # Mode iframe pour Shopify et autres boutiques
-    layout.tsx
-    page.tsx
-  demo/page.tsx            # Fausse PDP Shopify pour tester l'embed
-  globals.css
-  layout.tsx
-  page.tsx
+├── api/
+│   ├── try-on/route.ts         # Main generation endpoint
+│   ├── product/resolve/route.ts # Product URL → image resolver
+│   └── download/route.ts       # CORS-safe image proxy
+├── embed/page.tsx              # iframe entry point
+├── demo/page.tsx               # Demo Shopify PDP (cap)
+├── demo2/page.tsx              # Demo Shopify PDP (watch)
+├── layout.tsx                  # Root layout + ColorfulBackdrop
+└── page.tsx                    # Landing page
+
 components/
-  CategoryGrid.tsx
-  CategoryCard.tsx
-  TryOnPanel.tsx
-  PhotoGuide.tsx
-  ImageUploader.tsx
-  ProductInput.tsx
-  LoadingExperience.tsx
-  CurtainReveal.tsx
-  ResultView.tsx
-  scenes/                # Animations artisans SVG
+├── sections/                   # Landing page sections
+│   ├── HowItWorks.tsx
+│   ├── ShopifyIntegration.tsx
+│   ├── Pricing.tsx
+│   ├── PrivacySection.tsx
+│   ├── FinalCTA.tsx
+│   └── DemoSection.tsx
+├── EmbedExperience.tsx         # iframe shell + flow router
+├── EmbedFlow.tsx               # Auto-flow when product is detected
+├── TryOnPanel.tsx              # Manual wizard (photo → product → launch)
+├── ProductInput.tsx            # URL resolver + dropzone
+├── ImageUploader.tsx
+├── PhotoGuideSteps.tsx         # Animated step-by-step photo guide
+├── PhotoStepIllustration.tsx   # Per-step illustration with media fallback
+├── PhotoQualityChecklist.tsx   # Client-side validation
+├── ConsentCheckbox.tsx         # Required before generation
+├── ResultView.tsx              # Provider badge, download, share, retry
+└── ...
+
 lib/
-  categories.ts
-  tryOnService.ts          # Routeur de provider (mock / fal / autres)
-  tryOnReducer.ts
-  utils.ts
-  providers/
-    fal.ts                 # Intégration fal.ai (FLUX.1 Kontext)
-types/
-  index.ts
+├── brand.ts                    # Single source of truth for brand strings
+├── categories.ts               # 5 categories + photo steps
+├── tryOnService.ts             # Provider router (mock | fal)
+├── providers/
+│   ├── falKontext.ts           # FLUX Kontext multi-image
+│   ├── fashn.ts                # FASHN clothes specialist
+│   └── prompts.ts              # Category-specific prompts + negatives
+├── productResolver.ts          # Shopify /.js + JSON-LD + OG parser
+├── photoQuality.ts             # Heuristic dimension/brightness/blur checks
+├── usage.ts                    # Internal usage event tracker (TODO: db)
+├── mockResults.ts              # Picsum seeds + local overrides
+├── detectCategory.ts           # Title → CategoryId heuristics
+├── guideMedia.ts               # Optional custom GIF/video index
+└── tryOnReducer.ts             # useReducer state for the wizard
+
 public/
-  mock-result.svg
-  embed.js                 # Widget embarquable (bulle Shopify) — vanilla JS
+├── embed.js                    # Shopify widget loader (vanilla JS)
+├── guide/<category>/*.png      # Optional custom step illustrations
+└── ...
 ```
 
-## Intégration Shopify (widget embarquable)
+---
 
-Une **bulle de chat flottante** peut être ajoutée à n'importe quelle boutique pour proposer l'essayage virtuel directement sur la page produit (PDP).
+## Shopify embed setup
 
-### Installation rapide (2 min)
-
-1. Dans l'admin Shopify : **Boutique en ligne → Thèmes → Modifier le code**
-2. Ouvrir `theme.liquid`
-3. Coller juste avant `</body>` :
+Add this single tag to your `theme.liquid`, just before `</body>`:
 
 ```html
-<script src="https://cabinesdessayage.fr/embed.js"
-        data-app-url="https://cabinesdessayage.fr"
-        data-delay="2500"
-        data-label="Essayer virtuellement"
-        async></script>
+<script
+  src="https://trywithai.app/embed.js"
+  data-app-url="https://trywithai.app"
+  data-label="Essayer avec l'IA"
+  data-delay="1500"
+  data-color="#7C3AED"
+  data-pages="product"
+  data-merchant-id="your-shop-id"
+  async
+></script>
 ```
 
-4. Sauvegarder. Visiter une fiche produit — la bulle bordeaux apparaît en bas à droite après 2,5 s.
+### Script attributes
 
-### Fonctionnement
+| Attribute             | Default            | Description                                                            |
+| --------------------- | ------------------ | ---------------------------------------------------------------------- |
+| `data-app-url`        | `window.origin`    | Origin of the TryWithAI app (your deployment)                          |
+| `data-label`          | `Essayer avec l'IA`| Bubble label on desktop                                                |
+| `data-delay`          | `1500`             | Milliseconds before the bubble appears                                 |
+| `data-position`       | `right`            | `right` or `left`                                                      |
+| `data-color`          | `#7C3AED`          | Base color of the bubble background                                    |
+| `data-pages`          | `product`          | Comma list of `product`, `collection`, `home`, or `all`                |
+| `data-category`       | _(empty)_          | Force a specific category (`headwear`, `glasses`, `watch`, `hand-jewelry`, `clothes`) |
+| `data-merchant-id`    | _(empty)_          | Identifies the merchant in usage logs                                  |
+| `data-product-image`  | _(empty)_          | Override the detected product image URL                                |
 
-- La bulle ne s'affiche **que sur les pages produit** (détecté via `/products/*` et `ShopifyAnalytics.meta.product`).
-- Au clic : ouverture d'un **iframe modal plein écran** (escape, croix, clic-extérieur pour fermer).
-- L'image et le titre du produit sont **détectés automatiquement** depuis la PDP et pré-remplis comme article à essayer.
-- L'utilisateur n'a plus qu'à : choisir la zone (chapeau, montre, etc.) → uploader sa photo → générer.
+### JavaScript API
 
-### Options de configuration
-
-| Attribut | Défaut | Description |
-|---|---|---|
-| `data-app-url` | `https://cabinesdessayage.fr` | URL de votre instance déployée |
-| `data-delay` | `2500` | Délai avant apparition de la bulle (ms) |
-| `data-label` | `Essayer virtuellement` | Texte de la bulle |
-| `data-pages` | `product` | `product` (PDP uniquement) ou `all` (toutes pages) |
-| `data-position` | `right` | `right` ou `left` |
-| `data-color` | `#7A1F2B` | Couleur de fond bordeaux par défaut |
-
-### API JavaScript
+Both globals are exposed (backward compat):
 
 ```js
-window.CabinesDEssayage.open();   // Ouvre la cabine programmatiquement
-window.CabinesDEssayage.close();  // Ferme la cabine
-window.CabinesDEssayage.show();   // Affiche la bulle
-window.CabinesDEssayage.hide();   // Cache la bulle
+window.TryWithAI.open();   // alias: window.CabinesDEssayage.open()
+window.TryWithAI.close();
+window.TryWithAI.show();   // show bubble if hidden
+window.TryWithAI.hide();   // remove bubble
 ```
 
-### Tester l'intégration localement
+The widget auto-detects the product image and title from:
 
-Une fausse boutique Shopify est servie sur **http://localhost:3000/demo** pour valider l'embed sans déployer.
+1. `<script data-product-image>` attribute (explicit override)
+2. `window.ShopifyAnalytics.meta.product`
+3. JSON-LD `Product` schema
+4. `og:image`, `twitter:image`, `link[rel=image_src]`
+5. DOM scan of `[data-product-featured-image]`, `.product-single__photos`,
+   `.product__media`, `.product-gallery`, etc., using `srcset` and largest
+   image scoring.
 
-## Limites du MVP
+---
 
-- **Pas d'authentification** ni de compte utilisateur
-- **Pas de base de données** — les images ne sont pas stockées côté serveur
-- **Pas de paiement** ni de panier e-commerce
-- **Pas d'historique** des essayages
-- L'IA réelle n'est **pas intégrée** par défaut (mock uniquement)
-- Les liens produit ne sont pas scrapés automatiquement
-- Un seul essayage à la fois par session navigateur
+## Photo guide media
 
-## Confidentialité
+`PhotoGuideSteps` plays an animated step-by-step guide tailored to the body
+part being targeted. Each step has a procedurally-drawn SVG illustration by
+default, which can be overridden with a custom GIF / WebM / MP4 / PNG.
 
-- En **mode mock**, les images sont seulement validées côté serveur puis ignorées (aucune écriture disque).
-- En **mode IA réel** (fal.ai par exemple), les images sont uploadées sur le storage temporaire du provider via `fal.storage.upload()`, puis le modèle génère le résultat. Consulte la politique du provider concernant la rétention. CabinesDEssayage.fr n'enregistre rien côté serveur.
-- La note de confidentialité affichée dans le parcours utilisateur est mise à jour dynamiquement via `NEXT_PUBLIC_AI_PROVIDER`.
+To override a step:
 
-## Licence
+1. Drop your file in `public/guide/<categoryId>/<sceneId>.<ext>`
+2. Add it to `lib/guideMedia.ts`:
 
-Projet MVP — usage interne / démonstration.
+```ts
+const MEDIA_INDEX = {
+  headwear: {
+    frame: { src: "/guide/headwear/frame.png", kind: "image", fullCard: true },
+  },
+};
+```
+
+If the file is missing or fails to load at runtime, the component automatically
+falls back to the SVG and emits a `console.warn` in development. See
+`public/guide/README.md` for the full convention.
+
+---
+
+## Known limitations (MVP)
+
+- No authentication, no merchant dashboard, no Stripe billing.
+- Usage events are logged to stdout only — not persisted yet.
+- Photo quality validation is heuristic (canvas-based brightness/blur). No
+  computer-vision body-part detection.
+- Shopify integration uses a script tag, not the official Shopify App Bridge.
+- Privacy: images are sent to fal.ai when `AI_TRYON_PROVIDER=fal`. They are
+  not stored by this app, but the provider has its own retention policy.
+
+---
+
+## Production TODOs
+
+- [ ] Merchant accounts + Shopify OAuth install flow
+- [ ] Stripe billing (metered + quota enforcement)
+- [ ] Postgres for `try_on_events` + `merchants` (see `lib/usage.ts`)
+- [ ] Merchant dashboard (usage, conversion, A/B)
+- [ ] GDPR / legal pages, Shopify privacy compliance
+- [ ] Computer-vision based category & body-part validation
+- [ ] Webhook to push conversion back to Shopify
+
+---
+
+## Scripts
+
+```bash
+npm run dev
+npm run build
+npm run start
+npm run lint
+npm run lint:fix
+```
+
+> **Windows CMD / PowerShell:** do not paste inline comments after commands
+> (e.g. `npm run build # comment`). On Windows, `#` is passed as an argument
+> and Next.js will look for a folder named `#`. Run each command on its own line.
+
+---
+
+## License
+
+Proprietary — TryWithAI MVP. © {YEAR} TryWithAI.

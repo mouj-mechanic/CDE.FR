@@ -1,11 +1,12 @@
 "use client";
 
 import { motion } from "framer-motion";
-import { Sparkles, Wand2 } from "lucide-react";
+import { Sparkles, Wand2, ShoppingBag } from "lucide-react";
+import { brand } from "@/lib/brand";
 
 export function Hero() {
-  const scrollToCabines = () => {
-    document.getElementById("cabines")?.scrollIntoView({ behavior: "smooth" });
+  const scrollTo = (id: string) => {
+    document.getElementById(id)?.scrollIntoView({ behavior: "smooth" });
   };
 
   return (
@@ -23,52 +24,62 @@ export function Hero() {
             className="mb-6 inline-flex items-center gap-2 rounded-full border border-bordeaux/20 bg-white/80 px-4 py-1.5 text-sm font-medium text-bordeaux shadow-soft backdrop-blur-sm"
           >
             <Sparkles className="h-4 w-4 text-gold" aria-hidden />
-            <span>Cabine d&apos;essayage virtuelle — sans compte</span>
+            <span>{brand.positioningFr}</span>
           </motion.div>
 
           <h1 className="font-display text-4xl font-bold leading-[1.05] text-balance sm:text-6xl lg:text-7xl">
-            <span className="text-ink">Votre cabine </span>
-            <span className="text-gradient">d&apos;essayage</span>
-            <br />
-            <span className="text-gradient">virtuelle</span>
+            <span className="text-gradient">{brand.tagline}</span>
           </h1>
 
           <p className="mx-auto mt-7 max-w-2xl text-lg text-ink-muted sm:text-xl">
-            Importez votre photo, ajoutez un article,{" "}
+            Ajoutez un{" "}
             <span className="font-semibold text-bordeaux">
-              laissez l&apos;IA
+              widget d&apos;essayage virtuel IA
             </span>{" "}
-            vous montrer le résultat.
+            à votre boutique Shopify et aidez vos clients à acheter avec
+            confiance.
           </p>
 
-          <motion.button
-            type="button"
-            onClick={scrollToCabines}
-            className="btn-primary mt-10 text-lg"
-            whileHover={{ scale: 1.03 }}
-            whileTap={{ scale: 0.97 }}
-          >
-            <Wand2 className="h-5 w-5" aria-hidden />
-            Commencer l&apos;essayage
-          </motion.button>
+          <div className="mt-10 flex flex-col items-center justify-center gap-3 sm:flex-row sm:gap-4">
+            <motion.button
+              type="button"
+              onClick={() => scrollTo("demo")}
+              className="btn-primary text-lg"
+              whileHover={{ scale: 1.03 }}
+              whileTap={{ scale: 0.97 }}
+            >
+              <Wand2 className="h-5 w-5" aria-hidden />
+              Voir la démo
+            </motion.button>
+            <motion.button
+              type="button"
+              onClick={() => scrollTo("cabines")}
+              className="btn-secondary text-lg"
+              whileHover={{ scale: 1.02 }}
+              whileTap={{ scale: 0.97 }}
+            >
+              <ShoppingBag className="h-5 w-5" aria-hidden />
+              Essayer le widget
+            </motion.button>
+          </div>
 
-          {/* Trio of trust badges */}
           <div className="mt-10 flex flex-wrap items-center justify-center gap-3 text-xs text-ink-muted">
-            <span className="inline-flex items-center gap-1.5 rounded-full bg-white/70 px-3 py-1.5 backdrop-blur-sm ring-1 ring-bordeaux/10">
-              <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
-              Sans inscription
-            </span>
-            <span className="inline-flex items-center gap-1.5 rounded-full bg-white/70 px-3 py-1.5 backdrop-blur-sm ring-1 ring-gold/30">
-              <span className="h-1.5 w-1.5 rounded-full bg-gold" />
-              Photo non conservée
-            </span>
-            <span className="inline-flex items-center gap-1.5 rounded-full bg-white/70 px-3 py-1.5 backdrop-blur-sm ring-1 ring-bordeaux/10">
-              <span className="h-1.5 w-1.5 rounded-full bg-bordeaux" />
-              Résultat en moins d&apos;une minute
-            </span>
+            <TrustBadge color="bg-emerald-500" label="Shopify-ready" />
+            <TrustBadge color="bg-gold" label="Sans compte client" />
+            <TrustBadge color="bg-bordeaux" label="Photos non conservées" />
+            <TrustBadge color="bg-fuchsia-500" label="IA configurable" />
           </div>
         </motion.div>
       </div>
     </section>
+  );
+}
+
+function TrustBadge({ color, label }: { color: string; label: string }) {
+  return (
+    <span className="inline-flex items-center gap-1.5 rounded-full bg-white/70 px-3 py-1.5 backdrop-blur-sm ring-1 ring-bordeaux/10">
+      <span className={`h-1.5 w-1.5 rounded-full ${color}`} />
+      {label}
+    </span>
   );
 }

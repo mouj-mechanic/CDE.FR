@@ -3,7 +3,7 @@
 import { useCallback, useReducer, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Settings2 } from "lucide-react";
-import type { Category, CategoryId, ProductItem } from "@/types";
+import type { Category, CategoryId, ProductItem, TryOnResponse } from "@/types";
 import { CATEGORIES, getCategory } from "@/lib/categories";
 import { initialTryOnState, tryOnReducer } from "@/lib/tryOnReducer";
 import { PhotoGuideSteps } from "./PhotoGuideSteps";
@@ -14,6 +14,8 @@ import { LoadingScene } from "./LoadingScene";
 import { ResultView } from "./ResultView";
 import { CategoryIcon } from "./CategoryIcon";
 import { PrivacyNote } from "./PrivacyNote";
+import { ConsentCheckbox } from "./ConsentCheckbox";
+import { PhotoQualityChecklist } from "./PhotoQualityChecklist";
 import { cn } from "@/lib/utils";
 
 interface EmbedFlowProps {
@@ -21,6 +23,7 @@ interface EmbedFlowProps {
   product: ProductItem;
   productTitle?: string | null;
   productImage?: string | null;
+  merchantId?: string | null;
 }
 
 export function EmbedFlow({
@@ -28,9 +31,11 @@ export function EmbedFlow({
   product,
   productTitle,
   productImage,
+  merchantId,
 }: EmbedFlowProps) {
   const [categoryId, setCategoryId] = useState<CategoryId>(initialCategoryId);
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [consent, setConsent] = useState(false);
   const category = getCategory(categoryId) as Category;
 
   const [state, dispatch] = useReducer(tryOnReducer, {
@@ -43,6 +48,13 @@ export function EmbedFlow({
       dispatch({
         type: "SET_ERROR",
         error: "Veuillez importer votre photo avant de lancer l'essayage.",
+      });
+      return;
+    }
+    if (!consent) {
+      dispatch({
+        type: "SET_ERROR",
+        error: "Veuillez accepter l'utilisation de votre photo.",
       });
       return;
     }
@@ -66,17 +78,24 @@ export function EmbedFlow({
       });
 
     if (productTitle) formData.append("notes", `Article : ${productTitle}`);
+    if (merchantId) formData.append("merchantId", merchantId);
 
     try {
       const response = await fetch("/api/try-on", {
         method: "POST",
         body: formData,
       });
-      const data = await response.json();
+      const data = (await response.json()) as TryOnResponse & {
+        error?: string;
+      };
       if (!response.ok) {
         throw new Error(data.error ?? "Erreur lors de la génération.");
       }
-      dispatch({ type: "SET_RESULT", resultUrl: data.resultUrl });
+      dispatch({
+        type: "SET_RESULT",
+        resultUrl: data.resultUrl,
+        meta: { provider: data.provider, model: data.model, mock: data.mock },
+      });
     } catch (err) {
       dispatch({
         type: "SET_ERROR",
@@ -87,7 +106,7 @@ export function EmbedFlow({
       });
       dispatch({ type: "SET_STATUS", status: "error" });
     }
-  }, [state, categoryId, productTitle]);
+  }, [state, categoryId, productTitle, consent, merchantId]);
 
   const isLoading = state.status === "loading";
   const showStage = isLoading || !!state.resultUrl;
@@ -116,6 +135,9 @@ export function EmbedFlow({
               >
                 <ResultView
                   resultUrl={state.resultUrl}
+                  provider={state.resultMeta?.provider}
+                  model={state.resultMeta?.model}
+                  mock={state.resultMeta?.mock}
                   onDownload={() => {}}
                   onRetry={() => dispatch({ type: "RESET_TRY_AGAIN" })}
                   onChangeProduct={() => dispatch({ type: "RESET_TRY_AGAIN" })}
@@ -143,7 +165,7 @@ export function EmbedFlow({
           <img
             src={productImage}
             alt={productTitle ?? "Article"}
-            className="h-16 w-16 rounded-xl object-cover ring-1 ring-ink/10 bg-cream-dark"
+            className="h-16 w-16 rounded-xl bg-cream-dark object-cover ring-1 ring-ink/10"
             onError={(e) => {
               const img = e.currentTarget;
               if (!img.src.endsWith("/demo-watch-gold-green.svg")) {
@@ -232,14 +254,12 @@ export function EmbedFlow({
         )}
       </AnimatePresence>
 
-      {/* Photo guide for the auto-selected category */}
       <div className="glass-card p-5 sm:p-6">
         <PhotoGuideSteps category={category} />
       </div>
 
-      {/* Photo upload */}
-      <div className="glass-card p-5 sm:p-6">
-        <h3 className="mb-3 font-display text-lg font-semibold text-ink">
+      <div className="glass-card space-y-4 p-5 sm:p-6">
+        <h3 className="font-display text-lg font-semibold text-ink">
           Votre photo
         </h3>
         <ImageUploader
@@ -250,18 +270,21 @@ export function EmbedFlow({
           onImageClear={() => dispatch({ type: "CLEAR_USER_IMAGE" })}
           error={state.error}
         />
+        <PhotoQualityChecklist
+          file={state.userImage}
+          category={category.id}
+        />
+        <ConsentCheckbox checked={consent} onChange={setConsent} />
       </div>
 
-      {/* Error */}
       {state.error && state.status === "error" && (
         <p className="text-sm text-bordeaux" role="alert">
           {state.error}
         </p>
       )}
 
-      {/* Launch */}
       <div className="flex flex-col items-stretch gap-3 sm:flex-row sm:items-center sm:justify-end">
-        <LaunchButton onClick={validateAndSubmit} />
+        <LaunchButton onClick={validateAndSubmit} disabled={!consent} />
       </div>
 
       <PrivacyNote />
