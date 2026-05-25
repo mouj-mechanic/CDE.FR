@@ -12,6 +12,11 @@ import type {
 } from "@/types";
 import { initialTryOnState, tryOnReducer } from "@/lib/tryOnReducer";
 import { runTryOnPipeline } from "@/lib/tryon/pipeline";
+import {
+  compressImageBlob,
+  compressImageFile,
+} from "@/lib/clientImageCompression";
+import { safeFetchJson } from "@/lib/safeFetchJson";
 import { StepBar } from "./StepBar";
 import { PhotoGuideSteps } from "./PhotoGuideSteps";
 import { ImageUploader } from "./ImageUploader";
@@ -108,23 +113,51 @@ export function TryOnPanel({
       console.warn("[tryon] pipeline failed", err);
     }
 
+    // Shrink large images before uploading so we never trip Vercel's 4.5 MB
+    // serverless body limit (which returns plain-text "Request Entity Too
+    // Large", causing JSON.parse to fail on the client).
+    let uploadUser: File = state.userImage;
+    try {
+      uploadUser = await compressImageFile(state.userImage, {
+        maxDim: 1600,
+        quality: 0.88,
+        mimeType: "image/jpeg",
+        skipIfSmallerThan: 1.4 * 1024 * 1024,
+      });
+    } catch (err) {
+      console.warn("[tryon] user image compression failed", err);
+    }
+
+    let uploadPreview: Blob | null = pipelineResult?.previewBlob ?? null;
+    if (uploadPreview) {
+      try {
+        uploadPreview = await compressImageBlob(uploadPreview, {
+          maxDim: 1280,
+          quality: 0.85,
+          mimeType: "image/jpeg",
+        });
+      } catch (err) {
+        console.warn("[tryon] preview compression failed", err);
+      }
+    }
+
     const formData = new FormData();
     formData.append("category", category.id);
-    formData.append("userImage", state.userImage);
+    formData.append("userImage", uploadUser);
     formData.append("renderModeRequest", "auto");
     formData.append("handJewelryType", handJewelryType);
     formData.append("ringFinger", ringFinger);
 
-    if (pipelineResult?.previewBlob) {
+    if (uploadPreview) {
       formData.append(
         "previewImage",
-        new File([pipelineResult.previewBlob], "trywithai-preview.png", {
-          type: "image/png",
+        new File([uploadPreview], "trywithai-preview.jpg", {
+          type: uploadPreview.type || "image/jpeg",
         })
       );
       formData.append(
         "warnings",
-        JSON.stringify(pipelineResult.warnings ?? [])
+        JSON.stringify(pipelineResult?.warnings ?? [])
       );
     }
     if (pipelineResult) {
@@ -157,11 +190,26 @@ export function TryOnPanel({
       formData.append("productCutoutUrls", JSON.stringify(cutoutUrls));
     }
 
-    state.products
+    const productFiles = state.products
       .filter((p) => p.type === "image" && p.file)
-      .forEach((p) => {
-        if (p.file) formData.append("productImages", p.file);
-      });
+      .map((p) => p.file as File);
+    for (const file of productFiles) {
+      let upload = file;
+      try {
+        upload = await compressImageFile(file, {
+          maxDim: 1400,
+          quality: 0.9,
+          // Keep PNG if alpha was already preserved upstream; otherwise
+          // re-encode to JPEG. The cutout flow uploads to fal storage via
+          // /api/product/cutout, so this only applies to direct uploads.
+          mimeType: file.type === "image/png" ? "image/png" : "image/jpeg",
+          skipIfSmallerThan: 1.2 * 1024 * 1024,
+        });
+      } catch (err) {
+        console.warn("[tryon] product image compression failed", err);
+      }
+      formData.append("productImages", upload);
+    }
 
     if (state.notes.trim()) {
       formData.append("notes", state.notes.trim());
@@ -169,17 +217,25 @@ export function TryOnPanel({
     if (merchantId) formData.append("merchantId", merchantId);
 
     try {
-      const response = await fetch("/api/try-on", {
+      const result = await safeFetchJson<
+        TryOnResponse & {
+          error?: string;
+          details?: string;
+          provider?: string;
+        }
+      >("/api/try-on", {
         method: "POST",
         body: formData,
       });
-      const data = (await response.json()) as TryOnResponse & {
-        error?: string;
-        details?: string;
-        provider?: string;
-      };
 
-      if (!response.ok) {
+      if (result.nonJson || !result.data) {
+        throw new Error(
+          result.errorMessage ?? "Réponse inattendue du serveur."
+        );
+      }
+
+      const data = result.data;
+      if (!result.ok) {
         if (data.debug?.productImageCount === 0) {
           throw new Error(
             "Image produit manquante : ajoutez une image produit pour générer l'essayage."

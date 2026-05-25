@@ -23,6 +23,8 @@ import type {
 } from "@/types";
 import { generateId, isValidUrl, validateImageFile } from "@/lib/utils";
 import { getImageAlphaStats } from "@/lib/tryon/alpha";
+import { compressImageFile } from "@/lib/clientImageCompression";
+import { safeFetchJson } from "@/lib/safeFetchJson";
 
 interface ProductInputProps {
   category: Category;
@@ -52,32 +54,47 @@ async function requestCutout(item: ProductItem): Promise<{
 }> {
   const formData = new FormData();
   if (item.file) {
-    formData.append("productImage", item.file);
+    // Compress raw uploads so /api/product/cutout never receives a body
+    // that exceeds the serverless 4.5 MB limit. We keep PNG when present
+    // to preserve any partial alpha the merchant supplied.
+    let upload = item.file;
+    try {
+      upload = await compressImageFile(item.file, {
+        maxDim: 1400,
+        quality: 0.92,
+        mimeType: item.file.type === "image/png" ? "image/png" : "image/jpeg",
+        skipIfSmallerThan: 1.2 * 1024 * 1024,
+      });
+    } catch {
+      // Fall back to original file if compression fails.
+    }
+    formData.append("productImage", upload);
   } else if (item.type === "url") {
     formData.append("imageUrl", item.value);
   } else {
     return { ok: false, error: "Aucune source d'image disponible." };
   }
-  try {
-    const res = await fetch("/api/product/cutout", {
-      method: "POST",
-      body: formData,
-    });
-    const data = (await res.json()) as {
-      ok: boolean;
-      cutoutUrl?: string;
-      error?: string;
-    };
-    if (!res.ok || !data.ok || !data.cutoutUrl) {
-      return { ok: false, error: data.error ?? "Échec du détourage." };
-    }
-    return { ok: true, cutoutUrl: data.cutoutUrl };
-  } catch (err) {
+  const result = await safeFetchJson<{
+    ok: boolean;
+    cutoutUrl?: string;
+    error?: string;
+  }>("/api/product/cutout", {
+    method: "POST",
+    body: formData,
+  });
+  if (result.nonJson || !result.data) {
     return {
       ok: false,
-      error: err instanceof Error ? err.message : "Erreur réseau.",
+      error: result.errorMessage ?? "Échec du détourage.",
     };
   }
+  if (!result.ok || !result.data.ok || !result.data.cutoutUrl) {
+    return {
+      ok: false,
+      error: result.data.error ?? "Échec du détourage.",
+    };
+  }
+  return { ok: true, cutoutUrl: result.data.cutoutUrl };
 }
 
 export function ProductInput({
