@@ -257,7 +257,9 @@ export async function renderWatchOverlay(
     centerY: geometry.cy,
     rotation: geometry.rotation,
     silhouette: silhouette.canvas,
-    blurPx: 10,
+    // 16-px Gaussian feather → silhouette bleeds 15–20 px into the skin.
+    // This is the AO blending zone where FLUX Fill paints contact shadows.
+    featherPx: 16,
     groundedShadowPx: Math.round(geometry.height * 0.18),
   });
 

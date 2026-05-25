@@ -82,6 +82,29 @@ interface InpaintModelInput {
   mask: string;
 }
 
+/**
+ * Common inpainting parameters used across all candidate models.
+ *
+ *  - `num_inference_steps: 40` — high enough to converge a clean ramp of
+ *    contact shadows in the feathered mask zone without exploding cost.
+ *  - `guidance_scale: 3.5` — sweet spot for SDXL-style inpainters; light
+ *    prompt adherence keeps the watch geometry from being re-imagined.
+ *  - `strength: 0.28` — applied to every model as a per-pixel denoise
+ *    multiplier on top of the mask values. With our soft mask (white
+ *    silhouette + 15-20 px Gaussian feather), this gives:
+ *       inside the dial      → ~0.28 effective denoise → details preserved
+ *       contour (mid grey)   → ~0.14 → micro-AO shadows
+ *       outside the watch    → 0 → pixel-perfect skin
+ *    NOTE: `fal-ai/flux-pro/v1/fill` does **not** accept `strength`.
+ *    We therefore omit it for that endpoint and rely entirely on the
+ *    soft mask for the AO ramp.
+ */
+const INPAINT_PARAMS = {
+  num_inference_steps: 40,
+  guidance_scale: 3.5,
+  strength: 0.28,
+} as const;
+
 function buildModelInput(
   modelId: string,
   { prompt, composite, mask }: InpaintModelInput
@@ -90,17 +113,16 @@ function buildModelInput(
   // We keep them close enough to share the same composite+mask URLs.
   if (modelId === FAL_INPAINT_PRIMARY_MODEL) {
     // FLUX.1 [pro] Fill — official inpainting endpoint.
+    // No `strength` here: the endpoint does not expose it. The soft
+    // mask alone provides per-pixel denoise scaling.
     return {
       prompt,
       image_url: composite,
       mask_url: mask,
-      num_inference_steps: 32,
-      guidance_scale: 30,
+      num_inference_steps: INPAINT_PARAMS.num_inference_steps,
+      guidance_scale: INPAINT_PARAMS.guidance_scale,
       safety_tolerance: "2",
       output_format: "jpeg",
-      // No `strength` here: FLUX Fill always preserves unmasked pixels
-      // exactly, so a tiny edge band already gives us the "low-denoise"
-      // behaviour we want without hallucinating the dial.
     };
   }
   if (modelId === "fal-ai/flux-lora/inpainting") {
@@ -108,21 +130,20 @@ function buildModelInput(
       prompt,
       image_url: composite,
       mask_url: mask,
-      num_inference_steps: 28,
-      guidance_scale: 3.5,
-      // SDXL-style strength control on the LoRA endpoint.
-      strength: 0.28,
+      num_inference_steps: INPAINT_PARAMS.num_inference_steps,
+      guidance_scale: INPAINT_PARAMS.guidance_scale,
+      strength: INPAINT_PARAMS.strength,
       output_format: "jpeg",
     };
   }
-  // SDXL inpainting — last-resort.
+  // SDXL inpainting — last-resort fallback.
   return {
     prompt,
     image_url: composite,
     mask_url: mask,
-    num_inference_steps: 30,
-    guidance_scale: 7.5,
-    strength: 0.28,
+    num_inference_steps: INPAINT_PARAMS.num_inference_steps,
+    guidance_scale: INPAINT_PARAMS.guidance_scale,
+    strength: INPAINT_PARAMS.strength,
   };
 }
 

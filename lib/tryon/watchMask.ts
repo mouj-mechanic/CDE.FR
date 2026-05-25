@@ -1,37 +1,45 @@
 "use client";
 
 /**
- * Watch contact-band mask builder.
+ * Watch inpainting mask builder.
  *
- *  Why a *band* and not a *full silhouette*?
- *  ────────────────────────────────────────
- *  FLUX.1 [pro] Fill (and any decent inpainting model) replaces masked pixels
- *  while keeping unmasked pixels mathematically intact. If we mask the whole
- *  watch in white, the AI will re-imagine the dial — that's where logos,
- *  hands, indices and brand names get hallucinated.
+ *  Output:  a black-and-white PNG aligned 1:1 with the composite image.
+ *           - Pure white (255)  → "the AI may fully repaint these pixels".
+ *           - Mid grey            → "the AI applies *partial* repainting".
+ *           - Pure black (0)    → "the AI must preserve these pixels".
  *
- *  Instead, we paint white **only along the contour** of the watch:
+ *  Strategy ─ feathered full silhouette + grounded shadow patch:
  *
- *      ┌────────────────────────────┐
- *      │    [skin / clothing]       │   ← black (preserved)
- *      │   ▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄     │   ← white band (AI repaints
- *      │   █                  █     │     this 8–14 px ring →
- *      │   █     [DIAL]       █     │     contact shadows + soft
- *      │   █  (preserved)     █     │     skin blend)
- *      │   █                  █     │
- *      │   ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀     │   ← black (preserved)
- *      │    [skin / clothing]       │
- *      └────────────────────────────┘
+ *      1. Draw the full warped watch silhouette in pure white onto a black
+ *         canvas at the right position + rotation. (This is the entire
+ *         watch, dial included.)
+ *      2. Apply a Gaussian blur of ~15–18 px so the white silhouette
+ *         bleeds 15–20 px outward into the black background.
+ *      3. Optionally add a small soft white patch under the watch to
+ *         widen the contact-shadow area on the wrist skin.
  *
- *  Implementation: take the warped watch silhouette canvas, blur it heavily,
- *  then threshold the grayscale into three bands:
- *    - alpha ≥ 0.78 (deep inside)  → black (preserve)
- *    - alpha ∈ [0.14, 0.78] (band) → white (paint)
- *    - alpha <  0.14 (far outside) → black (preserve)
+ *      Result: pixels deep inside the watch  → 1.0 (pure white)
+ *              pixels along the contour     → 0.4–0.95 (smooth ramp)
+ *              pixels 20 px away on the skin → 0.0 (preserved)
  *
- *  This produces a ~8–16 px ring straddling the watch silhouette boundary,
- *  which is exactly the zone where realistic contact shadow + skin blending
- *  should appear.
+ *  Why this beats a hard mask:
+ *      Modern inpainting models (FLUX Fill, SDXL inpainting, FLUX LoRA
+ *      inpainting) treat *grey* values as a per-pixel scaling of the
+ *      denoise strength. A grey ramp around the silhouette therefore
+ *      tells the model: "blend this transition zone smoothly".
+ *      That is exactly the regime where ambient-occlusion shadows form
+ *      under the strap — without the model needing to invent geometry.
+ *
+ *  Why combined with a low global `strength` (≈ 0.28):
+ *      strength=1.0 + soft mask = the dial gets fully redrawn anyway.
+ *      strength=0.28 + soft mask = the dial only gets ~28 % denoise →
+ *      logos, indices, hands and sub-dials remain mathematically close
+ *      to the input pixel values, while the soft contour ramp lets the
+ *      model paint full ambient-occlusion shadows on the skin.
+ *      (Note: `fal-ai/flux-pro/v1/fill` does not accept `strength`. On
+ *      that endpoint the soft mask alone provides the AO blend; if dial
+ *      preservation becomes an issue, route to `flux-lora/inpainting`
+ *      where the `strength` parameter is honoured.)
  */
 
 export interface ContactMaskOptions {
@@ -47,40 +55,40 @@ export interface ContactMaskOptions {
   /** Source silhouette canvas (alpha = silhouette). */
   silhouette: HTMLCanvasElement;
   /**
-   * Blur radius used to feather the silhouette before thresholding.
-   * Higher → wider band. Default 10.
+   * Gaussian feather radius in pixels. The white silhouette will bleed
+   * roughly this many pixels outward into the black background, giving
+   * the AI room to paint contact shadows on the skin. Default 16.
    */
-  blurPx?: number;
+  featherPx?: number;
   /**
-   * Optional extra-band underneath the watch to extend the contact shadow
-   * onto the skin. Useful for chunky watches where the contour ring isn't
-   * enough. Set 0 to disable. Default 0.
+   * Width (in px) of an additional soft white patch under the watch to
+   * extend the contact-shadow zone onto the wrist. Set 0 to disable.
+   * Default ≈ 18 % of the silhouette height.
    */
   groundedShadowPx?: number;
 }
 
 export interface ContactMaskResult {
-  /** PNG blob, full image size, black + white. */
+  /** PNG blob, full image size, black + white + grey ramp. */
   blob: Blob;
   /** Object URL — caller is responsible for revoking. */
   url: string;
-  /** Width of the white band area in pixels (diagnostic). */
+  /** Approximate count of pixels with mask value ≥ 25 (diagnostic). */
   approxBandPx: number;
 }
 
-const DEFAULT_BLUR = 10;
-const INNER_THRESHOLD = 0.78; // grayscale (0..1) — above this is "deep inside"
-const OUTER_THRESHOLD = 0.14; // below this is "far outside"
+const DEFAULT_FEATHER = 16;
 
 export async function buildContactMask(
   opts: ContactMaskOptions
 ): Promise<ContactMaskResult> {
   const W = Math.max(1, Math.round(opts.width));
   const H = Math.max(1, Math.round(opts.height));
-  const blur = opts.blurPx ?? DEFAULT_BLUR;
+  const feather = opts.featherPx ?? DEFAULT_FEATHER;
 
-  // 1. Render the silhouette at its real position/rotation onto a black canvas
-  //    of the composite's dimensions.
+  // 1. Render the silhouette → pure white on a black canvas at the right
+  //    position/rotation. We don't want the silhouette's RGB; we only want
+  //    its alpha as a binary stencil.
   const stage = document.createElement("canvas");
   stage.width = W;
   stage.height = H;
@@ -89,34 +97,47 @@ export async function buildContactMask(
   sctx.fillStyle = "#000";
   sctx.fillRect(0, 0, W, H);
 
+  // First, convert the silhouette canvas to a tight white-on-transparent
+  // sprite so we can position it anywhere without dragging RGB pixels.
+  const sprite = document.createElement("canvas");
+  sprite.width = opts.silhouette.width;
+  sprite.height = opts.silhouette.height;
+  const tctx = sprite.getContext("2d");
+  if (!tctx) throw new Error("Canvas 2D context unavailable for tmp.");
+  tctx.drawImage(opts.silhouette, 0, 0);
+  // Replace RGB with pure white wherever alpha is non-zero.
+  tctx.globalCompositeOperation = "source-in";
+  tctx.fillStyle = "#fff";
+  tctx.fillRect(0, 0, sprite.width, sprite.height);
+  tctx.globalCompositeOperation = "source-over";
+
+  // 2. Draw the white sprite onto the stage at the rotated position.
   sctx.save();
   sctx.translate(opts.centerX, opts.centerY);
   sctx.rotate(opts.rotation);
-  const drawX = -opts.silhouette.width / 2;
-  const drawY = -opts.silhouette.height / 2;
-  // We don't want the silhouette's RGB — we only want its alpha as a
-  // grayscale mask. Draw it onto a temporary white canvas first to convert
-  // alpha → luminance.
-  const tmp = document.createElement("canvas");
-  tmp.width = opts.silhouette.width;
-  tmp.height = opts.silhouette.height;
-  const tctx = tmp.getContext("2d");
-  if (!tctx) throw new Error("Canvas 2D context unavailable for tmp.");
-  tctx.fillStyle = "#000";
-  tctx.fillRect(0, 0, tmp.width, tmp.height);
-  // Draw silhouette pixels as white wherever they have alpha.
-  tctx.globalCompositeOperation = "source-over";
-  tctx.drawImage(opts.silhouette, 0, 0);
-  // Replace any non-transparent colour with pure white using source-in.
-  tctx.globalCompositeOperation = "source-in";
-  tctx.fillStyle = "#fff";
-  tctx.fillRect(0, 0, tmp.width, tmp.height);
-  tctx.globalCompositeOperation = "source-over";
-
-  sctx.drawImage(tmp, drawX, drawY);
+  sctx.drawImage(sprite, -sprite.width / 2, -sprite.height / 2);
   sctx.restore();
 
-  // 2. Heavy blur to spread the silhouette into a feathered grayscale ramp.
+  // 3. Optionally add a soft grounded patch below the watch to extend the
+  //    contact-shadow area onto the wrist. This patch is added *before*
+  //    the blur so its edges naturally feather into the final mask.
+  const groundedPx =
+    opts.groundedShadowPx ?? Math.round(opts.silhouette.height * 0.18);
+  if (groundedPx > 0) {
+    sctx.save();
+    sctx.translate(opts.centerX, opts.centerY);
+    sctx.rotate(opts.rotation);
+    sctx.fillStyle = "#fff";
+    const w = opts.silhouette.width * 0.92;
+    const h = Math.max(8, opts.silhouette.height * 0.22);
+    sctx.fillRect(-w / 2, opts.silhouette.height / 2 - h * 0.4, w, h);
+    sctx.restore();
+  }
+
+  // 4. Apply a Gaussian blur via canvas.filter so the white silhouette
+  //    bleeds outward into the black background. We render onto a fresh
+  //    canvas because applying `filter` to the same canvas requires a
+  //    redraw.
   const blurred = document.createElement("canvas");
   blurred.width = W;
   blurred.height = H;
@@ -124,55 +145,28 @@ export async function buildContactMask(
   if (!bctx) throw new Error("Canvas 2D context unavailable for blur.");
   bctx.fillStyle = "#000";
   bctx.fillRect(0, 0, W, H);
-  bctx.filter = `blur(${blur}px)`;
+  bctx.filter = `blur(${feather}px)`;
   bctx.drawImage(stage, 0, 0);
   bctx.filter = "none";
 
-  // 3. Threshold the blurred grayscale into a 3-band mask:
-  //       deep inside  → black (preserve dial)
-  //       contour band → white (AI repaints)
-  //       far outside  → black (preserve skin / clothing)
+  // 5. Force the result back into a strictly grayscale RGB so models that
+  //    expect a single-channel-style mask read identical R==G==B values
+  //    everywhere. (Some endpoints look at the red channel only.) This
+  //    also clamps any minor off-grey artefacts from the blur.
   const img = bctx.getImageData(0, 0, W, H);
   const data = img.data;
   let bandCount = 0;
   for (let i = 0; i < data.length; i += 4) {
-    const r = data[i] / 255;
-    // R==G==B because the blurred source is grayscale, so any channel works.
-    let v = 0;
-    if (r > OUTER_THRESHOLD && r < INNER_THRESHOLD) {
-      v = 255;
-      bandCount++;
-    }
+    // Re-compute luminance just to be safe; the input is already
+    // grayscale because we only painted black + white.
+    const v = data[i];
     data[i] = v;
     data[i + 1] = v;
     data[i + 2] = v;
     data[i + 3] = 255;
+    if (v >= 25) bandCount++;
   }
   bctx.putImageData(img, 0, 0);
-
-  // 4. Optionally add a soft grounded patch below the watch for contact
-  //    shadow on skin (chunky watches benefit from this).
-  if (opts.groundedShadowPx && opts.groundedShadowPx > 0) {
-    const patch = document.createElement("canvas");
-    patch.width = W;
-    patch.height = H;
-    const pctx = patch.getContext("2d");
-    if (pctx) {
-      pctx.save();
-      pctx.translate(opts.centerX, opts.centerY);
-      pctx.rotate(opts.rotation);
-      pctx.fillStyle = "#fff";
-      pctx.filter = `blur(${opts.groundedShadowPx}px)`;
-      const w = opts.silhouette.width * 0.92;
-      const h = Math.max(8, opts.silhouette.height * 0.22);
-      pctx.fillRect(-w / 2, opts.silhouette.height / 2 - h * 0.4, w, h);
-      pctx.filter = "none";
-      pctx.restore();
-      bctx.globalCompositeOperation = "lighten";
-      bctx.drawImage(patch, 0, 0);
-      bctx.globalCompositeOperation = "source-over";
-    }
-  }
 
   const blob = await new Promise<Blob>((resolve, reject) => {
     blurred.toBlob(

@@ -108,15 +108,12 @@ export function buildPrompt(
  */
 const INPAINT_PROMPTS: Partial<Record<CategoryId, string>> = {
   watch:
-    "Seamless integration, professional product photography, " +
-    "realistic contact shadows under and around the watch strap, " +
-    "perfect skin contact with subtle ambient occlusion, " +
-    "hyperrealistic lighting that matches the surrounding wrist, " +
-    "soft microblending at the watch contour, " +
-    "high quality texture blending between the strap and the skin, " +
-    "natural skin tone, 8k resolution, photorealistic. " +
-    "Do not change the watch dial, the watch hands, the logo, the bracelet links, " +
-    "the hand anatomy, the fingers, the background or the lighting elsewhere.",
+    "Hyperrealistic watch try-on, perfect ambient occlusion shadows under " +
+    "the complex metal strap, skin contact blending, consistent " +
+    "professional lighting, 8k, preservation of complex watch face details. " +
+    "Do not change the watch dial, the watch hands, the logo, the bracelet " +
+    "links, the hand anatomy, the fingers, the background or the lighting " +
+    "elsewhere.",
   "hand-jewelry":
     "Seamless integration, professional product photography, realistic " +
     "contact shadows around the ring or bracelet, perfect skin contact, " +
