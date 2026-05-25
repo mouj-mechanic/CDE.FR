@@ -56,9 +56,15 @@ export async function fashnTryOn(
     throw new Error("Aucune image de vêtement fournie pour FASHN.");
   }
 
+  const productImageCount =
+    productImageUrls.length + params.productUrls.length;
+
   let lastError: unknown = null;
   for (const modelId of FASHN_MODEL_IDS) {
     try {
+      console.info(
+        `[fashn] subscribing model=${modelId} category=${params.category} productImageCount=${productImageCount}`
+      );
       const result = await fal.subscribe(modelId, {
         input: {
           model_image: userImageUrl,
@@ -72,6 +78,11 @@ export async function fashnTryOn(
       const data = result.data as FashnOutput;
       const url = data?.images?.[0]?.url || data?.image_url;
       if (url) {
+        if (url === userImageUrl) {
+          throw new Error(
+            "fal.ai returned the original user image unchanged."
+          );
+        }
         return {
           resultUrl: url,
           generatedAt: Date.now(),
@@ -79,6 +90,10 @@ export async function fashnTryOn(
           provider: "fal",
           model: modelId,
           category: params.category,
+          debug: {
+            imageCount: 1 + productImageCount,
+            productImageCount,
+          },
         };
       }
     } catch (error) {

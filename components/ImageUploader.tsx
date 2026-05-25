@@ -3,9 +3,17 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useDropzone } from "react-dropzone";
 import { motion, AnimatePresence } from "framer-motion";
-import { Check, ImagePlus, Sparkles, Trash2, Upload } from "lucide-react";
+import {
+  Camera,
+  Check,
+  ImagePlus,
+  Sparkles,
+  Trash2,
+  Upload,
+} from "lucide-react";
 import { formatBytes, validateImageFile } from "@/lib/utils";
 import { ConfettiBurst } from "./ConfettiBurst";
+import { CameraCapture } from "./CameraCapture";
 
 interface ImageUploaderProps {
   previewUrl: string | null;
@@ -22,6 +30,7 @@ export function ImageUploader({
 }: ImageUploaderProps) {
   const [confettiTrigger, setConfettiTrigger] = useState(0);
   const [showXp, setShowXp] = useState(false);
+  const [cameraOpen, setCameraOpen] = useState(false);
   const previousPreview = useRef<string | null>(previewUrl);
 
   useEffect(() => {
@@ -126,6 +135,7 @@ export function ImageUploader({
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
+            className="space-y-3"
           >
             <div
               {...getRootProps()}
@@ -152,9 +162,34 @@ export function ImageUploader({
                 </div>
               </div>
             </div>
+
+            <div className="flex items-center gap-3">
+              <div className="h-px flex-1 bg-ink/10" />
+              <span className="text-xs font-medium uppercase tracking-wider text-ink-muted">
+                ou
+              </span>
+              <div className="h-px flex-1 bg-ink/10" />
+            </div>
+
+            <button
+              type="button"
+              onClick={() => setCameraOpen(true)}
+              className="btn-secondary w-full"
+            >
+              <Camera className="h-5 w-5" aria-hidden />
+              Prendre une photo maintenant
+            </button>
           </motion.div>
         )}
       </AnimatePresence>
+
+      <CameraCapture
+        open={cameraOpen}
+        onClose={() => setCameraOpen(false)}
+        onCapture={(file, url) => {
+          onImageSelect(file, url);
+        }}
+      />
 
       {(error || rejectionError) && (
         <p className="text-sm text-bordeaux" role="alert">

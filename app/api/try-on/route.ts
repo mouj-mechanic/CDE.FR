@@ -126,7 +126,13 @@ export async function POST(request: NextRequest) {
         droppedUrls > 0
           ? "Aucune image produit exploitable. Importez une image ou utilisez un lien produit dont l'image a été détectée."
           : "Veuillez ajouter au moins un article (lien produit ou image).";
-      return NextResponse.json({ error: reason }, { status: 400 });
+      return NextResponse.json(
+        {
+          error: reason,
+          debug: { imageCount: 1, productImageCount: 0 },
+        },
+        { status: 400 }
+      );
     }
 
     const notesRaw = formData.get("notes");
@@ -157,8 +163,14 @@ export async function POST(request: NextRequest) {
     const result = await generateTryOnImage(params);
     const durationMs = Date.now() - startedAt;
 
+    const debugFromProvider = result.debug;
+    const debug = debugFromProvider ?? {
+      imageCount: 1 + productImages.length + productUrls.length,
+      productImageCount: productImages.length + productUrls.length,
+    };
+
     console.info(
-      `[try-on] success provider=${result.provider} model=${result.model} mock=${Boolean(result.mock)} durationMs=${durationMs}`
+      `[try-on] success provider=${result.provider} model=${result.model} mock=${Boolean(result.mock)} durationMs=${durationMs} imageCount=${debug.imageCount} productImageCount=${debug.productImageCount}`
     );
 
     trackTryOnUsage({
@@ -171,7 +183,7 @@ export async function POST(request: NextRequest) {
       durationMs,
     });
 
-    return NextResponse.json({ ...result, durationMs });
+    return NextResponse.json({ ...result, durationMs, debug });
   } catch (error) {
     const durationMs = Date.now() - startedAt;
     const safeMessage = safeErrorMessage(error);

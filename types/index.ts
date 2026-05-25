@@ -94,6 +94,11 @@ export interface TryOnRequest {
   merchantId?: string;
 }
 
+export interface TryOnResponseDebug {
+  imageCount: number;
+  productImageCount: number;
+}
+
 export interface TryOnResponse {
   resultUrl: string;
   generatedAt: number;
@@ -103,6 +108,8 @@ export interface TryOnResponse {
   category?: CategoryId;
   /** Server-side generation duration in milliseconds. */
   durationMs?: number;
+  /** Debug counts. Only safe scalars — never URLs or PII. */
+  debug?: TryOnResponseDebug;
 }
 
 export interface ProductResolveResult {

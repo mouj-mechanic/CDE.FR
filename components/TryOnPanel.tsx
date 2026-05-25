@@ -103,6 +103,11 @@ export function TryOnPanel({
       };
 
       if (!response.ok) {
+        if (data.debug?.productImageCount === 0) {
+          throw new Error(
+            "Image produit manquante : ajoutez une image produit pour générer l'essayage."
+          );
+        }
         if (data.provider === "fal") {
           throw new Error(
             "Le mode IA réel est actif, mais la génération a échoué. Vérifiez la clé API, les crédits fal.ai ou les logs serveur."

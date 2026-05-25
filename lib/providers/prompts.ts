@@ -1,64 +1,73 @@
 import type { CategoryId } from "@/types";
 
 /**
- * Category-specific prompts used with FLUX Kontext multi-image edit.
- * The first image is always the user photo, the second(+) is the product.
+ * Category-specific prompts for FLUX Kontext multi-image edit
+ * (`fal-ai/flux-pro/kontext/max/multi`).
  *
- * Each prompt is designed to:
- *   - Place the product naturally on the right body part
- *   - Preserve the user identity (face, skin, hair, body, background)
- *   - Match lighting, perspective and shadows
- *   - Include explicit negative guidance to avoid common failure modes
+ * Convention enforced by every prompt:
+ *   - image 1 = the CUSTOMER photo (the person to keep)
+ *   - image 2 = the EXACT product reference (the item to add)
+ *   - additional images (>2) = extra product references when relevant
+ *
+ * The prompts must be explicit and directive to prevent FLUX from returning
+ * the original photo unchanged — a known failure mode when the instruction
+ * is too soft. Always include:
+ *   - "Use image 1 as the customer photo."
+ *   - "Use image 2 as the exact product reference."
+ *   - "Do not return the original image unchanged."
  */
+
+const GLOBAL_NEGATIVES =
+  "Do NOT return the original image unchanged. Do NOT add extra limbs. " +
+  "Do NOT duplicate the product. Do NOT distort the face or body proportions. " +
+  "Do NOT change the background unless strictly necessary.";
 
 interface PromptParams {
   count: number;
   notes?: string;
 }
 
-const NEGATIVES =
-  "Do NOT add extra limbs. Do NOT duplicate the product. Do NOT distort the face. " +
-  "Do NOT reshape the body. Do NOT change the background unless strictly necessary.";
-
 const PROMPT_BUILDERS: Record<CategoryId, (p: PromptParams) => string> = {
   headwear: () =>
-    "Place the cap/hat/beanie from the second image naturally on the head of the person " +
-    "in the first image. Match scale, lighting, perspective and shadows precisely. " +
-    "Preserve the face, hairline, skin tone, expression, body and background exactly. " +
-    "Photorealistic e-commerce-quality result. " +
-    NEGATIVES,
+    "Use image 1 as the customer photo. Use image 2 as the exact headwear " +
+    "product reference. Place the cap, hat, or beanie from image 2 naturally " +
+    "on the person's head in image 1. It must be clearly visible. Match head " +
+    "angle, scale, lighting, and shadows. Preserve the face, expression, and " +
+    "background. " +
+    GLOBAL_NEGATIVES,
 
   glasses: () =>
-    "Remove any existing glasses from the person in the first image, then place the new " +
-    "eyewear from the second image, aligned with the eyes, the bridge of the nose and the " +
-    "temples. Preserve face identity, skin, eye color, hair and background. " +
-    "Avoid altering the facial structure. Photorealistic. " +
-    NEGATIVES,
+    "Use image 1 as the customer photo. Use image 2 as the exact glasses " +
+    "frame reference. Place the glasses from image 2 onto the face in image 1, " +
+    "aligned with the eyes, nose bridge, and temples. The glasses must be " +
+    "clearly visible. Remove any existing glasses in image 1 first. Preserve " +
+    "the face identity, expression, skin tone, and background. " +
+    GLOBAL_NEGATIVES,
 
   watch: () =>
-    "Place the watch from the second image on the wrist of the person in the first image. " +
-    "Match the wrist angle, perspective, lighting, shadows and reflections. Keep the hand, " +
-    "skin, arm and background completely unchanged. Avoid adding any extra accessory. " +
-    "Photorealistic. " +
-    NEGATIVES,
+    "Use image 1 as the customer photo. Use image 2 as the exact product " +
+    "reference. Add the watch from image 2 onto the visible wrist in image 1. " +
+    "The watch must be clearly visible on the wrist. Match the wrist angle, " +
+    "scale, perspective, shadows, and lighting. Preserve the original hand, " +
+    "skin tone, background, and pose. Do not add extra watches. Do not change " +
+    "the person's identity or background. " +
+    GLOBAL_NEGATIVES,
 
-  "hand-jewelry": ({ count }) =>
-    `Place the jewelry (ring, bracelet or hand piece) from the ${
-      count > 2 ? "additional images" : "second image"
-    } on the hand of the person in the first image, fitted naturally on the appropriate ` +
-    "finger or wrist. If several pieces are provided, compose them tastefully without " +
-    "overcrowding. Preserve hand pose, skin tone, nails and background exactly. " +
-    "Match lighting and shadows. Photorealistic. " +
-    NEGATIVES,
+  "hand-jewelry": () =>
+    "Use image 1 as the customer photo. Use image 2 as the exact jewelry " +
+    "product reference. Place the ring, bracelet, or hand jewelry from image 2 " +
+    "naturally on the appropriate finger, hand, or wrist in image 1. The " +
+    "jewelry must be clearly visible. Preserve hand pose, skin tone, nails, " +
+    "lighting, and background. " +
+    GLOBAL_NEGATIVES,
 
-  clothes: ({ count }) =>
-    `Dress the person in the first image with the garment(s) from the ${
-      count > 2 ? "other images" : "second image"
-    }, fitted realistically to their body shape, pose and posture. Preserve identity, ` +
-    "face, hair, skin, body proportions and background. Preserve garment color, fabric, " +
-    "logos and patterns exactly. Match the original lighting for a clean realistic " +
-    "e-commerce try-on result. " +
-    NEGATIVES,
+  clothes: () =>
+    "Use image 1 as the customer photo. Use image 2 as the exact clothing " +
+    "product reference. Dress the person in image 1 with the clothing item " +
+    "from image 2. Preserve identity, face, body proportions, pose, lighting, " +
+    "and background. Preserve garment color, fabric, texture, pattern, and " +
+    "logos as much as possible. The clothing must be clearly visible. " +
+    GLOBAL_NEGATIVES,
 };
 
 export function buildPrompt(
@@ -66,9 +75,12 @@ export function buildPrompt(
   totalImageCount: number,
   notes?: string
 ): string {
-  const base = PROMPT_BUILDERS[category]({ count: totalImageCount, notes });
+  const base = PROMPT_BUILDERS[category]({
+    count: totalImageCount,
+    notes,
+  });
   if (notes && notes.trim()) {
-    return `${base} Additional instructions: ${notes.trim()}`;
+    return `${base} Additional context from the user: ${notes.trim()}`;
   }
   return base;
 }
