@@ -257,10 +257,15 @@ export async function renderWatchOverlay(
     centerY: geometry.cy,
     rotation: geometry.rotation,
     silhouette: silhouette.canvas,
-    // 16-px Gaussian feather → silhouette bleeds 15–20 px into the skin.
-    // This is the AO blending zone where FLUX Fill paints contact shadows.
-    featherPx: 16,
-    groundedShadowPx: Math.round(geometry.height * 0.18),
+    // 20-px Gaussian feather → the white silhouette bleeds 18–24 px into
+    // the black background (i.e. onto the wrist skin). This is the AO
+    // blending zone where FLUX Fill paints realistic contact shadows.
+    // Going below ~16 px makes the result look like a 2D sticker again;
+    // above ~26 px the dial starts to lose contrast at the bezel edge.
+    featherPx: 20,
+    // Extra soft white patch under the watch (~22 % of watch height) so
+    // the contact-shadow zone reaches further onto the forearm.
+    groundedShadowPx: Math.round(geometry.height * 0.22),
   });
 
   // 12. Export composite PNG.

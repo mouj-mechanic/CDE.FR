@@ -25,7 +25,11 @@ import type {
 import { detectLandmarks, fileToImage } from "./landmarks";
 import { computePlacement } from "./placement";
 import { renderOverlay } from "./canvasRender";
-import { evaluatePreLandmarks, statusFromWarnings } from "./quality";
+import {
+  dedupeWarnings,
+  evaluatePreLandmarks,
+  statusFromWarnings,
+} from "./quality";
 import { analyzeProduct, loadImageFromBlob } from "./productPrep";
 import { getImageAlphaStats, inferImageMimeType } from "./alpha";
 import {
@@ -239,7 +243,7 @@ export async function runTryOnPipeline(
       previewBlobUrl: watch.url,
       placement: null,
       landmarks: lm,
-      warnings,
+      warnings: dedupeWarnings(warnings),
       qualityStatus,
       renderMode,
       productHasAlpha,
@@ -292,14 +296,15 @@ export async function runTryOnPipeline(
   }
 
   const previewBlobUrl = URL.createObjectURL(previewBlob);
+  const finalWarnings = dedupeWarnings(warnings);
 
   return {
     previewBlob,
     previewBlobUrl,
     placement,
     landmarks: lm,
-    warnings,
-    qualityStatus: statusFromWarnings(warnings),
+    warnings: finalWarnings,
+    qualityStatus: statusFromWarnings(finalWarnings),
     renderMode,
     productHasAlpha,
     productMimeType: productResult.mimeType,

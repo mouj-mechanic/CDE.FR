@@ -89,20 +89,22 @@ interface InpaintModelInput {
  *    contact shadows in the feathered mask zone without exploding cost.
  *  - `guidance_scale: 3.5` — sweet spot for SDXL-style inpainters; light
  *    prompt adherence keeps the watch geometry from being re-imagined.
- *  - `strength: 0.28` — applied to every model as a per-pixel denoise
- *    multiplier on top of the mask values. With our soft mask (white
- *    silhouette + 15-20 px Gaussian feather), this gives:
- *       inside the dial      → ~0.28 effective denoise → details preserved
- *       contour (mid grey)   → ~0.14 → micro-AO shadows
- *       outside the watch    → 0 → pixel-perfect skin
- *    NOTE: `fal-ai/flux-pro/v1/fill` does **not** accept `strength`.
- *    We therefore omit it for that endpoint and rely entirely on the
- *    soft mask for the AO ramp.
+ *  - `strength: 0.30` — per-pixel denoise multiplier applied on top of
+ *    the soft mask values. With our 20-px Gaussian feather mask, the
+ *    effective denoise per pixel is:
+ *       inside the dial          → ~0.30 → fine details preserved
+ *       contour band (mid grey)  → ~0.10–0.20 → realistic AO shadows
+ *       outside the watch        → 0 → pixel-perfect skin
+ *    NOTE: `fal-ai/flux-pro/v1/fill` does NOT accept `strength`. The
+ *    endpoint preserves the black-mask area at 100 % by construction
+ *    and applies full denoise to the white area; the grey ramp of our
+ *    soft mask provides the per-pixel scaling instead. The `strength`
+ *    constant therefore only ships on the strength-aware fallbacks.
  */
 const INPAINT_PARAMS = {
   num_inference_steps: 40,
   guidance_scale: 3.5,
-  strength: 0.28,
+  strength: 0.3,
 } as const;
 
 function buildModelInput(

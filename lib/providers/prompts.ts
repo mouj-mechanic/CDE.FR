@@ -108,9 +108,10 @@ export function buildPrompt(
  */
 const INPAINT_PROMPTS: Partial<Record<CategoryId, string>> = {
   watch:
-    "Hyperrealistic watch try-on, perfect ambient occlusion shadows under " +
-    "the complex metal strap, skin contact blending, consistent " +
-    "professional lighting, 8k, preservation of complex watch face details. " +
+    "Seamless integration, perfect ambient occlusion shadows cast onto the " +
+    "skin of the arm under the complex metal strap, skin contact blending, " +
+    "consistent professional lighting, 8k, preservation of complex watch " +
+    "face details. " +
     "Do not change the watch dial, the watch hands, the logo, the bracelet " +
     "links, the hand anatomy, the fingers, the background or the lighting " +
     "elsewhere.",

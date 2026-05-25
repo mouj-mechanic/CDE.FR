@@ -231,8 +231,8 @@ export function ResultView({
           transition={{ delay: 0.3, duration: 0.4 }}
           className="mx-auto max-w-md space-y-1.5 rounded-xl border border-amber-200 bg-amber-50 p-3 text-left text-xs text-amber-900"
         >
-          {warnings.map((w) => (
-            <li key={w.code} className="flex gap-1.5">
+          {warnings.map((w, i) => (
+            <li key={`${w.code}-${i}`} className="flex gap-1.5">
               <span aria-hidden>!</span>
               <span>{w.message}</span>
             </li>

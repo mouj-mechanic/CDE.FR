@@ -48,6 +48,21 @@ export function evaluatePreLandmarks(
   return { ok: true, warnings };
 }
 
+/**
+ * Remove duplicate warning codes, keeping the **last** message for each code.
+ * Later pipeline stages (e.g. watch-specific placement) produce more
+ * actionable messages than earlier generic pre-checks.
+ */
+export function dedupeWarnings(
+  warnings: PipelineWarning[]
+): PipelineWarning[] {
+  const byCode = new Map<string, PipelineWarning>();
+  for (const w of warnings) {
+    byCode.set(w.code, w);
+  }
+  return Array.from(byCode.values());
+}
+
 export function statusFromWarnings(
   warnings: PipelineWarning[]
 ): QualityStatus {

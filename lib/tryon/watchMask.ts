@@ -77,7 +77,7 @@ export interface ContactMaskResult {
   approxBandPx: number;
 }
 
-const DEFAULT_FEATHER = 16;
+const DEFAULT_FEATHER = 20;
 
 export async function buildContactMask(
   opts: ContactMaskOptions

@@ -105,6 +105,52 @@ function pointsFromMpArray(
 }
 
 /**
+ * Permanently filter benign MediaPipe / TFLite WASM logs.
+ *
+ *  Why permanent (vs a try/finally wrapper around `detect()`)?
+ *  ──────────────────────────────────────────────────────────
+ *  The Emscripten/WASM runtime in `@mediapipe/tasks-vision` can post log
+ *  lines back to the main thread asynchronously (through `postMessage`),
+ *  so by the time the *real* `console.error` fires the synchronous wrapper
+ *  has already been restored. Next.js dev overlay then surfaces them as
+ *  errors even though detection succeeded.
+ *
+ *  The filter is installed exactly once on the first import, in the
+ *  browser only, and is identity-no-op for any non-MediaPipe message.
+ */
+const MP_LOG_NOISE =
+  /TensorFlow ?Lite|XNNPACK|Created TensorFlow|MediaPipe|gl_context|OpenGL|tflite|WASM|Graph successfully/i;
+
+function isMpNoise(args: unknown[]): boolean {
+  const text = args
+    .map((a) => (a instanceof Error ? a.message : String(a)))
+    .join(" ");
+  return MP_LOG_NOISE.test(text);
+}
+
+declare global {
+  // Marker so HMR doesn't double-wrap console methods.
+  var __twa_mp_console_filter_installed__: boolean | undefined;
+}
+
+if (
+  typeof window !== "undefined" &&
+  !globalThis.__twa_mp_console_filter_installed__
+) {
+  globalThis.__twa_mp_console_filter_installed__ = true;
+  const wrap =
+    (original: (...args: unknown[]) => void) =>
+    (...args: unknown[]) => {
+      if (isMpNoise(args)) return;
+      original.apply(console, args);
+    };
+  console.error = wrap(console.error);
+  console.warn = wrap(console.warn);
+  console.log = wrap(console.log);
+  console.info = wrap(console.info);
+}
+
+/**
  * Detect the landmarks relevant to the requested category.
  * Returns `null` if MediaPipe is unavailable or the target was not found.
  */
