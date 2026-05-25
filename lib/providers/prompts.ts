@@ -45,12 +45,15 @@ const PROMPT_BUILDERS: Record<CategoryId, (p: PromptParams) => string> = {
     GLOBAL_NEGATIVES,
 
   watch: () =>
-    "Use image 1 as the customer photo. Use image 2 as the exact product " +
-    "reference. Add the watch from image 2 onto the visible wrist in image 1. " +
-    "The watch must be clearly visible on the wrist. Match the wrist angle, " +
-    "scale, perspective, shadows, and lighting. Preserve the original hand, " +
-    "skin tone, background, and pose. Do not add extra watches. Do not change " +
-    "the person's identity or background. " +
+    "Only improve the blending, contact shadows, lighting, and realism of " +
+    "the already placed watch. Do not move, resize, rotate, replace, or " +
+    "duplicate the watch. Do not change the hand, fingers, wrist, skin, " +
+    "background, or anatomy. Use image 1 as the base wrist try-on preview. " +
+    "Use image 2 as the exact transparent watch reference. Keep the watch in " +
+    "the exact same position and orientation as in image 1; only soften the " +
+    "edges, add realistic contact shadow under the watch, and harmonise " +
+    "lighting with the surrounding skin. Return a realistic virtual try-on " +
+    "preview. " +
     GLOBAL_NEGATIVES,
 
   "hand-jewelry": () =>
@@ -59,6 +62,9 @@ const PROMPT_BUILDERS: Record<CategoryId, (p: PromptParams) => string> = {
     "naturally on the appropriate finger, hand, or wrist in image 1. The " +
     "jewelry must be clearly visible. Preserve hand pose, skin tone, nails, " +
     "lighting, and background. " +
+    "Do not place the jewelry across two fingers. Place it on one selected " +
+    "finger only. Do not keep the product photo background. Do not place the " +
+    "product as a square image. " +
     GLOBAL_NEGATIVES,
 
   clothes: () =>

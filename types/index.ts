@@ -83,7 +83,16 @@ export interface ProductItem {
   previewUrl?: string;
   source?: ProductSource;
   title?: string;
+  /** Transparent PNG cutout URL, produced by /api/product/cutout. */
+  cutoutUrl?: string;
+  /** Whether the cutout is currently being computed. */
+  cutoutPending?: boolean;
+  /** Last cutout error message, if any. */
+  cutoutError?: string;
 }
+
+export type FingerId = "index" | "middle" | "ring" | "pinky";
+export type HandJewelryType = "ring" | "bracelet";
 
 export interface TryOnRequest {
   category: CategoryId;
@@ -92,15 +101,57 @@ export interface TryOnRequest {
   productUrls: string[];
   notes?: string;
   merchantId?: string;
+  /** Optional deterministic preview produced client-side. */
+  previewImage?: File;
+  /** Hand-jewelry subtype (ring | bracelet). */
+  handJewelryType?: HandJewelryType;
+  /** Target finger for rings. */
+  ringFinger?: FingerId;
+  /** Render mode requested by the client. */
+  renderModeRequest?: "fast" | "premium" | "auto";
 }
 
 export interface TryOnResponseDebug {
   imageCount: number;
   productImageCount: number;
+  productWasCutout?: boolean;
+  productImageSource?: "transparent-upload" | "cutout" | "original";
+  productHasAlpha?: boolean;
+  productMimeType?: string;
+}
+
+export type RenderMode =
+  | "fast-overlay"
+  | "premium-ai"
+  | "specialized-vton"
+  | "mock";
+
+export type QualityStatus =
+  | "passed"
+  | "fallback-preview"
+  | "needs-better-photo"
+  | "needs-manual-adjustment"
+  | "alpha-lost"
+  | "failed";
+
+export interface TryOnWarning {
+  code: string;
+  message: string;
+}
+
+export interface WatchPlacementResponse {
+  x: number;
+  y: number;
+  scale: number;
+  rotation: number;
+  curvature: number;
+  confidence: number;
 }
 
 export interface TryOnResponse {
   resultUrl: string;
+  /** Optional client-side deterministic preview, if any. */
+  previewUrl?: string;
   generatedAt: number;
   mock?: boolean;
   provider?: string;
@@ -110,6 +161,13 @@ export interface TryOnResponse {
   durationMs?: number;
   /** Debug counts. Only safe scalars — never URLs or PII. */
   debug?: TryOnResponseDebug;
+  renderMode?: RenderMode;
+  qualityStatus?: QualityStatus;
+  warnings?: TryOnWarning[];
+  /** Watch-only: placement actually used for the deterministic overlay. */
+  placement?: WatchPlacementResponse;
+  /** Watch-only: alpha edge-quality score in [0..1]. */
+  edgeQuality?: number;
 }
 
 export interface ProductResolveResult {
@@ -122,6 +180,9 @@ export interface TryOnResultMeta {
   provider?: string;
   model?: string;
   mock?: boolean;
+  renderMode?: RenderMode;
+  qualityStatus?: QualityStatus;
+  warnings?: TryOnWarning[];
 }
 
 export interface TryOnState {
@@ -141,6 +202,11 @@ export type TryOnAction =
   | { type: "SET_USER_IMAGE"; file: File; previewUrl: string }
   | { type: "CLEAR_USER_IMAGE" }
   | { type: "ADD_PRODUCT"; product: ProductItem }
+  | {
+      type: "UPDATE_PRODUCT";
+      id: string;
+      patch: Partial<Omit<ProductItem, "id">>;
+    }
   | { type: "REMOVE_PRODUCT"; id: string }
   | { type: "CLEAR_PRODUCTS" }
   | { type: "SET_NOTES"; notes: string }

@@ -2,9 +2,16 @@
 
 import { useReducer, useCallback, useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { X, ChevronLeft, ChevronRight } from "lucide-react";
-import type { Category, ProductItem, TryOnResponse } from "@/types";
+import { X, ChevronLeft, ChevronRight, Info } from "lucide-react";
+import type {
+  Category,
+  FingerId,
+  HandJewelryType,
+  ProductItem,
+  TryOnResponse,
+} from "@/types";
 import { initialTryOnState, tryOnReducer } from "@/lib/tryOnReducer";
+import { runTryOnPipeline } from "@/lib/tryon/pipeline";
 import { StepBar } from "./StepBar";
 import { PhotoGuideSteps } from "./PhotoGuideSteps";
 import { ImageUploader } from "./ImageUploader";
@@ -15,8 +22,10 @@ import { ResultView } from "./ResultView";
 import { PrivacyNote } from "./PrivacyNote";
 import { ConsentCheckbox } from "./ConsentCheckbox";
 import { PhotoQualityChecklist } from "./PhotoQualityChecklist";
+import { HandJewelryOptions } from "./HandJewelryOptions";
 import { CategoryIcon } from "./CategoryIcon";
 import { LaunchButton } from "./LaunchButton";
+import { WatchAdjustPanel } from "./WatchAdjustPanel";
 
 interface TryOnPanelProps {
   category: Category;
@@ -33,6 +42,10 @@ export function TryOnPanel({
 }: TryOnPanelProps) {
   const [state, dispatch] = useReducer(tryOnReducer, initialTryOnState);
   const [consent, setConsent] = useState(false);
+  const [handJewelryType, setHandJewelryType] =
+    useState<HandJewelryType>("ring");
+  const [ringFinger, setRingFinger] = useState<FingerId>("ring");
+  const [watchOverrideUrl, setWatchOverrideUrl] = useState<string | null>(null);
 
   useEffect(() => {
     if (initialProducts && initialProducts.length > 0) {
@@ -71,14 +84,78 @@ export function TryOnPanel({
     dispatch({ type: "SET_STATUS", status: "loading" });
     dispatch({ type: "SET_ERROR", error: null });
 
+    const firstProduct = state.products[0];
+    const firstProductFile =
+      state.products.find((p) => p.type === "image" && p.file)?.file ?? null;
+    const firstProductUrl =
+      state.products.find((p) => p.type === "url")?.value ?? null;
+    const firstProductCutout = firstProduct?.cutoutUrl ?? null;
+
+    let pipelineResult: Awaited<ReturnType<typeof runTryOnPipeline>> | null =
+      null;
+    try {
+      pipelineResult = await runTryOnPipeline({
+        category: category.id,
+        userFile: state.userImage,
+        productFile: firstProductFile,
+        productUrl: firstProductUrl,
+        productCutoutUrl: firstProductCutout,
+        mode: "auto",
+        handJewelryType,
+        ringFinger,
+      });
+    } catch (err) {
+      console.warn("[tryon] pipeline failed", err);
+    }
+
     const formData = new FormData();
     formData.append("category", category.id);
     formData.append("userImage", state.userImage);
+    formData.append("renderModeRequest", "auto");
+    formData.append("handJewelryType", handJewelryType);
+    formData.append("ringFinger", ringFinger);
+
+    if (pipelineResult?.previewBlob) {
+      formData.append(
+        "previewImage",
+        new File([pipelineResult.previewBlob], "trywithai-preview.png", {
+          type: "image/png",
+        })
+      );
+      formData.append(
+        "warnings",
+        JSON.stringify(pipelineResult.warnings ?? [])
+      );
+    }
+    if (pipelineResult) {
+      formData.append(
+        "productHasAlpha",
+        pipelineResult.productHasAlpha ? "true" : "false"
+      );
+      formData.append("productMimeType", pipelineResult.productMimeType);
+      formData.append("productImageSource", pipelineResult.productImageSource);
+      if (pipelineResult.watchPlacement) {
+        formData.append(
+          "watchPlacement",
+          JSON.stringify(pipelineResult.watchPlacement)
+        );
+      }
+      if (typeof pipelineResult.edgeQuality === "number") {
+        formData.append("edgeQuality", String(pipelineResult.edgeQuality));
+      }
+    }
 
     const urls = state.products
       .filter((p) => p.type === "url")
       .map((p) => p.value);
     formData.append("productUrls", JSON.stringify(urls));
+
+    const cutoutUrls = state.products
+      .map((p) => p.cutoutUrl)
+      .filter((u): u is string => Boolean(u));
+    if (cutoutUrls.length > 0) {
+      formData.append("productCutoutUrls", JSON.stringify(cutoutUrls));
+    }
 
     state.products
       .filter((p) => p.type === "image" && p.file)
@@ -123,6 +200,9 @@ export function TryOnPanel({
           provider: data.provider,
           model: data.model,
           mock: data.mock,
+          renderMode: data.renderMode,
+          qualityStatus: data.qualityStatus,
+          warnings: data.warnings,
         },
       });
     } catch (err) {
@@ -135,7 +215,14 @@ export function TryOnPanel({
       });
       dispatch({ type: "SET_STATUS", status: "error" });
     }
-  }, [state, category.id, consent, merchantId]);
+  }, [
+    state,
+    category.id,
+    consent,
+    merchantId,
+    handJewelryType,
+    ringFinger,
+  ]);
 
   const isLoading = state.status === "loading";
   const showStage = isLoading || !!state.resultUrl;
@@ -195,20 +282,49 @@ export function TryOnPanel({
                 transition={{ duration: 0.5, ease: "easeOut" }}
               >
                 <ResultView
-                  resultUrl={state.resultUrl}
+                  resultUrl={watchOverrideUrl ?? state.resultUrl}
                   provider={state.resultMeta?.provider}
                   model={state.resultMeta?.model}
                   mock={state.resultMeta?.mock}
+                  renderMode={state.resultMeta?.renderMode}
+                  qualityStatus={state.resultMeta?.qualityStatus}
+                  warnings={state.resultMeta?.warnings}
                   onDownload={() => {}}
-                  onRetry={() => dispatch({ type: "RESET_TRY_AGAIN" })}
-                  onChangeProduct={() =>
-                    dispatch({ type: "RESET_ARTICLES" })
-                  }
+                  onRetry={() => {
+                    setWatchOverrideUrl(null);
+                    dispatch({ type: "RESET_TRY_AGAIN" });
+                  }}
+                  onChangeProduct={() => {
+                    setWatchOverrideUrl(null);
+                    dispatch({ type: "RESET_ARTICLES" });
+                  }}
                   onClose={() => {
+                    setWatchOverrideUrl(null);
                     dispatch({ type: "RESET_ALL" });
                     onClose();
                   }}
                 />
+                {category.id === "watch" &&
+                  state.resultMeta?.renderMode === "fast-overlay" &&
+                  state.userImage && (
+                    <div className="mt-4">
+                      <WatchAdjustPanel
+                        userFile={state.userImage}
+                        productFile={
+                          state.products.find(
+                            (p) => p.type === "image" && p.file
+                          )?.file ?? null
+                        }
+                        productCutoutUrl={
+                          state.products[0]?.cutoutUrl ?? null
+                        }
+                        onPreviewUrl={(url) => setWatchOverrideUrl(url)}
+                        onValidate={(_blob) => {
+                          // The overlay URL is already used as the result.
+                        }}
+                      />
+                    </div>
+                  )}
               </motion.div>
             ) : null}
           </AnimatePresence>
@@ -259,6 +375,9 @@ export function TryOnPanel({
                     onAdd={(product) =>
                       dispatch({ type: "ADD_PRODUCT", product })
                     }
+                    onUpdate={(id, patch) =>
+                      dispatch({ type: "UPDATE_PRODUCT", id, patch })
+                    }
                     onRemove={(id) =>
                       dispatch({ type: "REMOVE_PRODUCT", id })
                     }
@@ -266,6 +385,41 @@ export function TryOnPanel({
                       state.error && state.step === 3 ? state.error : null
                     }
                   />
+                  {(category.id === "watch" ||
+                    category.id === "hand-jewelry" ||
+                    category.id === "glasses") && (
+                    <div className="flex items-start gap-2 rounded-xl border border-bordeaux/15 bg-bordeaux/5 p-3 text-xs text-ink">
+                      <Info
+                        className="mt-0.5 h-4 w-4 shrink-0 text-bordeaux"
+                        aria-hidden
+                      />
+                      <p>
+                        Pour les bijoux, montres et lunettes, une photo nette
+                        et un produit sur fond transparent (PNG) donnent un
+                        meilleur rendu.
+                      </p>
+                    </div>
+                  )}
+                  {category.id === "watch" && (
+                    <div className="flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+                      <Info
+                        className="mt-0.5 h-4 w-4 shrink-0 text-amber-700"
+                        aria-hidden
+                      />
+                      <p>
+                        Pour un rendu réaliste, utilisez un poignet dégagé et
+                        une image montre détourée avec contours propres.
+                      </p>
+                    </div>
+                  )}
+                  {category.id === "hand-jewelry" && (
+                    <HandJewelryOptions
+                      type={handJewelryType}
+                      onTypeChange={setHandJewelryType}
+                      finger={ringFinger}
+                      onFingerChange={setRingFinger}
+                    />
+                  )}
                   <div>
                     <label
                       htmlFor="tryon-notes"

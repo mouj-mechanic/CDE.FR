@@ -41,6 +41,13 @@ export function tryOnReducer(
         products: [...state.products, action.product],
         error: null,
       };
+    case "UPDATE_PRODUCT":
+      return {
+        ...state,
+        products: state.products.map((p) =>
+          p.id === action.id ? { ...p, ...action.patch } : p
+        ),
+      };
     case "REMOVE_PRODUCT": {
       const removed = state.products.find((p) => p.id === action.id);
       if (removed?.previewUrl) {

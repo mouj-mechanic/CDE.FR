@@ -102,14 +102,14 @@ export const CATEGORIES: Category[] = [
         scene: "frame",
       },
       {
+        title: "Retirez montre et bracelets existants",
+        hint: "Le poignet doit être dégagé pour que la montre virtuelle se place correctement.",
+        scene: "remove",
+      },
+      {
         title: "Tournez le poignet d'environ 30°",
         hint: "Paume vers vous, comme pour lire l'heure naturellement.",
         scene: "angle",
-      },
-      {
-        title: "Main stable, posée si possible",
-        hint: "Posez l'avant-bras sur une table pour éviter tout flou.",
-        scene: "stable",
       },
       {
         title: "Lumière douce, fond uni",

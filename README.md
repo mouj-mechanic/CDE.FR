@@ -49,6 +49,7 @@ Copy `.env.example` to `.env.local` and fill in what you need.
 | Key                       | Purpose                                                                 |
 | ------------------------- | ----------------------------------------------------------------------- |
 | `AI_TRYON_PROVIDER`       | `mock` (default), `fal`, or `auto`                                      |
+| `TRYON_RENDER_MODE`       | `auto` (default), `fast`, or `premium` — see "Render pipeline" below    |
 | `FAL_KEY`                 | fal.ai API key — required for `AI_TRYON_PROVIDER=fal`                   |
 | `FASHN_API_KEY`           | Optional, reserved for a future direct FASHN integration                |
 | `AI_TRYON_API_KEY`        | Legacy generic fallback (also accepted as `FAL_KEY`)                    |
@@ -73,6 +74,100 @@ Copy `.env.example` to `.env.local` and fill in what you need.
 > silently fall back to mock. If `FAL_KEY` is missing, `/api/try-on` returns
 > a `500` with an explicit error and `/api/ai-status` reports
 > `mode: "fal-configured-but-missing-key"`.
+
+---
+
+## Render pipeline (overlay first vs AI first)
+
+To get **commercially-viable accessory try-on**, the app now uses a
+**controlled rendering pipeline** instead of relying on raw generative AI:
+
+1. **MediaPipe Tasks Vision** detects landmarks in the browser:
+   - `FaceLandmarker` (478 points) → glasses, headwear
+   - `HandLandmarker` (21 points)   → watch, hand-jewelry (rings + bracelets)
+2. **Deterministic placement math** (`lib/tryon/placement.ts`) computes a
+   pixel-accurate transform — center, scale, rotation — for the product.
+3. **Canvas compositing** (`lib/tryon/canvasRender.ts`) crops the product
+   alpha-aware and draws it on top of the user photo with a soft shadow.
+4. The deterministic preview is sent to `/api/try-on` with
+   `renderModeRequest=auto`. The server returns it as `renderMode:"fast-overlay"`
+   without spending an AI generation.
+
+This eliminates the typical hallucinations of pure-AI try-on
+(distorted hands, rings across two fingers, fake fingers, etc.).
+
+### Modes
+
+| Mode      | Behavior                                                            |
+| --------- | ------------------------------------------------------------------- |
+| `auto`    | Accessories → fast overlay. Clothes → specialized VTON (FASHN).    |
+| `fast`    | All accessories use the deterministic overlay only.                |
+| `premium` | All accessories go through `fal-ai/flux-pro/kontext/max/multi`.    |
+
+Premium is more expensive and prone to anatomical artifacts. We recommend
+`auto` for production.
+
+### Hand jewelry options
+
+When `category=hand-jewelry`, the UI exposes:
+- A **type** selector: `Ring` or `Bracelet`
+- A **finger** selector for rings: `Index | Middle | Ring | Pinky` (default
+  `Ring`)
+
+These are passed to both the pipeline (`computeRingPlacement`) and the API
+(`handJewelryType`, `ringFinger` form fields).
+
+### Recommendations to merchants
+
+The UI surfaces a banner for jewelry / watches / glasses:
+**"Pour les bijoux, montres et lunettes, une photo nette et un produit sur
+fond transparent (PNG) donnent un meilleur rendu."**
+
+Transparent PNG product images are detected automatically and the result
+quality is significantly higher when supplied.
+
+### Product transparency end-to-end
+
+The app preserves the product's alpha channel from upload to render:
+
+- `ProductInput` runs an alpha probe (`getImageAlphaStats`) on every product
+  image. Transparent PNGs are shown on a **checkerboard background** with a
+  `PNG transparent` badge. Opaque uploads are flagged with a warning.
+- For accessory categories (watch, glasses, headwear, hand-jewelry):
+  - If the upload already has alpha → **skip** the cutout step.
+  - If it has a background → call `POST /api/product/cutout`
+    (`fal-ai/bria/background/remove`, fallback `fal-ai/imageutils/rembg`)
+    and use the resulting transparent PNG.
+- The deterministic overlay (`renderOverlay`) draws the user photo as a
+  background layer, then the product **without** any rectangle. The canvas
+  is exported as **PNG** to avoid JPEG re-compression on product edges.
+- The `previewImage` sent to `/api/try-on` is a `.png` File with type
+  `image/png`. Fal storage uploads preserve this MIME type.
+- `/api/try-on` echoes `productHasAlpha`, `productMimeType`, and
+  `productImageSource` (`transparent-upload | cutout | original`) in the
+  `debug` field of the response.
+
+#### Test: transparent product watch
+
+1. Upload a transparent PNG of a watch.
+2. Confirm the product list shows it on a **checkerboard** with the badge
+   `PNG transparent détecté`.
+3. The "Détourer le produit" button is **not** shown (skipped because
+   alpha is present).
+4. Generate a try-on (watch category).
+5. Hit `/api/try-on` and inspect the response:
+   ```json
+   "debug": {
+     "productHasAlpha": true,
+     "productMimeType": "image/png",
+     "productImageSource": "transparent-upload"
+   }
+   ```
+6. The rendered result must not contain any rectangular product background.
+7. If you open the preview blob URL in a new tab, it must be a `.png` file
+   (visible in DevTools Network → "Type: png").
+8. Repeat with an opaque JPG: badge becomes `Détouré` (after Bria runs),
+   `productImageSource: "cutout"`, `productHasAlpha: true`.
 
 ---
 

@@ -16,6 +16,7 @@ import { SparkleBurst } from "./SparkleBurst";
 import { ShareMenu } from "./ShareMenu";
 import { MOCK_FALLBACK } from "@/lib/mockResults";
 import { brand } from "@/lib/brand";
+import type { QualityStatus, RenderMode, TryOnWarning } from "@/types";
 
 interface ResultViewProps {
   resultUrl: string;
@@ -26,6 +27,9 @@ interface ResultViewProps {
   provider?: string;
   model?: string;
   mock?: boolean;
+  renderMode?: RenderMode;
+  qualityStatus?: QualityStatus;
+  warnings?: TryOnWarning[];
 }
 
 const REVEAL_START_MS = 150;
@@ -42,6 +46,9 @@ export function ResultView({
   provider,
   model,
   mock,
+  renderMode,
+  qualityStatus,
+  warnings,
 }: ResultViewProps) {
   const [phase, setPhase] = useState<Phase>("waiting");
   const [showBurst, setShowBurst] = useState(false);
@@ -170,26 +177,67 @@ export function ResultView({
           <div className="flex flex-col items-center gap-1">
             <span
               className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-[11px] font-bold uppercase tracking-wider ${
-                mock
-                  ? "bg-amber-100 text-amber-800"
-                  : "bg-gradient-to-r from-bordeaux/15 to-gold/15 text-bordeaux"
+                renderMode === "fast-overlay"
+                  ? "bg-emerald-100 text-emerald-800"
+                  : renderMode === "specialized-vton"
+                    ? "bg-violet-100 text-violet-800"
+                    : mock
+                      ? "bg-amber-100 text-amber-800"
+                      : "bg-gradient-to-r from-bordeaux/15 to-gold/15 text-bordeaux"
               }`}
             >
               <Sparkles className="h-3 w-3" aria-hidden />
-              {mock ? "Mode démo" : "Généré avec IA"}
-              {!mock && model && (
+              {renderMode === "fast-overlay"
+                ? "Aperçu rapide"
+                : renderMode === "specialized-vton"
+                  ? "Rendu spécialisé vêtements"
+                  : renderMode === "premium-ai"
+                    ? "Rendu IA premium"
+                    : mock
+                      ? "Mode démo"
+                      : "Généré avec IA"}
+              {!mock && model && renderMode !== "fast-overlay" && (
                 <span className="ml-1 font-normal normal-case opacity-70">
                   · {prettyModel(model, provider)}
                 </span>
               )}
             </span>
-            {!mock && provider === "fal" && (
-              <span className="text-[10px] uppercase tracking-wider text-ink-muted/70">
-                Provider: fal.ai
+            {!mock &&
+              provider === "fal" &&
+              renderMode !== "fast-overlay" && (
+                <span className="text-[10px] uppercase tracking-wider text-ink-muted/70">
+                  Provider: fal.ai
+                </span>
+              )}
+            {renderMode === "fast-overlay" &&
+              qualityStatus !== "fallback-preview" && (
+                <span className="text-[10px] uppercase tracking-wider text-ink-muted/70">
+                  Rendu déterministe local
+                </span>
+              )}
+            {qualityStatus === "fallback-preview" && (
+              <span className="text-[11px] font-medium text-amber-800">
+                Rendu IA non validé, aperçu rapide utilisé.
               </span>
             )}
           </div>
         </motion.div>
+      )}
+
+      {phase === "done" && warnings && warnings.length > 0 && (
+        <motion.ul
+          initial={{ opacity: 0, y: 4 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.3, duration: 0.4 }}
+          className="mx-auto max-w-md space-y-1.5 rounded-xl border border-amber-200 bg-amber-50 p-3 text-left text-xs text-amber-900"
+        >
+          {warnings.map((w) => (
+            <li key={w.code} className="flex gap-1.5">
+              <span aria-hidden>!</span>
+              <span>{w.message}</span>
+            </li>
+          ))}
+        </motion.ul>
       )}
 
       {/* Image with progressive reveal */}
