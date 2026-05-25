@@ -262,7 +262,7 @@ export async function renderWatchOverlay(
     // blending zone where FLUX Fill paints realistic contact shadows.
     // Going below ~16 px makes the result look like a 2D sticker again;
     // above ~26 px the dial starts to lose contrast at the bezel edge.
-    featherPx: 20,
+    featherPx: 24,
     // Extra soft white patch under the watch (~22 % of watch height) so
     // the contact-shadow zone reaches further onto the forearm.
     groundedShadowPx: Math.round(geometry.height * 0.22),

@@ -3,41 +3,32 @@ import type { TryOnRequest, TryOnResponse } from "@/types";
 import { buildInpaintPrompt } from "./prompts";
 
 /**
- * Server-side FLUX-based inpainting refinement for the watch try-on.
+ * Server-side inpainting refinement for the watch try-on.
  *
  *  Input:
- *    - composite : the deterministic preview (user photo with the warped
- *                  watch already placed, generated on the client by
- *                  `renderWatchOverlay`).
- *    - mask      : a 1:1 black + white PNG. White pixels = the contour
- *                  band the AI is allowed to repaint (~8–14 px ring around
- *                  the watch silhouette). Black pixels are preserved
- *                  exactly by the model.
+ *    - composite : deterministic preview (warped watch on wrist, client-side)
+ *    - mask      : 1:1 PNG, black background + white watch silhouette with
+ *                  20-px Gaussian feather bleeding onto the skin (grey ramp
+ *                  = AO blending zone)
  *
- *  Output:
- *    - resultUrl : fal CDN URL of the refined image.
+ *  Primary model: `fal-ai/flux-lora/inpainting`
+ *    - Accepts `strength` (0.30) — the key lever for painting contact
+ *      shadows in the feathered grey zone while keeping dial details at
+ *      ~30 % denoise inside the white silhouette.
+ *    - `flux-pro/v1/fill` was demoted: it ignores `strength` and often
+ *      leaves a flat sticker look on wrist try-ons.
  *
- *  Why FLUX.1 [pro] Fill?
- *    - Production-grade inpainting that *guarantees* pixel-perfect
- *      preservation of black-masked areas. The dial of the watch is
- *      mathematically impossible to alter as long as it falls outside the
- *      mask, removing the dial-hallucination risk that pure prompt-based
- *      try-on models (e.g. FLUX Kontext) suffer from.
- *    - Excellent at adding contact shadows, lighting blend, and
- *      photorealistic skin tone matching at the seams.
- *
- *  Fallback: if the primary endpoint fails (capacity, model deprecation,
- *  geo issues), the function tries `fal-ai/flux-lora/inpainting` then
- *  finally `fal-ai/sdxl-inpainting`.
- *
- *  Security:
- *    - Reads FAL_KEY from process.env.
- *    - Never echoes the key into logs or errors.
+ *  Fallback chain:
+ *    1. fal-ai/flux-lora/inpainting  (strength-aware, primary)
+ *    2. fal-ai/flux-pro/v1/fill      (no strength, mask-only scaling)
+ *    3. fal-ai/sdxl-inpainting       (last resort)
  */
 
-export const FAL_INPAINT_PRIMARY_MODEL = "fal-ai/flux-pro/v1/fill";
+/** Primary — strength-aware; best for soft-mask AO on skin. */
+export const FAL_INPAINT_PRIMARY_MODEL = "fal-ai/flux-lora/inpainting";
+
 export const FAL_INPAINT_FALLBACK_MODELS = [
-  "fal-ai/flux-lora/inpainting",
+  "fal-ai/flux-pro/v1/fill",
   "fal-ai/sdxl-inpainting",
 ] as const;
 
@@ -83,23 +74,12 @@ interface InpaintModelInput {
 }
 
 /**
- * Common inpainting parameters used across all candidate models.
+ * Shared inpainting parameters.
  *
- *  - `num_inference_steps: 40` — high enough to converge a clean ramp of
- *    contact shadows in the feathered mask zone without exploding cost.
- *  - `guidance_scale: 3.5` — sweet spot for SDXL-style inpainters; light
- *    prompt adherence keeps the watch geometry from being re-imagined.
- *  - `strength: 0.30` — per-pixel denoise multiplier applied on top of
- *    the soft mask values. With our 20-px Gaussian feather mask, the
- *    effective denoise per pixel is:
- *       inside the dial          → ~0.30 → fine details preserved
- *       contour band (mid grey)  → ~0.10–0.20 → realistic AO shadows
- *       outside the watch        → 0 → pixel-perfect skin
- *    NOTE: `fal-ai/flux-pro/v1/fill` does NOT accept `strength`. The
- *    endpoint preserves the black-mask area at 100 % by construction
- *    and applies full denoise to the white area; the grey ramp of our
- *    soft mask provides the per-pixel scaling instead. The `strength`
- *    constant therefore only ships on the strength-aware fallbacks.
+ *  `strength: 0.30` — global denoise cap multiplied by per-pixel mask value:
+ *    white (dial interior)  → ~0.30 → logos / hands preserved
+ *    grey (feather band)    → ~0.05–0.20 → contact shadows on skin
+ *    black (outside watch)  → 0 → untouched skin
  */
 const INPAINT_PARAMS = {
   num_inference_steps: 40,
@@ -107,27 +87,15 @@ const INPAINT_PARAMS = {
   strength: 0.3,
 } as const;
 
+const FLUX_LORA_MODEL = "fal-ai/flux-lora/inpainting";
+const FLUX_FILL_MODEL = "fal-ai/flux-pro/v1/fill";
+const SDXL_INPAINT_MODEL = "fal-ai/sdxl-inpainting";
+
 function buildModelInput(
   modelId: string,
   { prompt, composite, mask }: InpaintModelInput
 ): Record<string, unknown> {
-  // The three models we route to all accept slightly different schemas.
-  // We keep them close enough to share the same composite+mask URLs.
-  if (modelId === FAL_INPAINT_PRIMARY_MODEL) {
-    // FLUX.1 [pro] Fill — official inpainting endpoint.
-    // No `strength` here: the endpoint does not expose it. The soft
-    // mask alone provides per-pixel denoise scaling.
-    return {
-      prompt,
-      image_url: composite,
-      mask_url: mask,
-      num_inference_steps: INPAINT_PARAMS.num_inference_steps,
-      guidance_scale: INPAINT_PARAMS.guidance_scale,
-      safety_tolerance: "2",
-      output_format: "jpeg",
-    };
-  }
-  if (modelId === "fal-ai/flux-lora/inpainting") {
+  if (modelId === FLUX_LORA_MODEL) {
     return {
       prompt,
       image_url: composite,
@@ -138,7 +106,19 @@ function buildModelInput(
       output_format: "jpeg",
     };
   }
-  // SDXL inpainting — last-resort fallback.
+  if (modelId === FLUX_FILL_MODEL) {
+    // No `strength` — mask grey ramp provides per-pixel scaling only.
+    return {
+      prompt,
+      image_url: composite,
+      mask_url: mask,
+      num_inference_steps: INPAINT_PARAMS.num_inference_steps,
+      guidance_scale: INPAINT_PARAMS.guidance_scale,
+      safety_tolerance: "2",
+      output_format: "jpeg",
+    };
+  }
+  // SDXL inpainting — last resort.
   return {
     prompt,
     image_url: composite,
@@ -170,18 +150,10 @@ async function callModel(
 }
 
 export interface InpaintParams extends TryOnRequest {
-  /** Composite preview (user photo with the warped watch already placed). */
   inpaintComposite: File;
-  /** 1:1 black + white contact-band mask. */
   inpaintMask: File;
 }
 
-/**
- * Run the inpainting refinement.
- *
- *  Returns a {@link TryOnResponse} with `provider: "fal"` and the fal model
- *  that actually produced the result.
- */
 export async function falInpaintTryOn(
   params: InpaintParams,
   apiKey: string
@@ -196,7 +168,7 @@ export async function falInpaintTryOn(
   const prompt = buildInpaintPrompt(params.category, params.notes);
 
   console.info(
-    `[fal-inpaint] start category=${params.category} compositeUploaded maskUploaded`
+    `[fal-inpaint] start category=${params.category} primary=${FAL_INPAINT_PRIMARY_MODEL} strength=${INPAINT_PARAMS.strength}`
   );
 
   const candidates = [
@@ -215,8 +187,6 @@ export async function falInpaintTryOn(
       console.info(`[fal-inpaint] subscribing model=${modelId}`);
       const resultUrl = await callModel(modelId, input);
       if (resultUrl === compositeUrl) {
-        // Some fal models echo the input back on no-op; treat as failure so
-        // we fall through to the next candidate.
         throw new Error(
           `${modelId} returned the composite URL unchanged — treating as failed.`
         );
@@ -230,7 +200,7 @@ export async function falInpaintTryOn(
         model: modelId,
         category: params.category,
         debug: {
-          imageCount: 2, // composite + mask
+          imageCount: 2,
           productImageCount: 1,
         },
       };
@@ -238,7 +208,6 @@ export async function falInpaintTryOn(
       lastErr = err;
       const msg = err instanceof Error ? err.message : String(err);
       console.warn(`[fal-inpaint] model=${modelId} failed: ${msg}`);
-      // Move to next candidate.
     }
   }
 
