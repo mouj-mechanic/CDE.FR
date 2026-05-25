@@ -160,6 +160,27 @@ export async function POST(request: NextRequest) {
       previewImage = previewEntry;
     }
 
+    // Optional inpainting refinement pack (composite + contact-band mask).
+    // Sent by the client when the user clicks "Améliorer avec l'IA".
+    let inpaintComposite: File | null = null;
+    let inpaintMask: File | null = null;
+    const compositeEntry = formData.get("compositeImage");
+    if (compositeEntry instanceof File && compositeEntry.size > 0) {
+      const err = validateImageFile(compositeEntry, "Composite");
+      if (err) return NextResponse.json({ error: err }, { status: 400 });
+      inpaintComposite = compositeEntry;
+    }
+    const maskEntry = formData.get("maskImage");
+    if (maskEntry instanceof File && maskEntry.size > 0) {
+      const err = validateImageFile(maskEntry, "Masque");
+      if (err) return NextResponse.json({ error: err }, { status: 400 });
+      inpaintMask = maskEntry;
+    }
+    const useInpaintingRaw = formData.get("useInpainting");
+    const useInpaintingRequested =
+      typeof useInpaintingRaw === "string" &&
+      useInpaintingRaw.toLowerCase() === "true";
+
     const productImages: File[] = [];
     for (const entry of formData.getAll("productImages")) {
       if (entry instanceof File && entry.size > 0) {
@@ -330,13 +351,24 @@ export async function POST(request: NextRequest) {
         : "auto");
     const isAccessory = ACCESSORY_CATEGORIES.includes(category);
 
+    // The client triggers inpainting refinement (FLUX Fill) by sending a
+    // composite + mask + useInpainting=true. This always takes priority
+    // over the fast-overlay path.
+    const useInpainting =
+      useInpaintingRequested &&
+      inpaintComposite !== null &&
+      inpaintMask !== null &&
+      hasFalKey &&
+      envProvider !== "mock";
+
     const useFast =
+      !useInpainting &&
       previewImage !== null &&
       isAccessory &&
       (requested === "fast" || requested === "auto");
 
     console.info(
-      `[try-on] start provider=${envProvider} category=${category} hasFalKey=${hasFalKey} requested=${requested} useFast=${useFast} productImages=${productImages.length} productUrls=${productUrls.length} productImageSource=${productImageSource} productHasAlpha=${productHasAlpha} productMimeType=${productMimeType}`
+      `[try-on] start provider=${envProvider} category=${category} hasFalKey=${hasFalKey} requested=${requested} useFast=${useFast} useInpainting=${useInpainting} productImages=${productImages.length} productUrls=${productUrls.length} productImageSource=${productImageSource} productHasAlpha=${productHasAlpha} productMimeType=${productMimeType}`
     );
 
     if (useFast && previewImage) {
@@ -410,6 +442,12 @@ export async function POST(request: NextRequest) {
       handJewelryType,
       ringFinger,
       renderModeRequest: renderModeRequest,
+      ...(useInpainting && inpaintComposite && inpaintMask
+        ? {
+            inpaintComposite,
+            inpaintMask,
+          }
+        : {}),
     };
 
     try {
@@ -432,7 +470,9 @@ export async function POST(request: NextRequest) {
           ? "mock"
           : category === "clothes" && result.model?.includes("fashn")
             ? "specialized-vton"
-            : "premium-ai";
+            : useInpainting
+              ? "premium-ai"
+              : "premium-ai";
 
       console.info(
         `[try-on] success provider=${result.provider} model=${result.model} mock=${Boolean(result.mock)} renderMode=${renderMode} durationMs=${durationMs} imageCount=${debug.imageCount} productImageCount=${debug.productImageCount}`
@@ -464,14 +504,16 @@ export async function POST(request: NextRequest) {
       if (premiumError instanceof ProviderConfigError) {
         throw premiumError;
       }
-      // If we have a deterministic preview, gracefully fall back to it.
-      if (previewImage) {
+      // If we have a deterministic preview (or the composite that was sent
+      // for inpainting), gracefully fall back to it.
+      const fallbackPreview = previewImage ?? inpaintComposite;
+      if (fallbackPreview) {
         const durationMs = Date.now() - startedAt;
         const safeMessage = safeErrorMessage(premiumError);
         console.warn(
           `[try-on] premium-failed category=${category} durationMs=${durationMs} message=${safeMessage} → returning fast preview`
         );
-        const resultUrl = await uploadPreviewToCdn(previewImage, hasFalKey);
+        const resultUrl = await uploadPreviewToCdn(fallbackPreview, hasFalKey);
         const fallbackWarnings = [
           ...clientWarnings,
           {

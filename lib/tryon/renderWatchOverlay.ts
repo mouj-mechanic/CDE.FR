@@ -36,6 +36,7 @@ import {
   fallbackWristGeometry,
   type WristGeometry,
 } from "./watchGeometry";
+import { buildContactMask } from "./watchMask";
 import type { TryOnLandmarks } from "./types";
 
 export interface WatchAdjustments {
@@ -77,6 +78,13 @@ export interface WatchRenderResult {
   fromLandmarks: boolean;
   edgeQuality: number;
   confidence: number;
+  /**
+   * PNG black + white contact-band mask, same dimensions as the composite.
+   * White = "AI may repaint" (8–14 px ring around the watch silhouette).
+   * Black = "AI must preserve" (dial center, skin, background).
+   */
+  maskBlob: Blob;
+  maskUrl: string;
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -240,7 +248,20 @@ export async function renderWatchOverlay(
     // Non-fatal — skip skin integration if pixel access is blocked.
   }
 
-  // 11. Export PNG.
+  // 11. Build the contact-band mask using the same silhouette + geometry
+  //     used for the composite. It must align pixel-for-pixel with `out`.
+  const mask = await buildContactMask({
+    width: userW,
+    height: userH,
+    centerX: geometry.cx,
+    centerY: geometry.cy,
+    rotation: geometry.rotation,
+    silhouette: silhouette.canvas,
+    blurPx: 10,
+    groundedShadowPx: Math.round(geometry.height * 0.18),
+  });
+
+  // 12. Export composite PNG.
   const blob = await new Promise<Blob>((resolve, reject) => {
     out.toBlob(
       (b) =>
@@ -258,6 +279,8 @@ export async function renderWatchOverlay(
     fromLandmarks: Boolean(auto),
     edgeQuality: refined.edgeQuality,
     confidence: auto?.confidence ?? 0,
+    maskBlob: mask.blob,
+    maskUrl: mask.url,
   };
 }
 

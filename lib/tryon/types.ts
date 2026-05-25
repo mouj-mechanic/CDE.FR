@@ -143,6 +143,13 @@ export interface PipelineResult {
   watchPlacement?: WatchPlacementDescriptor;
   /** Edge-quality score [0..1] from the alpha refiner (watch only). */
   edgeQuality?: number;
+  /**
+   * Watch-only: black + white contact-band mask aligned with the composite.
+   * Sent alongside the composite to the inpainting backend so FLUX Fill
+   * only repaints the watch contour, leaving the dial untouched.
+   */
+  maskBlob?: Blob;
+  maskBlobUrl?: string;
 }
 
 export interface PipelineOptions {

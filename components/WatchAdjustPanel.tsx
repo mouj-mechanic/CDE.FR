@@ -33,8 +33,17 @@ interface WatchAdjustPanelProps {
   initialAdjustments?: Partial<WatchAdjustments>;
   /** Called when the user-validated preview should replace the result. */
   onValidate: (blob: Blob, adjustments: WatchAdjustments) => void;
-  /** Called when the user wants AI refinement on top of the preview. */
-  onRefineWithAI?: (blob: Blob, adjustments: WatchAdjustments) => void;
+  /**
+   * Called when the user wants FLUX Fill refinement on top of the composite.
+   * Both the composite (current overlay) and the contact-band mask are
+   * provided so the API can run a controlled inpainting pass that protects
+   * the watch dial from any hallucination.
+   */
+  onRefineWithAI?: (
+    composite: Blob,
+    mask: Blob,
+    adjustments: WatchAdjustments
+  ) => void;
   /** Live-preview source URL (used to keep the result view in sync). */
   onPreviewUrl?: (url: string) => void;
 }
@@ -63,6 +72,7 @@ export function WatchAdjustPanel({
   const [collapsed, setCollapsed] = useState(true);
   const [rendering, setRendering] = useState(false);
   const [lastBlob, setLastBlob] = useState<Blob | null>(null);
+  const [lastMaskBlob, setLastMaskBlob] = useState<Blob | null>(null);
   const [aiBusy, setAiBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [detection, setDetection] = useState<
@@ -143,6 +153,7 @@ export function WatchAdjustPanel({
             adjustments: target,
           });
           setLastBlob(res.blob);
+          setLastMaskBlob(res.maskBlob);
           if (lastUrlRef.current) URL.revokeObjectURL(lastUrlRef.current);
           lastUrlRef.current = res.url;
           onPreviewUrl?.(res.url);
@@ -191,14 +202,14 @@ export function WatchAdjustPanel({
   }, [lastBlob, onValidate, adj]);
 
   const handleAI = useCallback(async () => {
-    if (!lastBlob || !onRefineWithAI) return;
+    if (!lastBlob || !lastMaskBlob || !onRefineWithAI) return;
     setAiBusy(true);
     try {
-      await onRefineWithAI(lastBlob, adj);
+      await onRefineWithAI(lastBlob, lastMaskBlob, adj);
     } finally {
       setAiBusy(false);
     }
-  }, [lastBlob, onRefineWithAI, adj]);
+  }, [lastBlob, lastMaskBlob, onRefineWithAI, adj]);
 
   /**
    * Slider definitions.

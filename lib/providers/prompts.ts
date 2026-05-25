@@ -90,3 +90,52 @@ export function buildPrompt(
   }
   return base;
 }
+
+/**
+ * Prompt used by the FLUX Fill inpainting endpoint
+ * (`lib/providers/falInpaint.ts`).
+ *
+ * Context for the model:
+ *   - The input image is a *finished* try-on composite (watch already
+ *     placed on the wrist by our client-side renderer).
+ *   - A black + white mask defines a narrow ring of pixels the model is
+ *     allowed to repaint (~8–14 px around the watch silhouette). All
+ *     other pixels — including the dial, the rest of the body and the
+ *     background — are preserved mathematically by the model.
+ *
+ * The prompt therefore focuses on what should appear *inside the ring*:
+ * realistic contact shadows, lighting blend, micro skin contact.
+ */
+const INPAINT_PROMPTS: Partial<Record<CategoryId, string>> = {
+  watch:
+    "Seamless integration, professional product photography, " +
+    "realistic contact shadows under and around the watch strap, " +
+    "perfect skin contact with subtle ambient occlusion, " +
+    "hyperrealistic lighting that matches the surrounding wrist, " +
+    "soft microblending at the watch contour, " +
+    "high quality texture blending between the strap and the skin, " +
+    "natural skin tone, 8k resolution, photorealistic. " +
+    "Do not change the watch dial, the watch hands, the logo, the bracelet links, " +
+    "the hand anatomy, the fingers, the background or the lighting elsewhere.",
+  "hand-jewelry":
+    "Seamless integration, professional product photography, realistic " +
+    "contact shadows around the ring or bracelet, perfect skin contact, " +
+    "hyperrealistic lighting, photorealistic blending between the jewelry " +
+    "and the skin. Do not change the jewelry shape, the finger anatomy, or " +
+    "the background.",
+};
+
+export function buildInpaintPrompt(
+  category: CategoryId,
+  notes?: string
+): string {
+  const base =
+    INPAINT_PROMPTS[category] ??
+    "Seamless integration, professional product photography, realistic " +
+      "contact shadows, perfect skin contact, hyperrealistic lighting, " +
+      "8k resolution, high quality texture blending.";
+  if (notes && notes.trim()) {
+    return `${base} Additional context: ${notes.trim()}`;
+  }
+  return base;
+}

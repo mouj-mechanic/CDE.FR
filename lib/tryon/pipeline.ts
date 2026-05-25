@@ -247,6 +247,8 @@ export async function runTryOnPipeline(
       productImageSource: productResult.source,
       watchPlacement,
       edgeQuality: watch.edgeQuality,
+      maskBlob: watch.maskBlob,
+      maskBlobUrl: watch.maskUrl,
     };
   }
 

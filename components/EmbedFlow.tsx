@@ -55,6 +55,8 @@ export function EmbedFlow({
     useState<HandJewelryType>("ring");
   const [ringFinger, setRingFinger] = useState<FingerId>("ring");
   const [watchOverrideUrl, setWatchOverrideUrl] = useState<string | null>(null);
+  const [refining, setRefining] = useState(false);
+  const [refineError, setRefineError] = useState<string | null>(null);
   const category = getCategory(categoryId) as Category;
 
   const [state, dispatch] = useReducer(tryOnReducer, {
@@ -266,6 +268,111 @@ export function EmbedFlow({
     ringFinger,
   ]);
 
+  /**
+   * FLUX Fill refinement on the current watch composite + contact-band
+   * mask. See `TryOnPanel.refineWithAI` for the matching standalone flow.
+   */
+  const refineWithAI = useCallback(
+    async (composite: Blob, mask: Blob) => {
+      if (!state.userImage) return;
+      setRefineError(null);
+      setRefining(true);
+      try {
+        const fd = new FormData();
+        fd.append("category", categoryId);
+        fd.append("renderModeRequest", "premium");
+        fd.append("useInpainting", "true");
+        fd.append("handJewelryType", handJewelryType);
+        fd.append("ringFinger", ringFinger);
+
+        let uploadUser: File = state.userImage;
+        try {
+          uploadUser = await compressImageFile(state.userImage, {
+            maxDim: 1600,
+            quality: 0.88,
+            mimeType: "image/jpeg",
+            skipIfSmallerThan: 1.4 * 1024 * 1024,
+          });
+        } catch {
+          // fall back to raw file
+        }
+        fd.append("userImage", uploadUser);
+
+        fd.append(
+          "compositeImage",
+          new File([composite], "trywithai-composite.png", {
+            type: "image/png",
+          })
+        );
+        fd.append(
+          "maskImage",
+          new File([mask], "trywithai-mask.png", { type: "image/png" })
+        );
+
+        state.products
+          .filter((p) => p.type === "image" && p.file)
+          .forEach((p) => {
+            if (p.file) fd.append("productImages", p.file);
+          });
+        const urls = state.products
+          .filter((p) => p.type === "url")
+          .map((p) => p.value);
+        fd.append("productUrls", JSON.stringify(urls));
+
+        if (merchantId) fd.append("merchantId", merchantId);
+        if (productTitle) fd.append("notes", `Article : ${productTitle}`);
+
+        const result = await safeFetchJson<
+          TryOnResponse & {
+            error?: string;
+            details?: string;
+            provider?: string;
+          }
+        >("/api/try-on", { method: "POST", body: fd });
+
+        if (result.nonJson || !result.data) {
+          throw new Error(
+            result.errorMessage ?? "Réponse inattendue du serveur."
+          );
+        }
+        if (!result.ok) {
+          throw new Error(
+            result.data.error ?? "La génération IA a échoué."
+          );
+        }
+
+        dispatch({
+          type: "SET_RESULT",
+          resultUrl: result.data.resultUrl,
+          meta: {
+            provider: result.data.provider,
+            model: result.data.model,
+            mock: result.data.mock,
+            renderMode: result.data.renderMode,
+            qualityStatus: result.data.qualityStatus,
+            warnings: result.data.warnings,
+          },
+        });
+        setWatchOverrideUrl(null);
+      } catch (err) {
+        setRefineError(
+          err instanceof Error ? err.message : "Erreur lors du raffinement IA."
+        );
+      } finally {
+        setRefining(false);
+      }
+    },
+    [
+      state.userImage,
+      state.products,
+      categoryId,
+      productTitle,
+      merchantId,
+      handJewelryType,
+      ringFinger,
+    ]
+  );
+
   const isLoading = state.status === "loading";
   const showStage = isLoading || !!state.resultUrl;
 
@@ -329,7 +436,23 @@ export function EmbedFlow({
                         }
                         onPreviewUrl={(url) => setWatchOverrideUrl(url)}
                         onValidate={() => {}}
+                        onRefineWithAI={(composite, mask) =>
+                          refineWithAI(composite, mask)
+                        }
                       />
+                      {refining && (
+                        <p className="mt-2 text-center text-xs text-bordeaux">
+                          Amélioration IA en cours… 10 à 25 secondes.
+                        </p>
+                      )}
+                      {refineError && (
+                        <p
+                          className="mt-2 text-center text-xs text-bordeaux"
+                          role="alert"
+                        >
+                          {refineError}
+                        </p>
+                      )}
                     </div>
                   )}
               </motion.div>

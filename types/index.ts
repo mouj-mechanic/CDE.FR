@@ -109,6 +109,13 @@ export interface TryOnRequest {
   ringFinger?: FingerId;
   /** Render mode requested by the client. */
   renderModeRequest?: "fast" | "premium" | "auto";
+  /**
+   * Inpainting refinement pack (currently the watch category). When both
+   * fields are provided, the service routes to FLUX Fill which preserves
+   * unmasked pixels exactly — protecting the dial, logo and hand anatomy.
+   */
+  inpaintComposite?: File;
+  inpaintMask?: File;
 }
 
 export interface TryOnResponseDebug {

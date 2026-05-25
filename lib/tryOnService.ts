@@ -1,6 +1,10 @@
 import type { CategoryId, TryOnRequest, TryOnResponse } from "@/types";
 import { pickMockResult } from "./mockResults";
 import { falKontextTryOn, FAL_KONTEXT_MODEL } from "./providers/falKontext";
+import {
+  falInpaintTryOn,
+  FAL_INPAINT_PRIMARY_MODEL,
+} from "./providers/falInpaint";
 import { fashnTryOn } from "./providers/fashn";
 
 /**
@@ -95,6 +99,24 @@ async function runFal(
   falKey: string,
   fashnKey?: string
 ): Promise<TryOnResponse> {
+  // ─── Inpainting refinement path ──────────────────────────────────────
+  // When the caller provides a deterministic composite + contact-band
+  // mask (currently the watch category), we route to FLUX Fill instead
+  // of Kontext. The model preserves unmasked pixels exactly, so the
+  // dial — logo, hands, numbers — is mathematically impossible to
+  // alter. Only the ~10-px ring around the silhouette is repainted to
+  // add realistic contact shadows and skin blending.
+  if (params.inpaintComposite && params.inpaintMask) {
+    return falInpaintTryOn(
+      {
+        ...params,
+        inpaintComposite: params.inpaintComposite,
+        inpaintMask: params.inpaintMask,
+      },
+      falKey
+    );
+  }
+
   const useFashn = FASHN_CATEGORIES.includes(params.category);
 
   if (useFashn) {
@@ -119,4 +141,5 @@ async function runFal(
 export const PROVIDER_MODELS = {
   fashn: ["fashn/tryon/v1.6", "fal-ai/fashn/tryon"],
   flux: FAL_KONTEXT_MODEL,
+  fluxInpaint: FAL_INPAINT_PRIMARY_MODEL,
 };
