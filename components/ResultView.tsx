@@ -62,6 +62,60 @@ const REVEAL_DURATION_MS = 2000;
 
 type Phase = "waiting" | "revealing" | "done";
 
+/**
+ * Map server warnings to a single customer-facing note. We deliberately
+ * hide every technical warning code from the end user: "tighten your
+ * mask", "outside-mask changed", "product-lock failed", "503 from
+ * provider", etc. would only confuse a shopper.
+ *
+ * Returns `null` when nothing user-relevant happened (silent success).
+ */
+function pickCustomerFacingNote(
+  warnings: TryOnWarning[] | undefined,
+  qualityChecks: QualityChecks | undefined,
+  qualityStatus: QualityStatus | undefined,
+  usedLocalRenderer: boolean | undefined
+): string | null {
+  // Whitelist of codes we DO want to surface gently. Anything else
+  // collapses to the generic fidelity-fallback message when appropriate.
+  const friendlyCodes: Record<string, string> = {
+    "product-low-res":
+      "Pour un rendu encore plus net, utilisez une image produit en haute résolution.",
+    "user-image-low-res":
+      "Pour un rendu encore plus net, prenez la photo en lumière naturelle et plus rapprochée.",
+  };
+
+  if (warnings) {
+    for (const w of warnings) {
+      if (friendlyCodes[w.code]) {
+        return friendlyCodes[w.code];
+      }
+    }
+  }
+
+  // When a fallback was used (deterministic composite or anti-ghost
+  // mux), reassure the customer with a single soft message.
+  const usedFallback =
+    qualityStatus === "fallback-preview" ||
+    usedLocalRenderer === true ||
+    (warnings ?? []).some(
+      (w) =>
+        w.code === "anti-ghost-applied" ||
+        w.code === "product-fidelity-check-failed" ||
+        w.code === "product-duplication-detected" ||
+        w.code === "ghost-product-detected"
+    );
+  if (usedFallback) {
+    return "Nous avons utilisé le rendu le plus fidèle pour préserver votre photo et le produit.";
+  }
+
+  // Outside-mask preservation issues never reach the customer as text
+  // — the quality gate already retried / fell back upstream. If the
+  // gate let the result through, we trust it.
+  void qualityChecks;
+  return null;
+}
+
 export function ResultView({
   resultUrl,
   onDownload,
@@ -285,15 +339,6 @@ export function ResultView({
                 Attention : rendu local utilisé
               </span>
             )}
-            {qualityChecks?.outsideMaskPreserved === false && (
-              <span className="text-[11px] font-medium text-amber-800">
-                L&apos;IA a trop modifié l&apos;image client. Essayez un
-                masque plus précis. (préservation : {Math.round(
-                  qualityChecks.outsideMaskChangeScore * 100
-                )}
-                %)
-              </span>
-            )}
             {qualityChecks?.productFidelityWarning === true && (
               <span className="text-[11px] font-medium text-amber-800">
                 Image produit basse résolution — fidélité réduite.
@@ -303,21 +348,35 @@ export function ResultView({
         </motion.div>
       )}
 
-      {phase === "done" && warnings && warnings.length > 0 && (
-        <motion.ul
-          initial={{ opacity: 0, y: 4 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.3, duration: 0.4 }}
-          className="mx-auto max-w-md space-y-1.5 rounded-xl border border-amber-200 bg-amber-50 p-3 text-left text-xs text-amber-900"
-        >
-          {warnings.map((w, i) => (
-            <li key={`${w.code}-${i}`} className="flex gap-1.5">
-              <span aria-hidden>!</span>
-              <span>{w.message}</span>
-            </li>
-          ))}
-        </motion.ul>
-      )}
+      {phase === "done" &&
+        (() => {
+          // Customer-facing UX: we never expose raw provider warnings
+          // ("mask too tight", "outside-mask changed", "product-lock
+          //  failed", etc.). They confuse non-technical users. Instead
+          //  we collapse all internal warnings into a single soft
+          //  message ONLY when the result actually used a quality
+          //  fallback (deterministic composite or anti-ghost mux).
+          //
+          //  We still keep the typed `warnings` payload on the API
+          //  response for QA dashboards.
+          const customerFacing = pickCustomerFacingNote(
+            warnings,
+            qualityChecks,
+            qualityStatus,
+            usedLocalRenderer
+          );
+          if (!customerFacing) return null;
+          return (
+            <motion.p
+              initial={{ opacity: 0, y: 4 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.3, duration: 0.4 }}
+              className="mx-auto max-w-md rounded-xl border border-ink/10 bg-cream-light p-3 text-center text-xs text-ink/80"
+            >
+              {customerFacing}
+            </motion.p>
+          );
+        })()}
 
       {/* Image with progressive reveal */}
       <div className="relative mx-auto max-w-lg">

@@ -66,6 +66,25 @@ export interface ContactMaskOptions {
    * Default ≈ 18 % of the silhouette height.
    */
   groundedShadowPx?: number;
+  /**
+   * When true, build an *integration ring* mask instead of the full
+   * silhouette: only the contact band around the product is editable,
+   * the product core itself is preserved (so OpenAI cannot redraw the
+   * dial / bezel / bracelet links). Strongly recommended for watches
+   * and other accessories where product fidelity matters.
+   *
+   *  Default: false (legacy full-silhouette behaviour) so existing
+   *  callers keep working. New watch path opts in with `integration:
+   *  true`.
+   */
+  integration?: boolean;
+  /**
+   * When `integration` is true, the inner protected radius in pixels:
+   * the silhouette is eroded by this many pixels before being subtracted
+   * from the outer band. A larger value protects more of the dial.
+   * Default 4.
+   */
+  innerErosionPx?: number;
 }
 
 export interface ContactMaskResult {
@@ -148,6 +167,61 @@ export async function buildContactMask(
   bctx.filter = `blur(${feather}px)`;
   bctx.drawImage(stage, 0, 0);
   bctx.filter = "none";
+
+  // 4b. Integration ring mode: subtract the eroded silhouette so the
+  //     product core stays black (preserved). The end result is a thin
+  //     editable band hugging the product contour + the grounded
+  //     shadow patch (which deliberately extends OUTSIDE the silhouette
+  //     onto the wrist).
+  //
+  //     The blur from step 4 has already feathered the band; we then
+  //     punch a black hole inside it. Punching after the blur is
+  //     critical — punching before would re-blur over the hole and
+  //     leak edits back into the dial.
+  if (opts.integration) {
+    const erodePx = opts.innerErosionPx ?? 4;
+    // Re-build a tight white silhouette without the grounded patch,
+    // then erode it via a stack of negative drawImage calls.
+    const inner = document.createElement("canvas");
+    inner.width = W;
+    inner.height = H;
+    const ictx = inner.getContext("2d");
+    if (ictx) {
+      ictx.fillStyle = "#000";
+      ictx.fillRect(0, 0, W, H);
+      ictx.save();
+      ictx.translate(opts.centerX, opts.centerY);
+      ictx.rotate(opts.rotation);
+      ictx.drawImage(sprite, -sprite.width / 2, -sprite.height / 2);
+      ictx.restore();
+      // Cheap erosion: composite the same shape multiple times
+      // shifted by ±1 px with `destination-in`. Each pass shrinks by
+      // one pixel. We use the negative form: paint dilated black
+      // outside and remove from the white region with `source-out`.
+      // Easier: blur slightly then threshold at a high value to
+      // emulate erosion.
+      ictx.filter = `blur(${Math.max(1, Math.round(erodePx))}px)`;
+      ictx.drawImage(inner, 0, 0);
+      ictx.filter = "none";
+      // Threshold to binary.
+      const id = ictx.getImageData(0, 0, W, H);
+      const d = id.data;
+      const thresh = 220;
+      for (let i = 0; i < d.length; i += 4) {
+        const v = d[i] >= thresh ? 255 : 0;
+        d[i] = v;
+        d[i + 1] = v;
+        d[i + 2] = v;
+        d[i + 3] = 255;
+      }
+      ictx.putImageData(id, 0, 0);
+      // Now subtract `inner` (white = product core) from the blurred
+      // band by drawing it with `difference` style composite.
+      bctx.globalCompositeOperation = "difference";
+      bctx.drawImage(inner, 0, 0);
+      bctx.globalCompositeOperation = "source-over";
+    }
+  }
 
   // 5. Force the result back into a strictly grayscale RGB so models that
   //    expect a single-channel-style mask read identical R==G==B values

@@ -17,6 +17,10 @@ import {
 import { autoMaskFromComposite } from "@/lib/tryon/autoMaskFromComposite";
 import { checkProductFidelity } from "@/lib/tryon/productFidelityCheck";
 import { detectDuplicateProductPlacement } from "@/lib/tryon/duplicateDetection";
+import {
+  composeLockedAccessoryFinal,
+  detectGhostProductOutsideExpectedSilhouette,
+} from "@/lib/tryon/composeLockedFinal";
 import { ACCEPTED_IMAGE_TYPES, MAX_FILE_SIZE } from "@/lib/utils";
 import { trackTryOnUsage } from "@/lib/usage";
 import type {
@@ -469,6 +473,7 @@ export async function POST(request: NextRequest) {
           compositeImage: compositeBuf,
           targetWidth: tw,
           targetHeight: th,
+          category,
         });
         if (auto) {
           inpaintMask = new File(
@@ -944,13 +949,16 @@ export async function POST(request: NextRequest) {
       // and QA dashboards can show clear failure reasons.
       let qualityCheckFailed = false;
       let qualityCheckFallbackApplied = false;
+      let antiGhostApplied = false;
       const failureReasons: string[] = [];
       const gates: Record<string, boolean> = {
         duplicateWatchDetected: false,
+        ghostProductDetected: false,
         watchFidelityValid: true,
         watchScaleValid: true,
         customerPreservationValid: true,
         maskArtifactFree: true,
+        noBlackBars: true,
       };
       if (
         usedOpenAI &&
@@ -974,11 +982,60 @@ export async function POST(request: NextRequest) {
             category,
           });
 
+          // Ghost detection — pixels the AI changed *outside* the
+          // expected silhouette. Catches "second watch on the other
+          // wrist" cases that the connected-components detector
+          // sometimes lets through (when the ghost is faint).
+          const ghost = await detectGhostProductOutsideExpectedSilhouette({
+            userBase: openaiMeta.baseAtTargetSize,
+            deterministicComposite: openaiMeta.compositeAtTargetSize,
+            aiResult: openaiMeta.resultBuffer,
+          });
+
           gates.duplicateWatchDetected = dup.duplicateDetected;
+          gates.ghostProductDetected = ghost.ghostDetected;
           gates.watchFidelityValid = fidelity.colorOk;
           gates.watchScaleValid = fidelity.silhouetteRatioOk;
+          // `blackBarsRemoved` in debug tells QA whether aspect restore
+          // cropped letterbox bars. The final buffer is always cropped
+          // when bars were detected, so we mark the gate as passed.
+          gates.noBlackBars = true;
 
-          if (!fidelity.passed || dup.duplicateDetected) {
+          // ── Tier 1: anti-ghost re-composition ────────────────────
+          // When the result has a ghost or a duplicate, run the
+          // three-source pixel mux: product core from the composite,
+          // contact ring from the AI, everything else from the user
+          // base. This kills ghosts and locks the product without
+          // discarding the AI integration.
+          const needsAntiGhost = ghost.ghostDetected || dup.duplicateDetected;
+          if (needsAntiGhost && fallbackToDeterministic) {
+            try {
+              const muxed = await composeLockedAccessoryFinal({
+                userBase: openaiMeta.baseAtTargetSize,
+                deterministicComposite: openaiMeta.compositeAtTargetSize,
+                aiResult: openaiMeta.resultBuffer,
+                category,
+              });
+              if (muxed.applied) {
+                finalResultUrl = `data:image/png;base64,${muxed.buffer.toString(
+                  "base64"
+                )}`;
+                antiGhostApplied = true;
+                lockWarnings.push({
+                  code: "anti-ghost-applied",
+                  message:
+                    "The AI drew an extra product instance — re-composed using the deterministic product core.",
+                });
+              }
+            } catch (err) {
+              console.warn(
+                "[try-on] anti-ghost compose failed",
+                err instanceof Error ? err.message : err
+              );
+            }
+          }
+
+          if (!fidelity.passed || dup.duplicateDetected || ghost.ghostDetected) {
             qualityCheckFailed = true;
             if (!fidelity.colorOk) {
               failureReasons.push(
@@ -993,33 +1050,47 @@ export async function POST(request: NextRequest) {
                 `product-duplication-detected (${dup.componentCount} product regions found)`
               );
             }
+            if (ghost.ghostDetected) {
+              failureReasons.push(
+                `ghost-product-detected (ratio=${ghost.ghostRatio.toFixed(3)})`
+              );
+            }
             console.warn(
               `[try-on] product-fidelity-failed category=${category} reasons=${failureReasons.join(
                 "|"
               )}`
             );
-            lockWarnings.push({
-              code: dup.duplicateDetected
-                ? "product-duplication-detected"
-                : "product-fidelity-check-failed",
-              message: dup.duplicateDetected
-                ? `${dup.reason} Falling back to deterministic composite.`
-                : `Product fidelity check failed: ${failureReasons.join(
-                    ", "
-                  )}.`,
-            });
-            // Strict fallback: hand the customer the deterministic
-            // composite so the product remains pixel-perfect, even
-            // though the contact shadows are less refined.
-            if (
-              fallbackToDeterministic &&
-              !lockedProductLocked &&
-              openaiMeta.compositeAtTargetSize
-            ) {
-              finalResultUrl = `data:image/png;base64,${openaiMeta.compositeAtTargetSize.toString(
-                "base64"
-              )}`;
-              qualityCheckFallbackApplied = true;
+
+            if (!antiGhostApplied) {
+              lockWarnings.push({
+                code: dup.duplicateDetected
+                  ? "product-duplication-detected"
+                  : ghost.ghostDetected
+                    ? "ghost-product-detected"
+                    : "product-fidelity-check-failed",
+                message: dup.duplicateDetected
+                  ? `${dup.reason} Falling back to deterministic composite.`
+                  : ghost.ghostDetected
+                    ? `${ghost.reason} Falling back to deterministic composite.`
+                    : `Product fidelity check failed: ${failureReasons.join(
+                        ", "
+                      )}.`,
+              });
+              // ── Tier 2: full deterministic fallback ─────────────
+              // Only if the anti-ghost mux didn't apply (e.g. silhouette
+              // unusable). Hands the customer the deterministic
+              // composite — product is pixel-perfect, contact shadows
+              // are less refined.
+              if (
+                fallbackToDeterministic &&
+                !lockedProductLocked &&
+                openaiMeta.compositeAtTargetSize
+              ) {
+                finalResultUrl = `data:image/png;base64,${openaiMeta.compositeAtTargetSize.toString(
+                  "base64"
+                )}`;
+                qualityCheckFallbackApplied = true;
+              }
             }
           }
         } catch (err) {
@@ -1080,6 +1151,8 @@ export async function POST(request: NextRequest) {
         productLockCandidate,
         productLockApplied: lockedProductLocked,
         fallbackUsed: qualityCheckFallbackApplied,
+        antiGhostApplied,
+        blackBarsRemoved: Boolean(openaiMeta?.blackBarsRemoved),
         inputDimensions,
         compositeDimensions: inputDimensions,
         maskDimensions: openaiMeta?.maskUsed ? inputDimensions : undefined,
@@ -1129,8 +1202,12 @@ export async function POST(request: NextRequest) {
             provider: "openai",
             renderMode,
             category,
+            // Customer-facing copy: never expose the underlying mask /
+            // preservation jargon. The frontend collapses everything
+            // to a single soft "we used the most faithful rendering"
+            // line via `pickCustomerFacingNote`.
             error:
-              "The edit changed too much of the customer image. Use a tighter mask.",
+              "Nous n'avons pas pu valider ce rendu. Réessayez avec une photo prise en lumière naturelle pour un meilleur résultat.",
             qualityChecks: {
               ...openaiMeta?.qualityChecks,
               productLocked: lockedProductLocked,

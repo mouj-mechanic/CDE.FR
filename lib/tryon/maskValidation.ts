@@ -39,7 +39,7 @@ import type { CategoryId, TryOnWarning } from "@/types";
  *  Glasses and headwear can be slightly larger because they sit on
  *  features that are tolerant to small alterations (eyebrows, hair).
  */
-export const MAX_WHITE_RATIO_WATCH = 0.18;
+export const MAX_WHITE_RATIO_WATCH = 0.12;
 export const MAX_WHITE_RATIO_HAND_JEWELRY = 0.18;
 export const MAX_WHITE_RATIO_GLASSES = 0.22;
 export const MAX_WHITE_RATIO_HEADWEAR = 0.3;

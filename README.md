@@ -155,18 +155,38 @@ This eliminates the typical hallucinations of pure-AI try-on
 (distorted hands, rings across two fingers, fake fingers, silver watch
 replacing a black multicolour reference, etc.).
 
-### Premium accessory pipeline (OpenAI)
+### Watch premium flow (OpenAI)
+
+```
+user photo + product PNG
+  → MediaPipe hand landmarks
+  → wrist geometry (forearm-axis rotation, 0.92× wristWidth target)
+  → deterministic watch placement + bracelet warp (curvature 0.55)
+  → deterministic composite PNG
+  → contact-only integration mask (ring: outer 12 px − inner 4 px erosion)
+  → OpenAI edit (composite first, mask on composite, product ref second)
+  → aspect-ratio restore (strip black letterbox bars)
+  → locked final composition (composeLockedAccessoryFinal):
+       product core  ← deterministic composite
+       contact ring  ← AI shadows / integration
+       everything else ← original user photo (kills ghost watches)
+  → quality gate (duplication, ghost, colour, scale, black bars)
+  → final result OR deterministic fallback
+```
+
+### Premium accessory pipeline (OpenAI — all accessories)
 
 ```
 customer photo + product image
   → MediaPipe landmarks
   → deterministic placement
   → composite PNG (product on body)
-  → auto mask PNG (contact band, feathered)
-  → normalizeEditInputsForOpenAI()   (dimension + coverage gate)
-  → OpenAI masked edit               (input_fidelity=high, output_format=png)
-  → product-lock re-stamp
-  → fidelity + duplication check     (colour, silhouette ratio)
+  → auto mask PNG (contact-only ring for watch; feathered band for others)
+  → normalizeEditInputsForOpenAI()   (dimension + coverage gate ≤ 12 % watch)
+  → OpenAI masked edit               (OPENAI_IMAGE_SIZE=auto, input_fidelity=high)
+  → aspect-ratio restore             (no black side bars in final output)
+  → anti-ghost compose + product-lock re-stamp
+  → fidelity + duplication + ghost detection
   → final result
 ```
 
@@ -195,9 +215,11 @@ The fix is structural, not textual:
   deterministic composite (user photo + product placed at the right
   spot). The prompt then says "improve the integration of this
   already-placed product".
-- **Tight mask.** A small contact-band mask (≤ 18 % of the image for
-  watches) restricts the model to the wrist/contact zone. The fingers
-  and the back of the hand are alpha-opaque → preserved exactly.
+- **Contact-only mask.** For watches the mask is an integration *ring*
+  (outer dilation 12 px minus inner erosion 4 px), **not** the full
+  product silhouette. Coverage target 2–7 %, hard block at 12 %. The
+  dial, bezel, and bracelet links stay opaque → OpenAI cannot redraw
+  them. See [Why the watch core must not be editable](#why-the-watch-core-must-not-be-editable).
 - **Input fidelity high.** `input_fidelity=high` tells gpt-image-1 to
   stick close to the input pixels.
 - **Product re-stamp.** The original transparent product PNG is
@@ -213,6 +235,33 @@ The fix is structural, not textual:
 The mask is **never** visible to the customer. It is an internal
 technical artefact. There is no mask uploader in the UI.
 
+### Why the watch core must not be editable
+
+If the mask makes the **entire watch silhouette** editable (white in our
+B/W convention), OpenAI will:
+
+- repaint the dial, bezel, and bracelet links;
+- simplify a black multicolour chronograph into a generic silver watch;
+- sometimes draw a **second watch** (ghost) beside the real one.
+
+`product-lock` re-stamps the original product PNG on top, but it only
+covers the diff-derived silhouette. A ghost watch drawn *outside* that
+silhouette survives the re-stamp.
+
+**Fix:** `buildContactMask({ integration: true })` on the client and
+`autoMaskFromComposite({ category: "watch" })` on the server build a
+**ring mask**:
+
+1. Extract the product silhouette (diff composite vs user photo).
+2. Erode by 4 px → `innerProductMask` (preserved core).
+3. Dilate by 12 px → `outerProductMask`.
+4. `editableRing = outer − inner` (+ small contact-shadow patch).
+5. Convert to OpenAI alpha: transparent = editable, opaque = preserved.
+
+OpenAI edits **only** contact shadows and skin blending. The product
+pixels always come from the deterministic composite via
+`composeLockedAccessoryFinal`.
+
 ### Watch try-on — quality gates
 
 The watch category has the tightest gates because the product silhouette
@@ -222,10 +271,12 @@ accents). The route exposes every gate result in `debug.gates`:
 | Gate                          | Meaning                                                                    |
 | ----------------------------- | -------------------------------------------------------------------------- |
 | `duplicateWatchDetected`      | `true` when ≥ 2 product-sized components were found in the AI output.      |
+| `ghostProductDetected`        | `true` when the AI drew product pixels outside the expected silhouette.    |
 | `watchFidelityValid`          | `false` when the dominant colour drifted (ΔRGB > 38).                      |
 | `watchScaleValid`             | `false` when the silhouette area drifted > 30 % from the composite.        |
 | `customerPreservationValid`   | `false` when the AI changed > 12 % of the image outside the mask.          |
 | `maskArtifactFree`            | `false` when the outside-mask change score is between 8 % and 12 %.        |
+| `noBlackBars`                 | `true` when letterbox bars were not detected (or were cropped out).         |
 
 If any of these is `false`, the route either:
 
@@ -239,12 +290,16 @@ Watch-specific structural rules enforced by the pipeline:
   AI silhouette and refuses to ship results with more than one
   product-sized component.
 - **Target wrist band.** `validateWatchPlacement` clamps the watch
-  centre into the band that sits 0.2–0.55 × palmWidth from the wrist
-  landmark toward the elbow, with a ±0.25 × palmWidth lateral margin.
-  Anything outside this band is auto-re-anchored.
-- **Size guard.** The watch span is clamped to 0.75–1.25 × wristWidth
-  (≈ 0.64–1.06 × palmWidth). Hard cap at 1.06 × palmWidth even when
-  user-driven scaling pushes higher.
+  centre into the band that sits 0.20–0.44 × palmWidth from the wrist
+  landmark toward the elbow (ideal 0.30), with a ±0.22 × palmWidth
+  lateral margin. Anything outside this band is auto-re-anchored.
+- **Size guard.** Target span = 0.92 × wristWidth. Allowed range
+  0.78–1.08 × wristWidth. Hard cap ≈ 0.92 × palmWidth after user scale.
+- **Portrait output.** `OPENAI_IMAGE_SIZE=auto` + `restoreSourceAspectRatio`
+  strips black letterbox bars so wrist photos stay portrait.
+- **Anti-ghost compose.** `composeLockedAccessoryFinal` routes ghost
+  pixels back to the original user photo instead of shipping a
+  duplicated watch.
 - **Forearm-axis rotation.** `computeWristGeometry` uses the
   perpendicular of the forearm direction so the bracelet wraps with
   the wrist orientation instead of staying horizontal.

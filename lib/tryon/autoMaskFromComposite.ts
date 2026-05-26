@@ -1,4 +1,5 @@
 import sharp from "sharp";
+import type { CategoryId } from "@/types";
 
 /**
  * Server-side fallback mask generator.
@@ -55,6 +56,17 @@ export interface AutoMaskInput {
   dilatePx?: number;
   /** Optional override of the Gaussian feather radius. Default 14 px. */
   featherPx?: number;
+  /**
+   * When set, the function builds a category-appropriate mask:
+   *
+   *   - "watch" / "hand-jewelry": a thin integration ring (outer
+   *     dilation 12 px minus inner erosion 4 px). The product core is
+   *     preserved so OpenAI cannot redraw the dial / bracelet.
+   *   - "glasses" / "headwear": light dilation + feather, no erosion
+   *     (those products are less identity-sensitive).
+   *   - "clothes" or undefined: legacy full-silhouette feathered mask.
+   */
+  category?: CategoryId;
 }
 
 export interface AutoMaskResult {
@@ -148,6 +160,52 @@ function dilate(mask: Buffer, w: number, h: number, radius: number): Buffer {
   return Buffer.from(src);
 }
 
+/** Iterative binary erosion. Pixels lose their value if any neighbour is 0. */
+function erode(mask: Buffer, w: number, h: number, radius: number): Buffer {
+  let src: Uint8Array = Uint8Array.from(mask);
+  let dst: Uint8Array = new Uint8Array(mask.length);
+  for (let r = 0; r < Math.max(0, Math.round(radius)); r++) {
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const i = y * w + x;
+        if (src[i] === 0) {
+          dst[i] = 0;
+          continue;
+        }
+        const left = x > 0 ? src[i - 1] : 0;
+        const right = x < w - 1 ? src[i + 1] : 0;
+        const up = y > 0 ? src[i - w] : 0;
+        const down = y < h - 1 ? src[i + w] : 0;
+        dst[i] = left && right && up && down ? 255 : 0;
+      }
+    }
+    const tmp = src;
+    src = dst;
+    dst = tmp;
+    dst.fill(0);
+  }
+  return Buffer.from(src);
+}
+
+interface RingMaskParams {
+  silhouette: Buffer; // 0/255 per-pixel
+  width: number;
+  height: number;
+  outerDilatePx: number;
+  innerErodePx: number;
+}
+
+function buildRingMask(p: RingMaskParams): Buffer {
+  const outer = dilate(p.silhouette, p.width, p.height, p.outerDilatePx);
+  const inner = erode(p.silhouette, p.width, p.height, p.innerErodePx);
+  // ring = outer & !inner
+  const ring = Buffer.alloc(p.silhouette.length);
+  for (let i = 0; i < ring.length; i++) {
+    ring[i] = outer[i] === 255 && inner[i] === 0 ? 255 : 0;
+  }
+  return ring;
+}
+
 /**
  * Build a feathered B/W mask from the difference between the user
  * photo and the deterministic composite.
@@ -177,7 +235,34 @@ export async function autoMaskFromComposite(
     return null;
   }
 
-  const dilated = dilate(mask, W, H, dilatePx);
+  // Category-aware mask building.
+  //
+  //   - watch / hand-jewelry → ring mask: outer dilate 12 px minus
+  //     inner erode 4 px. Product core preserved.
+  //   - glasses → moderate dilate, no erosion.
+  //   - headwear / clothes / unspecified → legacy full-silhouette mask
+  //     dilated by `dilatePx`.
+  let dilated: Buffer;
+  switch (input.category) {
+    case "watch":
+    case "hand-jewelry":
+      dilated = buildRingMask({
+        silhouette: mask,
+        width: W,
+        height: H,
+        outerDilatePx: 12,
+        innerErodePx: 4,
+      });
+      break;
+    case "glasses":
+      dilated = dilate(mask, W, H, Math.max(dilatePx, 8));
+      break;
+    case "headwear":
+    case "clothes":
+    default:
+      dilated = dilate(mask, W, H, dilatePx);
+      break;
+  }
 
   // Promote the binary mask to a grayscale PNG and run a Gaussian blur
   // to produce the feathered contact band. Sharp's `blur(sigma)` uses

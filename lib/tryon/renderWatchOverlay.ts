@@ -58,9 +58,15 @@ export interface WatchAdjustments {
 export const DEFAULT_WATCH_ADJUSTMENTS: WatchAdjustments = {
   offsetX: 0,
   offsetY: 0,
-  scale: 1,
+  // Slightly under-scale by default. The deterministic geometry already
+  // sizes the watch at 0.92 × wristWidth; combined with this default,
+  // the visible result lands at ≈ 0.83 × wristWidth, which reads as
+  // "natural" rather than "showcase model". Users can still scale up.
+  scale: 0.95,
   rotation: 0,
-  curvature: 0.45,
+  // Stronger default curvature so the bracelet visually wraps around
+  // the wrist instead of pasting flat across it. Used to be 0.45.
+  curvature: 0.55,
   shadowIntensity: 0.6,
 };
 
@@ -118,11 +124,10 @@ export async function renderWatchOverlay(
   // Apply user adjustments, but enforce a hard cap on the watch span.
   //
   //  Anatomic prior: wristWidth ≈ 0.85 × palmWidth. A realistic watch
-  //  case must never be wider than 1.25 × wristWidth, otherwise it
-  //  reads as a sticker pasted on a child's wrist.
-  //
-  //  Hard cap: width <= 1.25 × wristWidth ≈ 1.06 × palmWidth.
-  const maxAllowedWidth = base.palmWidth * 1.06;
+  //  case is 0.92 × wristWidth on average. Hard cap at 1.08 ×
+  //  wristWidth (≈ 0.92 × palmWidth) so the watch never reads as
+  //  oversized regardless of user scale or product image aspect.
+  const maxAllowedWidth = base.palmWidth * 0.92;
   const userScaled = base.width * adj.scale;
   const cappedWidth = Math.min(userScaled, maxAllowedWidth);
   const scaleFactor = base.width === 0 ? 1 : cappedWidth / base.width;
@@ -284,6 +289,16 @@ export async function renderWatchOverlay(
   //         bled onto the fingers when the photo was framed tightly.
   //         Shadow realism is now driven by the prompt + composite
   //         instead.
+  // Integration ring mask:
+  //   - the watch core (dial, bezel, bracelet links) is BLACK in the
+  //     mask → OpenAI must preserve it pixel-for-pixel.
+  //   - a thin band hugging the silhouette (~10 px) is WHITE → OpenAI
+  //     paints the contact shadows and the skin/bracelet integration.
+  //   - the rest of the image stays BLACK → customer preserved.
+  //
+  //  This is the structural fix for the "AI repaints the watch"
+  //  problem. Coverage typically lands at 2–6 % of the image — well
+  //  under the 12 % hard cap.
   const mask = await buildContactMask({
     width: userW,
     height: userH,
@@ -291,8 +306,10 @@ export async function renderWatchOverlay(
     centerY: geometry.cy,
     rotation: geometry.rotation,
     silhouette: silhouette.canvas,
-    featherPx: 12,
+    featherPx: 10,
     groundedShadowPx: 0,
+    integration: true,
+    innerErosionPx: 4,
   });
 
   // 12. Export composite PNG.

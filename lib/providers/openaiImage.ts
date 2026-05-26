@@ -51,7 +51,11 @@ import { validateMaskForCategory } from "@/lib/tryon/maskValidation";
  */
 
 export const OPENAI_DEFAULT_MODEL = "gpt-image-1";
-const OPENAI_DEFAULT_SIZE = "1024x1024";
+// "auto" is the only sane production default. With "1024x1024" the
+// router was producing letterboxed (black bars) results for portrait
+// wrist photos. Anyone explicitly setting OPENAI_IMAGE_SIZE in their
+// env override still wins.
+const OPENAI_DEFAULT_SIZE: OpenAISize = "auto";
 const OPENAI_DEFAULT_QUALITY = "high";
 
 // Minimum reasonable size for an input image. Anything smaller is
@@ -144,20 +148,55 @@ function readOpenAIEnv(): OpenAIEnv {
   };
 }
 
-/** Pick a concrete size from the env value + the user image orientation. */
+/**
+ * Pick a concrete size from the env value + the user image orientation.
+ *
+ *  "auto" (recommended) → pick the closest aspect.
+ *  "1024x1024" → keep square UNLESS the source is markedly portrait or
+ *      landscape. We then auto-promote to 1024×1536 / 1536×1024 to
+ *      avoid the black-letterbox artefact a square output produces on
+ *      a portrait wrist photo. Operators who really want a forced
+ *      square should set the env to "1024x1024-strict".
+ *  "1024x1536" / "1536x1024" → respected verbatim.
+ */
+export function resolveOutputAspectFromSource(params: {
+  userImageDimensions: { width: number; height: number };
+  compositeDimensions?: { width: number; height: number };
+  requestedSize: OpenAISize | "1024x1024-strict";
+}): ResolvedSize {
+  const dims = params.compositeDimensions ?? params.userImageDimensions;
+  const ratio = dims.width / Math.max(dims.height, 1);
+
+  if (params.requestedSize === "1024x1024-strict") return "1024x1024";
+  if (params.requestedSize === "1024x1536") return "1024x1536";
+  if (params.requestedSize === "1536x1024") return "1536x1024";
+
+  // "auto" — bias toward the closest aspect.
+  if (params.requestedSize === "auto") {
+    if (ratio >= 1.2) return "1536x1024";
+    if (ratio <= 0.85) return "1024x1536";
+    return "1024x1024";
+  }
+
+  // Soft square — operator asked for square but didn't pin it. We
+  // promote to the matching portrait/landscape size when the source
+  // would otherwise produce > 15 % letterboxing in either direction.
+  if (params.requestedSize === "1024x1024") {
+    if (ratio >= 1.2) return "1536x1024";
+    if (ratio <= 0.83) return "1024x1536";
+    return "1024x1024";
+  }
+  return "1024x1024";
+}
+
 function resolveSize(
   envSize: OpenAISize,
   baseDims: { width: number; height: number }
 ): ResolvedSize {
-  if (envSize === "1024x1024") return "1024x1024";
-  if (envSize === "1024x1536") return "1024x1536";
-  if (envSize === "1536x1024") return "1536x1024";
-  // auto — bias toward the closest aspect to avoid heavy letterboxing
-  // when the photo is markedly portrait or landscape.
-  const ratio = baseDims.width / Math.max(baseDims.height, 1);
-  if (ratio >= 1.2) return "1536x1024"; // landscape
-  if (ratio <= 0.83) return "1024x1536"; // portrait
-  return "1024x1024";
+  return resolveOutputAspectFromSource({
+    userImageDimensions: baseDims,
+    requestedSize: envSize,
+  });
 }
 
 function sizeToWH(size: ResolvedSize): { w: number; h: number } {
@@ -293,6 +332,101 @@ async function getDimensions(
 }
 
 /**
+ * Detect black letterbox bars on the result and restore the source
+ * aspect ratio by cropping them out.
+ *
+ *  When `fitContain` is used on the input AND the output canvas has a
+ *  different aspect than the source, the OpenAI result carries the
+ *  letterbox bars verbatim (the model dutifully preserves the black
+ *  background). This step:
+ *
+ *    1. Computes the bar widths from the source aspect ratio.
+ *    2. Crops them off the result.
+ *    3. Returns a PNG sized to the source aspect at the same long-side.
+ *
+ *  Safety: if the source aspect is within 5 % of the output aspect we
+ *  return the result unchanged (no measurable letterbox).
+ */
+export async function restoreSourceAspectRatio(params: {
+  resultBuffer: Buffer;
+  sourceDimensions: { width: number; height: number };
+}): Promise<Buffer> {
+  const meta = await sharp(params.resultBuffer).metadata();
+  const W = meta.width ?? 0;
+  const H = meta.height ?? 0;
+  if (!W || !H) return params.resultBuffer;
+
+  const sourceRatio =
+    params.sourceDimensions.width /
+    Math.max(params.sourceDimensions.height, 1);
+  const resultRatio = W / H;
+  const ratioDelta = Math.abs(sourceRatio - resultRatio);
+  if (ratioDelta < 0.05) {
+    return params.resultBuffer;
+  }
+
+  // The output is wider than the source → side letterboxes.
+  if (resultRatio > sourceRatio) {
+    const targetW = Math.round(H * sourceRatio);
+    const left = Math.max(0, Math.round((W - targetW) / 2));
+    return await sharp(params.resultBuffer)
+      .extract({ left, top: 0, width: targetW, height: H })
+      .png({ compressionLevel: 6 })
+      .toBuffer();
+  }
+  // The output is taller than the source → top/bottom letterboxes.
+  const targetH = Math.round(W / sourceRatio);
+  const top = Math.max(0, Math.round((H - targetH) / 2));
+  return await sharp(params.resultBuffer)
+    .extract({ left: 0, top, width: W, height: targetH })
+    .png({ compressionLevel: 6 })
+    .toBuffer();
+}
+
+/**
+ * Lightweight black-bar detector: samples the leftmost / rightmost /
+ * topmost / bottommost 8-pixel strip and reports whether at least 90 %
+ * of those pixels are near-black (mean RGB < 16).
+ */
+export async function detectBlackBars(buffer: Buffer): Promise<{
+  left: boolean;
+  right: boolean;
+  top: boolean;
+  bottom: boolean;
+  any: boolean;
+}> {
+  const { data, info } = await sharp(buffer)
+    .resize(256, 256, { fit: "fill" })
+    .removeAlpha()
+    .raw()
+    .toBuffer({ resolveWithObject: true });
+  const W = info.width;
+  const H = info.height;
+  const ch = info.channels;
+  const BAR = 8;
+
+  const isBlackStrip = (xStart: number, xEnd: number, yStart: number, yEnd: number): boolean => {
+    let dark = 0;
+    let total = 0;
+    for (let y = yStart; y < yEnd; y++) {
+      for (let x = xStart; x < xEnd; x++) {
+        const i = (y * W + x) * ch;
+        const m = (data[i] + data[i + 1] + data[i + 2]) / 3;
+        if (m < 16) dark++;
+        total++;
+      }
+    }
+    return total > 0 && dark / total > 0.9;
+  };
+
+  const left = isBlackStrip(0, BAR, 0, H);
+  const right = isBlackStrip(W - BAR, W, 0, H);
+  const top = isBlackStrip(0, W, 0, BAR);
+  const bottom = isBlackStrip(0, W, H - BAR, H);
+  return { left, right, top, bottom, any: left || right || top || bottom };
+}
+
+/**
  * Pixel-wise comparison restricted to the *preserved* region of the mask.
  *
  *  - Alpha mask: opaque (alpha >= 200) = preserved.
@@ -391,21 +525,32 @@ export interface NormaliseEditInputsResult {
   warnings: TryOnWarning[];
 }
 
+// Production coverage caps (May 2026).
+//
+// The watch integration mask is now a thin ring (typically 2–7 % of
+// the image), so we tighten the cap. Going above 12 % means the mask
+// either drifted onto the fingers / hand or the deterministic
+// placement is broken — either way we should refuse rather than let
+// OpenAI repaint half of the photo.
 const COVERAGE_HARD_CAP: Partial<Record<CategoryId, number>> = {
-  watch: 0.18,
-  glasses: 0.22,
-  headwear: 0.3,
-  "hand-jewelry": 0.18,
+  watch: 0.12,
+  glasses: 0.18,
+  headwear: 0.28,
+  "hand-jewelry": 0.14,
   clothes: 0.7,
 };
 
 const COVERAGE_SOFT_WARNING: Partial<Record<CategoryId, number>> = {
-  watch: 0.14,
-  glasses: 0.18,
-  headwear: 0.25,
-  "hand-jewelry": 0.14,
+  watch: 0.09,
+  glasses: 0.14,
+  headwear: 0.22,
+  "hand-jewelry": 0.1,
   clothes: 0.6,
 };
+
+// Target coverage for the watch integration mask (informational only —
+// the hard / soft caps above gate the request). Used by README docs.
+export const WATCH_TARGET_COVERAGE = 0.06;
 
 export async function normalizeEditInputsForOpenAI(
   p: NormaliseEditInputsParams
@@ -646,6 +791,11 @@ export interface OpenAIImageMeta {
   compositeUsedAsBase: boolean;
   /** Final size sent to OpenAI. */
   size: ResolvedSize;
+  /**
+   * True when black-letterbox bars were detected on the raw OpenAI
+   * output and cropped out to restore the source aspect ratio.
+   */
+  blackBarsRemoved: boolean;
   /** input_fidelity actually sent (gpt-image-1 only). */
   inputFidelity: OpenAIInputFidelity;
   /** output_format actually sent. */
@@ -655,24 +805,32 @@ export interface OpenAIImageMeta {
   /** Validation warnings raised by `maskValidation` and friends. */
   warnings: TryOnWarning[];
   /**
-   * Raw PNG buffer of the AI result. Kept here so callers (the API
-   * route) can run post-processing (product-lock re-stamp) without
-   * decoding the base64 data URL again. Not serialised to JSON — the
-   * route picks specific fields explicitly.
+   * Raw PNG buffer of the AI result (after aspect restoration). Kept
+   * here so callers (the API route) can run post-processing
+   * (product-lock re-stamp) without decoding the base64 data URL
+   * again. Not serialised to JSON — the route picks specific fields
+   * explicitly.
    */
   resultBuffer: Buffer;
   /**
-   * Resized *user* image (no product) at the target size. Used by the
-   * product-lock pipeline to diff against the composite and recover the
-   * product silhouette. Always present.
+   * Resized *user* image (no product) at the same dimensions as
+   * `resultBuffer`. Used by the product-lock pipeline to diff against
+   * the composite and recover the product silhouette. Always present.
    */
   baseAtTargetSize: Buffer;
   /**
-   * Resized composite (user photo + placed product) at the target size.
-   * Present only when the caller supplied `compositeImage` — that's the
-   * input the product-lock pipeline diffs against `baseAtTargetSize`.
+   * Resized composite (user photo + placed product) at the same
+   * dimensions as `resultBuffer`. Present only when the caller supplied
+   * `compositeImage` — that's the input the product-lock pipeline diffs
+   * against `baseAtTargetSize`.
    */
   compositeAtTargetSize?: Buffer;
+  /**
+   * Alpha mask PNG sized to match `resultBuffer`. Present only when a
+   * mask was used. Exposed so the route can run additional
+   * downstream-aware compositing (anti-ghost final composition).
+   */
+  alphaMaskAtTargetSize?: Buffer;
 }
 
 export interface GenerateOpenAIImageTryOnResult {
@@ -877,17 +1035,72 @@ export async function generateOpenAIImageTryOn(
     alphaMask,
   });
   const durationMs = Date.now() - startedAt;
-  const resultBuf = Buffer.from(b64, "base64");
+  let resultBuf = Buffer.from(b64, "base64");
+
+  // ── 6b. Restore the source aspect ratio so the end-user never
+  //         sees black letterbox bars. The base/mask were fit-contained
+  //         onto the resolved size, so when the source aspect differs
+  //         from the resolved size aspect (e.g. portrait wrist photo on
+  //         a forced 1024×1024 output), the AI dutifully preserves the
+  //         bars. We crop them out here.
+  //
+  //  All downstream buffers — userAtTargetSize, squaredBase, alphaMask —
+  //  must shrink by exactly the same amount so the product-lock and
+  //  fidelity checks still align pixel-for-pixel.
+  let croppedUserBuf = userAtTargetSize;
+  let croppedCompositeBuf = squaredBase;
+  let croppedAlphaMask = alphaMask;
+  let blackBarsRemoved = false;
+  try {
+    const bars = await detectBlackBars(resultBuf);
+    if (bars.any) {
+      const cropResult = await restoreSourceAspectRatio({
+        resultBuffer: resultBuf,
+        sourceDimensions: primaryDims,
+      });
+      if (cropResult.length !== resultBuf.length) {
+        // Recompute the crop from the *target-size* base so each buffer
+        // gets the same extract rectangle and stays in lockstep.
+        croppedUserBuf = Buffer.from(
+          await restoreSourceAspectRatio({
+            resultBuffer: userAtTargetSize,
+            sourceDimensions: primaryDims,
+          })
+        );
+        croppedCompositeBuf = Buffer.from(
+          await restoreSourceAspectRatio({
+            resultBuffer: squaredBase,
+            sourceDimensions: primaryDims,
+          })
+        );
+        if (alphaMask) {
+          croppedAlphaMask = Buffer.from(
+            await restoreSourceAspectRatio({
+              resultBuffer: alphaMask,
+              sourceDimensions: primaryDims,
+            })
+          );
+        }
+        resultBuf = Buffer.from(cropResult);
+        blackBarsRemoved = true;
+      }
+    }
+  } catch (err) {
+    console.warn(
+      "[try-on] aspect restoration failed (continuing with un-cropped result):",
+      err instanceof Error ? err.message : err
+    );
+  }
 
   // ── 7. Quality checks (outside-mask preservation) ──────────────
   let outsideMaskChangeScore = 1;
   let outsideMaskPreserved = true;
-  if (alphaMask) {
+  if (croppedAlphaMask) {
     try {
       const check = await computeOutsideMaskScore(
-        squaredBase,
+        croppedCompositeBuf,
         resultBuf,
-        alphaMask
+        croppedAlphaMask
       );
       outsideMaskChangeScore = check.score;
       outsideMaskPreserved = check.preserved;
@@ -898,10 +1111,18 @@ export async function generateOpenAIImageTryOn(
       );
     }
   }
-  if (alphaMask && !outsideMaskPreserved) {
+  if (croppedAlphaMask && !outsideMaskPreserved) {
     warnings.push({
       code: "outside-mask-changed",
       message: "The edit changed too much outside the mask.",
+    });
+  }
+
+  if (blackBarsRemoved) {
+    warnings.push({
+      code: "aspect-restored",
+      message:
+        "Removed black letterbox bars from the AI output to match the source photo aspect ratio.",
     });
   }
 
@@ -918,27 +1139,33 @@ export async function generateOpenAIImageTryOn(
     `[try-on] durationMs=${durationMs} provider=openai model=${env.model} category=${params.category} outsideMaskScore=${outsideMaskChangeScore.toFixed(3)} outsideMaskPreserved=${outsideMaskPreserved}`
   );
 
+  // The exposed buffers are the (possibly) cropped versions so every
+  // downstream check sees the same canvas as the final user-visible
+  // result.
+  const resultBase64 = resultBuf.toString("base64");
   return {
-    resultUrl: `data:image/png;base64,${b64}`,
+    resultUrl: `data:image/png;base64,${resultBase64}`,
     generatedAt: Date.now(),
     durationMs,
     provider: "openai",
     model: env.model,
     category: params.category,
     meta: {
-      maskUsed: Boolean(alphaMask),
+      maskUsed: Boolean(croppedAlphaMask),
       maskCoverage: normalised.maskCoverage,
       productHasAlpha,
       baseImageCount: baseImages.length,
       compositeUsedAsBase,
       size: resolved,
+      blackBarsRemoved,
       inputFidelity: env.inputFidelity,
       outputFormat: env.outputFormat,
       qualityChecks,
       warnings,
       resultBuffer: resultBuf,
-      baseAtTargetSize: userAtTargetSize,
-      compositeAtTargetSize: compositeUsedAsBase ? squaredBase : undefined,
+      baseAtTargetSize: croppedUserBuf,
+      compositeAtTargetSize: compositeUsedAsBase ? croppedCompositeBuf : undefined,
+      alphaMaskAtTargetSize: croppedAlphaMask ?? undefined,
     },
   };
   // Note: `maskAtTargetSize` is intentionally unused — kept here in case

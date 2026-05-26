@@ -294,61 +294,66 @@ Return one realistic final image only.`;
 export function getWatchTryOnPrompt(): string {
   return `You are editing a realistic e-commerce watch try-on image.
 
-The first image is the main source of truth. It already contains the customer photo with the watch placed in the intended wrist position.
-The product reference image shows the exact watch that must be preserved.
+The first image is the main source of truth. It already contains the customer photo with the exact watch placed on the wrist.
 
-Your task is not to generate or redesign a watch.
-Your task is only to make the already placed watch look naturally worn on the wrist.
+The product reference image shows the exact watch. The final result must preserve this exact product.
 
-Strict rules:
+Your task is NOT to create, redesign, repaint, duplicate, move, replace, or simplify the watch.
+
+Your task is ONLY to improve the natural integration around the already placed watch:
+- subtle contact shadows
+- realistic skin contact
+- slight occlusion at the bracelet edges
+- lighting consistency
+- local perspective blending
+- realistic bracelet contact with the wrist
+
+Strict product rules:
 - Show one watch only.
-- Do not duplicate the watch.
-- Do not add a second watch.
-- Do not create a background watch.
-- Do not replace the watch with another watch.
-- Do not redesign the watch.
-- Do not simplify the watch.
-- Do not recolor the watch.
-- Preserve the exact watch identity from the reference image.
+- Do not create a second watch.
+- Do not create a ghost watch.
+- Do not add another dial, case, strap, bracelet, or background watch.
+- Do not change the watch color.
+- Do not change the black metal material.
+- Do not remove the colorful rainbow accents.
+- Do not replace the watch with a silver watch.
+- Do not simplify the dial.
+- Do not change the bezel markings.
+- Do not change the subdials.
+- Do not change the bracelet links.
+- Do not change the logo placement.
+- Preserve the exact product identity.
 
-Preserve exactly:
-- case shape
-- bezel
-- dial layout
-- subdials
-- logo placement
-- date window
-- hands
-- color accents
-- bracelet links
-- material
-- overall style
-
-Placement and realism rules:
+Strict placement rules:
 - Keep the watch centered on the wrist.
-- Align the watch with the wrist and forearm axis.
-- Follow the natural angle of the arm.
-- Apply realistic rotation so the watch matches the wrist orientation.
-- The watch must not appear flat or pasted.
-- The bracelet should visually follow the wrist direction and wrap naturally.
-- Improve perspective realism, realistic contact, shadows, and slight skin occlusion where appropriate.
+- Keep the watch aligned with the wrist and forearm axis.
+- Do not move the watch onto the hand.
+- Do not move the watch too far down the forearm.
+- Do not make the watch oversized.
+- The bracelet must visually follow the wrist and wrap naturally.
 
-Customer preservation rules:
-- Preserve the hand, fingers, nails, skin texture, arm hair, wrist shape, and background outside the masked area.
+Strict customer preservation rules:
+- Preserve the hand.
+- Preserve the fingers.
+- Preserve the nails.
+- Preserve the skin texture.
+- Preserve the arm hair.
+- Preserve the wrist shape.
+- Preserve the background.
 - Do not change anatomy.
-- Do not modify hand shape.
-- Do not modify finger length or finger position.
-- Do not repaint or regenerate the customer image.
+- Do not smooth or repaint the customer.
 
-Mask rule:
+Mask rules:
 - The mask is only a technical editing guide.
-- It must never appear in the final image.
+- Edit only the transparent/editable contact and shadow area.
+- The watch core itself must remain unchanged.
+- No visible mask.
 - No white outlines.
 - No black outlines.
-- No visible segmentation marks.
-- No broken pixels on the skin.
+- No segmentation artifacts.
+- No broken pixels.
 
-Return one final realistic image only.`;
+Return one realistic final image only.`;
 }
 
 // ──────────────────────────────────────────────────────────────────────────
