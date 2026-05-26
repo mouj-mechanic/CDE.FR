@@ -1,4 +1,5 @@
 import sharp from "sharp";
+import type { CategoryId } from "@/types";
 
 /**
  * Post-generation product fidelity check.
@@ -24,6 +25,32 @@ const DOWNSAMPLE = 96;
 const DOMINANT_COLOR_DELTA_THRESHOLD = 60; // mean ΔRGB in [0..255]
 const SILHOUETTE_RATIO_DRIFT = 0.4; // result silhouette must stay within ±40%
 
+/**
+ * Category-aware overrides. Watches and hand-jewelry have a small,
+ * high-detail silhouette where any colour shift is immediately
+ * visible, so we tighten both gates.
+ */
+function thresholdsFor(category: CategoryId | undefined): {
+  colorDeltaMax: number;
+  silhouetteDriftMax: number;
+} {
+  switch (category) {
+    case "watch":
+      return { colorDeltaMax: 38, silhouetteDriftMax: 0.3 };
+    case "hand-jewelry":
+      return { colorDeltaMax: 42, silhouetteDriftMax: 0.35 };
+    case "glasses":
+      return { colorDeltaMax: 45, silhouetteDriftMax: 0.35 };
+    case "headwear":
+      return { colorDeltaMax: 55, silhouetteDriftMax: 0.4 };
+    default:
+      return {
+        colorDeltaMax: DOMINANT_COLOR_DELTA_THRESHOLD,
+        silhouetteDriftMax: SILHOUETTE_RATIO_DRIFT,
+      };
+  }
+}
+
 export interface ProductFidelityInput {
   /** PNG buffer of the AI result, sized to the OpenAI output dims. */
   aiResult: Buffer;
@@ -33,6 +60,11 @@ export interface ProductFidelityInput {
   userBase: Buffer;
   /** Optional override of the silhouette diff threshold (RGB mean). */
   diffThreshold?: number;
+  /**
+   * Category. Used to apply tighter thresholds for accessories where
+   * any colour drift is visible (watch, glasses, jewelry).
+   */
+  category?: CategoryId;
 }
 
 export interface ProductFidelityResult {
@@ -159,14 +191,15 @@ export async function checkProductFidelity(
       Math.abs(compMean.b - resultMean.b)) /
     3;
 
-  const colorOk = colorDelta <= DOMINANT_COLOR_DELTA_THRESHOLD;
+  const { colorDeltaMax, silhouetteDriftMax } = thresholdsFor(input.category);
+  const colorOk = colorDelta <= colorDeltaMax;
 
   // Silhouette area check. If the composite silhouette is so small it's
   // unreliable, skip the check (treat as passed).
   let silhouetteRatioOk = true;
   if (compositeRatio > 0.005) {
     const drift = Math.abs(resultRatio - compositeRatio) / compositeRatio;
-    silhouetteRatioOk = drift <= SILHOUETTE_RATIO_DRIFT;
+    silhouetteRatioOk = drift <= silhouetteDriftMax;
   }
 
   return {

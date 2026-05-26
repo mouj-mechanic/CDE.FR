@@ -203,12 +203,62 @@ The fix is structural, not textual:
 - **Product re-stamp.** The original transparent product PNG is
   re-applied on top of the AI result so dial / bezel / colour cannot
   drift.
-- **Fidelity + duplication gates.** If the product silhouette in the
-  result is > 1.8× the composite silhouette, we suspect duplication
-  and return the deterministic composite instead.
+- **Fidelity + duplication gates.** A connected-components flood-fill
+  on the AI silhouette counts how many *separate* product regions the
+  model drew. ≥ 2 components ⇒ duplication ⇒ fall back to the
+  deterministic composite. Colour and area drift are checked
+  independently with per-category thresholds (watches are the
+  strictest: ΔRGB ≤ 38, area drift ≤ 30 %).
 
 The mask is **never** visible to the customer. It is an internal
 technical artefact. There is no mask uploader in the UI.
+
+### Watch try-on — quality gates
+
+The watch category has the tightest gates because the product silhouette
+is small, sharp, and highly identity-sensitive (dial, bezel, colour
+accents). The route exposes every gate result in `debug.gates`:
+
+| Gate                          | Meaning                                                                    |
+| ----------------------------- | -------------------------------------------------------------------------- |
+| `duplicateWatchDetected`      | `true` when ≥ 2 product-sized components were found in the AI output.      |
+| `watchFidelityValid`          | `false` when the dominant colour drifted (ΔRGB > 38).                      |
+| `watchScaleValid`             | `false` when the silhouette area drifted > 30 % from the composite.        |
+| `customerPreservationValid`   | `false` when the AI changed > 12 % of the image outside the mask.          |
+| `maskArtifactFree`            | `false` when the outside-mask change score is between 8 % and 12 %.        |
+
+If any of these is `false`, the route either:
+
+- returns the deterministic composite as the final result (when
+  `TRYON_FALLBACK_TO_DETERMINISTIC=true`, the default), or
+- emits a 502 with `failureReasons` populated (strict mode).
+
+Watch-specific structural rules enforced by the pipeline:
+
+- **One watch only.** `detectDuplicateProductPlacement` flood-fills the
+  AI silhouette and refuses to ship results with more than one
+  product-sized component.
+- **Target wrist band.** `validateWatchPlacement` clamps the watch
+  centre into the band that sits 0.2–0.55 × palmWidth from the wrist
+  landmark toward the elbow, with a ±0.25 × palmWidth lateral margin.
+  Anything outside this band is auto-re-anchored.
+- **Size guard.** The watch span is clamped to 0.75–1.25 × wristWidth
+  (≈ 0.64–1.06 × palmWidth). Hard cap at 1.06 × palmWidth even when
+  user-driven scaling pushes higher.
+- **Forearm-axis rotation.** `computeWristGeometry` uses the
+  perpendicular of the forearm direction so the bracelet wraps with
+  the wrist orientation instead of staying horizontal.
+- **Product re-stamp.** When the product-lock pipeline is active, the
+  original transparent watch PNG is re-applied on top of the AI
+  result so identity cannot drift.
+
+Tests live in `lib/tryon/__tests__/` and cover placement validation,
+duplicate detection, and the per-category fidelity thresholds. Run
+them with:
+
+```bash
+npm test
+```
 
 ### Modes
 

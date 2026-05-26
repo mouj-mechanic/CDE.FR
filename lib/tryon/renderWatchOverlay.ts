@@ -34,6 +34,7 @@ import { buildShadowLayers } from "./shadow";
 import {
   computeWristGeometry,
   fallbackWristGeometry,
+  validateWatchPlacement,
   type WristGeometry,
 } from "./watchGeometry";
 import { buildContactMask } from "./watchMask";
@@ -125,7 +126,7 @@ export async function renderWatchOverlay(
   const userScaled = base.width * adj.scale;
   const cappedWidth = Math.min(userScaled, maxAllowedWidth);
   const scaleFactor = base.width === 0 ? 1 : cappedWidth / base.width;
-  const geometry: WristGeometry = {
+  const raw: WristGeometry = {
     ...base,
     cx: base.cx + adj.offsetX,
     cy: base.cy + adj.offsetY,
@@ -133,6 +134,18 @@ export async function renderWatchOverlay(
     height: base.height * scaleFactor,
     rotation: base.rotation + adj.rotation,
   };
+
+  // Anatomic target band: clamp the centre back onto the wrist if the
+  // user's offsetX/offsetY pushed it onto the back of the hand or
+  // mid-forearm. Idempotent when the placement is already valid.
+  const validation = validateWatchPlacement(raw);
+  if (validation.notes.length > 0) {
+    console.warn(
+      "[watch-overlay] placement adjusted:",
+      validation.notes.join(" ")
+    );
+  }
+  const geometry = validation.corrected;
 
   // 4. Per-segment warping.
   //

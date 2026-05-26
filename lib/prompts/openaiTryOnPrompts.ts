@@ -292,50 +292,63 @@ Return one realistic final image only.`;
 // ──────────────────────────────────────────────────────────────────────────
 
 export function getWatchTryOnPrompt(): string {
-  return `You are editing a realistic product try-on image.
+  return `You are editing a realistic e-commerce watch try-on image.
 
-The first image already shows the customer's wrist with the watch placed in the intended position.
-The watch reference image contains the exact watch that must appear in the final result.
+The first image is the main source of truth. It already contains the customer photo with the watch placed in the intended wrist position.
+The product reference image shows the exact watch that must be preserved.
 
-Do not generate a new watch.
-Do not redesign the watch.
-Do not duplicate the watch.
-Do not add a second watch.
-Do not change the watch color.
-Do not change the dial.
-Do not change the logo.
-Do not change the bezel.
-Do not change the bracelet.
-Do not replace the product with a similar watch.
+Your task is not to generate or redesign a watch.
+Your task is only to make the already placed watch look naturally worn on the wrist.
 
-The final watch must remain visually identical to the supplied reference: same case, same bezel, same dial layout, same subdials, same hands, same markings, same date window, same color accents, same bracelet links, same metal finish, same overall design. If the reference watch is a black metal chronograph with colorful rainbow dial/bezel accents and a dark bracelet, the result must keep all of those properties.
+Strict rules:
+- Show one watch only.
+- Do not duplicate the watch.
+- Do not add a second watch.
+- Do not create a background watch.
+- Do not replace the watch with another watch.
+- Do not redesign the watch.
+- Do not simplify the watch.
+- Do not recolor the watch.
+- Preserve the exact watch identity from the reference image.
 
-Only improve:
-- natural contact between watch and wrist
-- realistic shadows under the case and bracelet
-- slight occlusion where the bracelet wraps around the wrist
-- lighting consistency
-- perspective realism
-- photographic blending
+Preserve exactly:
+- case shape
+- bezel
+- dial layout
+- subdials
+- logo placement
+- date window
+- hands
+- color accents
+- bracelet links
+- material
+- overall style
 
-Preserve completely:
-- hand anatomy
-- wrist shape
-- fingers
-- nails
-- skin texture
-- arm hair
-- background
-- image composition outside the masked area
+Placement and realism rules:
+- Keep the watch centered on the wrist.
+- Align the watch with the wrist and forearm axis.
+- Follow the natural angle of the arm.
+- Apply realistic rotation so the watch matches the wrist orientation.
+- The watch must not appear flat or pasted.
+- The bracelet should visually follow the wrist direction and wrap naturally.
+- Improve perspective realism, realistic contact, shadows, and slight skin occlusion where appropriate.
 
-Important — the mask is only a technical editing guide. It must not appear in the final image:
-- No white outlines around fingers, the thumb, or the back of the hand.
-- No black outlines or segmentation contours.
-- No broken or aliased pixels on the skin.
-- No visible mask edges anywhere.
-- The final image must look like a single coherent photograph.
+Customer preservation rules:
+- Preserve the hand, fingers, nails, skin texture, arm hair, wrist shape, and background outside the masked area.
+- Do not change anatomy.
+- Do not modify hand shape.
+- Do not modify finger length or finger position.
+- Do not repaint or regenerate the customer image.
 
-Return one realistic final image only.`;
+Mask rule:
+- The mask is only a technical editing guide.
+- It must never appear in the final image.
+- No white outlines.
+- No black outlines.
+- No visible segmentation marks.
+- No broken pixels on the skin.
+
+Return one final realistic image only.`;
 }
 
 // ──────────────────────────────────────────────────────────────────────────

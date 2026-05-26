@@ -16,6 +16,7 @@ import {
 } from "@/lib/tryon/productLockComposite";
 import { autoMaskFromComposite } from "@/lib/tryon/autoMaskFromComposite";
 import { checkProductFidelity } from "@/lib/tryon/productFidelityCheck";
+import { detectDuplicateProductPlacement } from "@/lib/tryon/duplicateDetection";
 import { ACCEPTED_IMAGE_TYPES, MAX_FILE_SIZE } from "@/lib/utils";
 import { trackTryOnUsage } from "@/lib/usage";
 import type {
@@ -927,15 +928,30 @@ export async function POST(request: NextRequest) {
         });
       }
 
-      // ── Product fidelity check (post-generation) ────────────────────
-      // For accessories with a composite, compare the dominant colour
-      // and silhouette area of the product region. If the AI drifted
-      // (e.g. black watch → silver watch, or product completely
-      // displaced), mark `qualityCheckFailed` and — when allowed —
-      // return the deterministic composite as the final result.
+      // ── Product fidelity & duplication gates (post-generation) ─────
+      // For accessories with a composite, we run two independent
+      // checks:
+      //   1. `checkProductFidelity` — colour + silhouette area drift,
+      //      with per-category thresholds (watch is the tightest).
+      //   2. `detectDuplicateProductPlacement` — connected-components
+      //      flood-fill on the silhouette to count *separate* product
+      //      regions. This catches "two watches in the result" cases
+      //      that a simple area ratio misses.
+      //
+      // Each named gate (duplicateWatchDetected, watchPlacementValid,
+      // watchScaleValid, watchFidelityValid, customerPreservationValid,
+      // maskArtifactFree) is exposed in `debug.gates` so the frontend
+      // and QA dashboards can show clear failure reasons.
       let qualityCheckFailed = false;
       let qualityCheckFallbackApplied = false;
       const failureReasons: string[] = [];
+      const gates: Record<string, boolean> = {
+        duplicateWatchDetected: false,
+        watchFidelityValid: true,
+        watchScaleValid: true,
+        customerPreservationValid: true,
+        maskArtifactFree: true,
+      };
       if (
         usedOpenAI &&
         isAccessory &&
@@ -947,17 +963,22 @@ export async function POST(request: NextRequest) {
             aiResult: openaiMeta.resultBuffer,
             composite: openaiMeta.compositeAtTargetSize,
             userBase: openaiMeta.baseAtTargetSize,
+            category,
           });
 
-          // Duplication detection: if the AI silhouette is dramatically
-          // larger than the composite silhouette (e.g. >1.8x), the
-          // model probably drew an extra product elsewhere.
-          const compositeSil = fidelity.compositeSilhouetteRatio;
-          const resultSil = fidelity.resultSilhouetteRatio;
-          const duplicationSuspected =
-            compositeSil > 0.005 && resultSil > compositeSil * 1.8;
+          // Connected-components duplication detection.
+          const dup = await detectDuplicateProductPlacement({
+            aiResult: openaiMeta.resultBuffer,
+            userBase: openaiMeta.baseAtTargetSize,
+            expectedSilhouetteRatio: fidelity.compositeSilhouetteRatio,
+            category,
+          });
 
-          if (!fidelity.passed || duplicationSuspected) {
+          gates.duplicateWatchDetected = dup.duplicateDetected;
+          gates.watchFidelityValid = fidelity.colorOk;
+          gates.watchScaleValid = fidelity.silhouetteRatioOk;
+
+          if (!fidelity.passed || dup.duplicateDetected) {
             qualityCheckFailed = true;
             if (!fidelity.colorOk) {
               failureReasons.push(
@@ -967,11 +988,9 @@ export async function POST(request: NextRequest) {
             if (!fidelity.silhouetteRatioOk) {
               failureReasons.push("product-size-drift");
             }
-            if (duplicationSuspected) {
+            if (dup.duplicateDetected) {
               failureReasons.push(
-                `product-duplication-suspected (composite=${compositeSil.toFixed(
-                  3
-                )} result=${resultSil.toFixed(3)})`
+                `product-duplication-detected (${dup.componentCount} product regions found)`
               );
             }
             console.warn(
@@ -980,10 +999,14 @@ export async function POST(request: NextRequest) {
               )}`
             );
             lockWarnings.push({
-              code: "product-fidelity-check-failed",
-              message: `Product fidelity check failed: ${failureReasons.join(
-                ", "
-              )}.`,
+              code: dup.duplicateDetected
+                ? "product-duplication-detected"
+                : "product-fidelity-check-failed",
+              message: dup.duplicateDetected
+                ? `${dup.reason} Falling back to deterministic composite.`
+                : `Product fidelity check failed: ${failureReasons.join(
+                    ", "
+                  )}.`,
             });
             // Strict fallback: hand the customer the deterministic
             // composite so the product remains pixel-perfect, even
@@ -1024,6 +1047,18 @@ export async function POST(request: NextRequest) {
           }
         : undefined;
 
+      // ── Customer preservation gate ────────────────────────────────
+      gates.customerPreservationValid =
+        openaiMeta?.qualityChecks.outsideMaskPreserved ?? true;
+      // Mask-artifact heuristic: when the OpenAI output shows an
+      // outside-mask change score above 8% but below the strict 12%
+      // ceiling, we flag potential mask outlines bleeding into the
+      // skin. Above 12% the strict-preservation 502 handles it.
+      const outsideScore = openaiMeta?.qualityChecks.outsideMaskChangeScore;
+      gates.maskArtifactFree = !(
+        typeof outsideScore === "number" && outsideScore > 0.08
+      );
+
       const debug = {
         ...(result.debug ?? {
           imageCount: 1 + productImages.length + productUrls.length,
@@ -1051,6 +1086,7 @@ export async function POST(request: NextRequest) {
         maskCoverage: openaiMeta?.maskCoverage,
         productAlphaDetected: Boolean(openaiMeta?.productHasAlpha),
         qualityCheckFailed,
+        gates,
         ...(failureReasons.length > 0 ? { failureReasons } : {}),
       };
 

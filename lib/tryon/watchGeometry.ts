@@ -35,6 +35,141 @@ export interface WristGeometry {
   forearm: { x: number; y: number };
   /** Detection confidence in [0..1]. */
   confidence: number;
+  /**
+   * Anchor point on the user's wrist landmark (pre-offset). Useful for
+   * the target-band validation in `validateWatchPlacement`.
+   */
+  wristAnchor: { x: number; y: number };
+}
+
+/**
+ * Validate a watch placement against the anatomic wrist band:
+ *
+ *   - The watch centre should sit between 0.2 and 0.5 × palmWidth
+ *     from the wrist landmark, along the forearm direction (toward
+ *     the elbow). Anything closer puts the watch on the wrist crease
+ *     or the back of the hand; anything further puts it mid-forearm.
+ *
+ *   - The watch centre's lateral distance from the forearm axis must
+ *     stay within 0.25 × palmWidth so the watch doesn't drift off the
+ *     forearm sideways.
+ *
+ *   - The watch span must stay within 0.75–1.25 × wristWidth, where
+ *     wristWidth ≈ 0.85 × palmWidth.
+ */
+export interface WatchPlacementValidation {
+  /** True when the centre is inside the target wrist band. */
+  centreInBand: boolean;
+  /** True when the size is within the allowed range. */
+  sizeInRange: boolean;
+  /** Distance along the forearm axis from the wrist landmark (pixels). */
+  forearmOffset: number;
+  /** Perpendicular distance from the forearm axis (pixels). */
+  lateralOffset: number;
+  /** watchWidth / wristWidth. */
+  sizeRatio: number;
+  /**
+   * Corrected geometry that satisfies every rule. When the input is
+   * already valid, this is the input unchanged.
+   */
+  corrected: WristGeometry;
+  /** Human-readable reason when one of the booleans is false. */
+  notes: string[];
+}
+
+const TARGET_MIN_FORE = 0.2;
+const TARGET_MAX_FORE = 0.55;
+const TARGET_MAX_LATERAL = 0.25;
+const TARGET_MIN_SIZE = 0.75;
+const TARGET_MAX_SIZE = 1.25;
+
+export function validateWatchPlacement(
+  g: WristGeometry
+): WatchPlacementValidation {
+  const notes: string[] = [];
+  const forearm = g.forearm;
+  // Vector from wrist anchor to watch centre.
+  const dx = g.cx - g.wristAnchor.x;
+  const dy = g.cy - g.wristAnchor.y;
+  // Projection onto forearm axis (signed). Positive = toward elbow.
+  const forearmOffsetPx = dx * forearm.x + dy * forearm.y;
+  // Perpendicular component magnitude.
+  const lateralPx = Math.abs(dx * -forearm.y + dy * forearm.x);
+
+  const palmW = g.palmWidth || 1;
+  const wristW = palmW * 0.85;
+  const sizeRatio = g.width / wristW;
+
+  const minFore = palmW * TARGET_MIN_FORE;
+  const maxFore = palmW * TARGET_MAX_FORE;
+  const maxLat = palmW * TARGET_MAX_LATERAL;
+
+  let cx = g.cx;
+  let cy = g.cy;
+  let width = g.width;
+  let height = g.height;
+
+  const centreInBand =
+    forearmOffsetPx >= minFore &&
+    forearmOffsetPx <= maxFore &&
+    lateralPx <= maxLat;
+
+  if (!centreInBand) {
+    // Recompute the centre as a clean point on the wrist band.
+    const targetFore = Math.min(
+      Math.max(forearmOffsetPx, minFore),
+      maxFore
+    );
+    cx = g.wristAnchor.x + forearm.x * targetFore;
+    cy = g.wristAnchor.y + forearm.y * targetFore;
+    if (forearmOffsetPx < minFore) {
+      notes.push(
+        `Watch was placed too close to the wrist (on the back of the hand). Re-anchored ${Math.round(
+          targetFore
+        )}px along forearm.`
+      );
+    } else if (forearmOffsetPx > maxFore) {
+      notes.push(
+        `Watch was placed too far down the forearm. Re-anchored ${Math.round(
+          targetFore
+        )}px along forearm.`
+      );
+    }
+    if (lateralPx > maxLat) {
+      notes.push(
+        `Watch drifted ${Math.round(
+          lateralPx
+        )}px off the forearm axis. Snapped back onto it.`
+      );
+    }
+  }
+
+  let sizeInRange = sizeRatio >= TARGET_MIN_SIZE && sizeRatio <= TARGET_MAX_SIZE;
+  if (!sizeInRange) {
+    const targetSize = Math.min(
+      Math.max(sizeRatio, TARGET_MIN_SIZE),
+      TARGET_MAX_SIZE
+    );
+    const scale = targetSize / Math.max(sizeRatio, 0.0001);
+    width = g.width * scale;
+    height = g.height * scale;
+    sizeInRange = true;
+    notes.push(
+      `Watch size ratio was ${sizeRatio.toFixed(
+        2
+      )}× wristWidth — clamped to ${targetSize.toFixed(2)}×.`
+    );
+  }
+
+  return {
+    centreInBand,
+    sizeInRange,
+    forearmOffset: forearmOffsetPx,
+    lateralOffset: lateralPx,
+    sizeRatio,
+    corrected: { ...g, cx, cy, width, height },
+    notes,
+  };
 }
 
 interface Vec2 {
@@ -143,6 +278,7 @@ export function computeWristGeometry(
     axis,
     forearm,
     confidence,
+    wristAnchor: { x: wrist.x, y: wrist.y },
   };
 }
 
@@ -177,5 +313,6 @@ export function fallbackWristGeometry(
     axis: { x: 1, y: 0 },
     forearm: { x: 0, y: 1 },
     confidence: 0,
+    wristAnchor: { x: imageWidth * 0.5, y: imageHeight * 0.55 },
   };
 }
