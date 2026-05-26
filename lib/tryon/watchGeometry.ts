@@ -16,6 +16,10 @@
  */
 
 import type { LandmarkPoint, TryOnLandmarks } from "./types";
+import {
+  computeWatchRotation,
+  type WatchRotationResult,
+} from "./watchRotation";
 
 export interface WristGeometry {
   /** Center of the watch on the user image (pixels). */
@@ -40,6 +44,12 @@ export interface WristGeometry {
    * the target-band validation in `validateWatchPlacement`.
    */
   wristAnchor: { x: number; y: number };
+  /**
+   * Optional detailed rotation diagnostics. Populated by the unified
+   * rotation engine (see `lib/tryon/watchRotation.ts`) — present when
+   * `computeWristGeometry` succeeded, undefined on the fallback path.
+   */
+  rotationDebug?: WatchRotationResult;
 }
 
 /**
@@ -280,14 +290,29 @@ export function computeWristGeometry(
   const width = targetSpan;
   const height = width * productAspect;
 
-  // rotation aligns the watch's horizontal axis with wristAxis.
-  const rotation = Math.atan2(axis.y, axis.x);
+  // ── Rotation (delegated to the unified watchRotation engine) ─────
+  //
+  //  The new engine is the single source of truth for watch rotation.
+  //  It computes the forearm axis, the strap axis, the anatomical
+  //  correction and a confidence-aware clamp in one place. We keep
+  //  the radian result on the geometry object for backwards-compat
+  //  with the renderer, AND we expose the full diagnostic structure
+  //  as `rotationDebug` for downstream consumers (quality gates,
+  //  debug overlays, server-side rotation validators).
+  const rotationResult = computeWatchRotation({
+    landmarks: lm,
+    imageWidth: W,
+    imageHeight: H,
+  });
+  const rotation = rotationResult.rotationRad;
 
-  // Confidence: visibility of the 4 key landmarks (if MediaPipe gave us any)
-  // combined with the geometric sanity of the palm size.
-  const visAvg = avgVisibility(hand, [0, 5, 9, 13, 17]);
+  // Confidence: combine the rotation engine's own confidence (driven
+  // by landmark visibility) with the existing palm-size sanity check.
   const sizeFactor = Math.min(1, palmWidth / (Math.min(W, H) * 0.06));
-  const confidence = Math.max(0, Math.min(1, visAvg * 0.6 + sizeFactor * 0.4));
+  const confidence = Math.max(
+    0,
+    Math.min(1, rotationResult.confidence * 0.7 + sizeFactor * 0.3)
+  );
 
   return {
     cx,
@@ -300,21 +325,8 @@ export function computeWristGeometry(
     forearm,
     confidence,
     wristAnchor: { x: wrist.x, y: wrist.y },
+    rotationDebug: rotationResult,
   };
-}
-
-function avgVisibility(hand: LandmarkPoint[], idx: number[]): number {
-  let sum = 0;
-  let count = 0;
-  for (const i of idx) {
-    const v = hand[i]?.visibility;
-    if (typeof v === "number") {
-      sum += v;
-      count++;
-    }
-  }
-  if (count === 0) return 0.85; // MediaPipe rarely emits visibility on hand — assume OK
-  return sum / count;
 }
 
 /** Default centred geometry used when landmark detection failed. */

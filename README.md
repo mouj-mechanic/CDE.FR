@@ -273,6 +273,46 @@ In production the customer never sees a damaged hand: either the
 gates pass and the AI shadows ship, or the deterministic composite
 ships with a soft "rendu fidèle utilisé" note.
 
+### Watch rotation model (`lib/tryon/watchRotation.ts`)
+
+A single source of truth for the rotation we apply to the watch
+product PNG. Everything that used to read `geometry.rotation` still
+works, but the value now comes from one well-tested module that
+also exposes diagnostics and a quality gate.
+
+The model:
+
+```
+rotationDeg = normalize(forearmAxisDeg - productStrapAxisDeg)
+           + anatomicalCorrection(side, confidence, bias)
+```
+
+- `forearmAxisDeg` — direction of the forearm in image coordinates
+  (wrist → elbow), derived from MediaPipe hand landmarks (palm
+  centre minus wrist gives the hand direction; forearm is the
+  opposite).
+- `productStrapAxisDeg` — orientation of the strap inside the
+  product PNG. Defaults to 90° (vertical strap, the typical front
+  product photo). Override per-catalogue with
+  `PRODUCT_STRAP_AXIS_DEG`.
+- `anatomicalCorrection` — a small per-side bias (`±0..12°`)
+  controlled by `WATCH_ROTATION_CORRECTION_DEG`. Off by default;
+  set to `8` when watches still look "too vertical" on portrait
+  wrist photos.
+
+A confidence-aware clamp keeps the result inside a sensible band
+(soft ±65°, hard ±80°) so a noisy landmark drop can never flip the
+watch upside down. The clamp deliberately does NOT pull moderate
+rotations toward 0° — past versions of this code over-corrected
+and made every watch land near vertical, which is exactly the
+"sticker effect" we are fighting.
+
+Use `checkWatchRotationQuality({ finalRotationDeg, forearmAxisDeg })`
+to verify post-hoc that the rotation actually aligns the strap with
+the forearm. The check is line-symmetric (180°-flipped angles are
+equivalent for a strap), pass when drift ≤ 12°, warn at 12–20°,
+fail past 20°.
+
 ### Polish pass (June 2026): smaller watch, softer contact band, alpha defringe
 
 Three changes that target the "sticker / halo" look that survived
