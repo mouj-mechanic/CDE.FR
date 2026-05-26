@@ -528,9 +528,14 @@ export function TryOnPanel({
         <Stage skipCurtain={isLoading}>
           <AnimatePresence mode="wait">
             {isLoading ? (
+              // No fade-in on the loading wrapper. The customer just
+              // clicked the action button — they need IMMEDIATE
+              // feedback. The internal elements (artisan, orbits,
+              // sparkles, progress bar) animate on their own; the
+              // container is visible from frame 1.
               <motion.div
                 key="loading"
-                initial={{ opacity: 0 }}
+                initial={{ opacity: 1 }}
                 animate={{ opacity: 1 }}
                 exit={{ opacity: 0, scale: 0.98 }}
                 transition={{ duration: 0.2 }}

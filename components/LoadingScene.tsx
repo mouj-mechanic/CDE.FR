@@ -32,7 +32,7 @@ const ORBITS = [
   { delay: 0.25, duration: 3.0, radius: 130 },
 ];
 
-const PROGRESS_DELAY_MS = 300;
+const PROGRESS_DELAY_MS = 0;
 
 interface StageDef {
   id: string;
@@ -247,43 +247,44 @@ export function LoadingScene({ category }: LoadingSceneProps) {
         ))}
       </div>
 
-      {/* Artisan scene — appears IMMEDIATELY on click. No delay. */}
+      {/* Artisan scene — appears IMMEDIATELY at full opacity. The
+          internal scene is itself an animated drawing; the wrapper
+          is just a positioning element. */}
       <motion.div
-        initial={{ opacity: 0, scale: 0.9, y: 6 }}
-        animate={{ opacity: 1, scale: 1, y: 0 }}
-        transition={{ duration: 0.45, ease: "easeOut" }}
+        initial={{ opacity: 1, scale: 0.95 }}
+        animate={{ opacity: 1, scale: 1 }}
+        transition={{ duration: 0.25, ease: "easeOut" }}
         className="relative mb-4 flex justify-center"
       >
         <ArtisanScene type={category.animationType} />
       </motion.div>
 
-      {/* Title — also immediate. */}
       <motion.h3
-        initial={{ opacity: 0, y: 4 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: 0.15, duration: 0.35, ease: "easeOut" }}
+        initial={{ opacity: 1 }}
+        animate={{ opacity: 1 }}
         className="font-display text-lg font-semibold text-ink sm:text-xl"
       >
         {category.loadingTitle}
       </motion.h3>
 
       <motion.p
-        initial={{ opacity: 0 }}
+        initial={{ opacity: 1 }}
         animate={{ opacity: 1 }}
-        transition={{ delay: 0.25, duration: 0.35 }}
         className="mt-2 text-sm text-ink-muted"
       >
         {category.loadingDescription}
       </motion.p>
 
-      {/* Progress bar + stage list — appears AFTER curtains opened */}
+      {/* Progress bar + stage list — fully visible from frame 1
+          (PROGRESS_DELAY_MS=0). The customer needs the checklist
+          immediately to feel the system is actually doing work. */}
       <AnimatePresence>
         {progressVisible && (
           <motion.div
-            initial={{ opacity: 0, y: 8 }}
-            animate={{ opacity: 1, y: 0 }}
+            initial={{ opacity: 1 }}
+            animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            transition={{ duration: 0.6, ease: "easeOut" }}
+            transition={{ duration: 0.2, ease: "easeOut" }}
             className="mx-auto mt-8 w-full max-w-md"
           >
             {/* Progress bar with shimmer */}

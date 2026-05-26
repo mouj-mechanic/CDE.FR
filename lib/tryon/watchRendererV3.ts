@@ -359,11 +359,12 @@ export async function renderWatchOverlayV3(
   // computeWatchRotation already runs this when the env flag is on;
   // we re-apply it here in case the user added a manual offset that
   // pulled it back near 0°.
+  // Use the function's continuous-amplification defaults (3° dead
+  // zone, target 35°). Hard-coding 15° here would re-introduce the
+  // "vertical-strap on a slightly tilted forearm" sticker effect.
   const forced = forceMinimumRotationForDiagonalForearm({
     forearmAxisDeg: rotationResult.forearmAxisDeg,
     currentRotationDeg: finalRotationDeg,
-    thresholdDeg: 15,
-    targetDeg: 35,
   });
   if (forced.forced) finalRotationDeg = forced.rotationDeg;
   finalRotationDeg = normalizeAngle180(finalRotationDeg);

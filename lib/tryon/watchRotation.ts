@@ -230,39 +230,69 @@ function estimateHandSide(
 }
 
 function envCorrectionBias(): number {
-  const raw = process.env.WATCH_ROTATION_CORRECTION_DEG?.trim();
+  const raw = pickEnv([
+    process.env.NEXT_PUBLIC_WATCH_ROTATION_CORRECTION_DEG,
+    process.env.WATCH_ROTATION_CORRECTION_DEG,
+  ]);
   const v = raw ? Number(raw) : 0;
   return Number.isFinite(v) ? v : 0;
 }
 
 function envMaxCorrection(): number {
-  const raw = process.env.WATCH_ROTATION_MAX_CORRECTION_DEG?.trim();
+  const raw = pickEnv([
+    process.env.NEXT_PUBLIC_WATCH_ROTATION_MAX_CORRECTION_DEG,
+    process.env.WATCH_ROTATION_MAX_CORRECTION_DEG,
+  ]);
   const v = raw ? Number(raw) : 12;
   return Number.isFinite(v) && v > 0 ? v : 12;
 }
 
+/**
+ * Pick the first non-empty raw env value. We must access each
+ * variable name LITERALLY because Next.js inlines `process.env.NEXT_PUBLIC_*`
+ * at build time via static replacement — `process.env[dynamicKey]`
+ * does NOT get inlined and resolves to undefined client-side.
+ */
+function pickEnv(values: Array<string | undefined>): string | undefined {
+  for (const v of values) {
+    const t = v?.trim();
+    if (t) return t;
+  }
+  return undefined;
+}
+
 function envForceMinOnDiagonal(): boolean {
-  // Default ON: when the forearm is clearly diagonal (>15° off
-  // vertical) but the computed rotation is suspiciously small
-  // (|deg| < 15°), bump the rotation to a visible angle. Catches
-  // both the "MediaPipe missed the wrist landmark" and "landmarks
-  // suggest a vertical hand even though the photo is diagonal"
-  // failure modes that produce sticker-flat watches in production.
-  const raw = process.env.WATCH_ROTATION_FORCE_MIN_ON_DIAGONAL?.trim();
+  // Default ON: when the forearm is clearly diagonal but the
+  // computed rotation is suspiciously small, bump it to a visible
+  // angle. Catches the "MediaPipe missed the wrist landmark" and
+  // "landmarks suggest a vertical hand even though the photo is
+  // diagonal" failure modes that produce sticker-flat watches.
+  const raw = pickEnv([
+    process.env.NEXT_PUBLIC_WATCH_ROTATION_FORCE_MIN_ON_DIAGONAL,
+    process.env.WATCH_ROTATION_FORCE_MIN_ON_DIAGONAL,
+  ]);
   if (raw === undefined || raw === "") return true;
   return raw.toLowerCase() !== "false" && raw !== "0";
 }
 
 function envForceMinTargetDeg(): number {
-  const raw = process.env.WATCH_ROTATION_FORCE_MIN_DEG?.trim();
-  const v = raw ? Number(raw) : 32;
-  return Number.isFinite(v) && v > 0 ? v : 32;
+  const raw = pickEnv([
+    process.env.NEXT_PUBLIC_WATCH_ROTATION_FORCE_MIN_DEG,
+    process.env.WATCH_ROTATION_FORCE_MIN_DEG,
+  ]);
+  const v = raw ? Number(raw) : 35;
+  return Number.isFinite(v) && v > 0 ? v : 35;
 }
 
 function envDiagonalThresholdDeg(): number {
-  const raw = process.env.WATCH_ROTATION_DIAGONAL_THRESHOLD_DEG?.trim();
-  const v = raw ? Number(raw) : 15;
-  return Number.isFinite(v) && v > 0 ? v : 15;
+  const raw = pickEnv([
+    process.env.NEXT_PUBLIC_WATCH_ROTATION_DIAGONAL_THRESHOLD_DEG,
+    process.env.WATCH_ROTATION_DIAGONAL_THRESHOLD_DEG,
+  ]);
+  // 3° dead zone — anything else triggers the continuous
+  // amplification curve inside forceMinimumRotationForDiagonalForearm.
+  const v = raw ? Number(raw) : 3;
+  return Number.isFinite(v) && v >= 0 ? v : 3;
 }
 
 /**
@@ -330,7 +360,10 @@ function envProductStrapAxis(meta?: ProductMeta): number {
   if (meta && typeof meta.strapAxisDeg === "number") {
     return meta.strapAxisDeg;
   }
-  const raw = process.env.PRODUCT_STRAP_AXIS_DEG?.trim();
+  const raw = pickEnv([
+    process.env.NEXT_PUBLIC_PRODUCT_STRAP_AXIS_DEG,
+    process.env.PRODUCT_STRAP_AXIS_DEG,
+  ]);
   const v = raw ? Number(raw) : 90;
   return Number.isFinite(v) ? v : 90;
 }

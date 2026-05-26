@@ -20,13 +20,14 @@ const CURTAIN_DURATION_S = 0.55;
 export function Stage({ children, skipCurtain = false }: StageProps) {
   return (
     <div className="relative min-h-[440px] overflow-hidden rounded-3xl bg-cream-dark/40">
-      {/* Stage content fades in IMMEDIATELY. When the curtain is
-          skipped, the children fully take over the box. */}
+      {/* Content is fully visible from frame 1 when curtains are
+          skipped (loading mode). The dramatic fade-in is reserved
+          for the result reveal where it complements the curtain. */}
       <motion.div
         className="relative z-10 p-4 sm:p-6"
-        initial={{ opacity: 0 }}
+        initial={{ opacity: skipCurtain ? 1 : 0 }}
         animate={{ opacity: 1 }}
-        transition={{ duration: 0.2, ease: "easeOut" }}
+        transition={{ duration: skipCurtain ? 0 : 0.2, ease: "easeOut" }}
       >
         {children}
       </motion.div>
