@@ -48,14 +48,14 @@ describe("validateWatchPlacement", () => {
   it("re-anchors a watch placed on the back of the hand", () => {
     const g = baseGeometry();
     // Pull the watch onto the hand (negative forearm offset → wrist
-    // crease and past it). The target band starts at +40 px.
+    // crease and past it). The target band starts at +36 px (0.18 × palm).
     g.cx = 510; // only 10px along forearm — too close to wrist
     const v = validateWatchPlacement(g);
     expect(v.centreInBand).toBe(false);
-    // The corrected centre must satisfy the band rule (40..110 px along forearm).
+    // The corrected centre must satisfy the band rule (36..68 px along forearm).
     const fx = v.corrected.cx - g.wristAnchor.x;
-    expect(fx).toBeGreaterThanOrEqual(40);
-    expect(fx).toBeLessThanOrEqual(88);
+    expect(fx).toBeGreaterThanOrEqual(36);
+    expect(fx).toBeLessThanOrEqual(68);
     expect(v.notes.join(" ")).toMatch(/back of the hand|forearm/i);
   });
 
@@ -65,14 +65,14 @@ describe("validateWatchPlacement", () => {
     const v = validateWatchPlacement(g);
     expect(v.centreInBand).toBe(false);
     const fx = v.corrected.cx - g.wristAnchor.x;
-    expect(fx).toBeLessThanOrEqual(88); // new max = palm × 0.44 = 88
+    expect(fx).toBeLessThanOrEqual(68); // new max = palm × 0.34 = 68
     expect(v.notes.join(" ")).toMatch(/down the forearm/i);
   });
 
   it("snaps a lateral drift back onto the forearm axis", () => {
     const g = baseGeometry();
-    // 60 px along forearm + 80 px sideways. Lateral cap = 44 (palm*0.22).
-    g.cx = g.wristAnchor.x + 60;
+    // 50 px along forearm + 80 px sideways. Lateral cap = 40 (palm*0.20).
+    g.cx = g.wristAnchor.x + 50;
     g.cy = g.wristAnchor.y + 80;
     const v = validateWatchPlacement(g);
     expect(v.centreInBand).toBe(false);
@@ -82,25 +82,25 @@ describe("validateWatchPlacement", () => {
     expect(v.notes.join(" ")).toMatch(/forearm axis|drifted/i);
   });
 
-  it("clamps an oversized watch down to the new 1.08× max", () => {
+  it("clamps an oversized watch down to the new 0.98× max", () => {
     const g = baseGeometry();
     g.width = g.palmWidth * 1.5; // ~1.76× wristWidth — way above the cap
     g.height = g.palmWidth * 0.7;
     const v = validateWatchPlacement(g);
     expect(v.sizeInRange).toBe(true);
     const wristWidth = g.palmWidth * 0.85;
-    expect(v.corrected.width / wristWidth).toBeLessThanOrEqual(1.08 + 1e-6);
+    expect(v.corrected.width / wristWidth).toBeLessThanOrEqual(0.98 + 1e-6);
     expect(v.notes.join(" ")).toMatch(/size ratio|clamped/i);
   });
 
-  it("scales up an undersized watch to the new 0.78× min", () => {
+  it("scales up an undersized watch to the new 0.72× min", () => {
     const g = baseGeometry();
-    g.width = g.palmWidth * 0.3; // way under min
-    g.height = g.palmWidth * 0.15;
+    g.width = g.palmWidth * 0.2; // way under min
+    g.height = g.palmWidth * 0.1;
     const v = validateWatchPlacement(g);
     expect(v.sizeInRange).toBe(true);
     const wristWidth = g.palmWidth * 0.85;
-    expect(v.corrected.width / wristWidth).toBeGreaterThanOrEqual(0.78 - 1e-6);
+    expect(v.corrected.width / wristWidth).toBeGreaterThanOrEqual(0.72 - 1e-6);
   });
 });
 

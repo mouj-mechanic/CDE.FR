@@ -126,6 +126,13 @@ export async function refineAlphaMask(
   //    we never erase coloured pixels.
   haloRemoval(data, sw, sh);
 
+  // 2b. Defringe: for soft-edge pixels, replace the RGB with a weighted
+  //     average of the nearest fully-opaque INSIDE neighbours. This
+  //     removes the grey halo around dark products (black watches /
+  //     bracelets) that haloRemoval can't fix because grey is not
+  //     white. Run BEFORE erosion so the edge pixels are still around.
+  defringeEdges(data, sw, sh);
+
   // 3. 1-px erosion of alpha (kills isolated semi-transparent dirt).
   const eroded = erodeAlpha(data, sw, sh, 1);
 
@@ -209,6 +216,83 @@ function haloRemoval(
       if (avg > 235 && sat < 20) {
         const whiteness = Math.min(1, (avg - 235) / 20);
         data[i + 3] = Math.max(0, Math.round(a * (1 - 0.6 * whiteness)));
+      }
+    }
+  }
+}
+
+/**
+ * Defringe — replace the RGB of soft-edge pixels with a weighted average
+ * of nearby fully-opaque INSIDE neighbours.
+ *
+ *  Why: when the original product cutout was done on a light or grey
+ *  background, the anti-aliased edge pixels carry background colour
+ *  (white / grey) under a low alpha. When the watch is composited
+ *  onto skin, those edge RGB values blend through and produce the
+ *  ugly white/grey halo around the bracelet — even though the alpha
+ *  itself is "correct". By rewriting the edge RGB with neighbouring
+ *  product colour (e.g. the bracelet black) the halo simply
+ *  disappears.
+ *
+ *  We only rewrite RGB; alpha is untouched. We only act on pixels with
+ *  alpha in 8..220 (soft edge). Search radius is 4 px, weighted by
+ *  inverse distance — we never reach far inside the product.
+ */
+function defringeEdges(
+  data: Uint8ClampedArray,
+  w: number,
+  h: number
+): void {
+  const RADIUS = 4;
+  // Snapshot original RGBA so we don't pollute the search source
+  // mid-loop.
+  const src = new Uint8ClampedArray(data);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const i = (y * w + x) * 4;
+      const a = src[i + 3];
+      if (a < 8 || a > 220) continue;
+      let rSum = 0;
+      let gSum = 0;
+      let bSum = 0;
+      let wSum = 0;
+      for (let dy = -RADIUS; dy <= RADIUS; dy++) {
+        const yi = y + dy;
+        if (yi < 0 || yi >= h) continue;
+        for (let dx = -RADIUS; dx <= RADIUS; dx++) {
+          const xi = x + dx;
+          if (xi < 0 || xi >= w) continue;
+          const j = (yi * w + xi) * 4;
+          const aj = src[j + 3];
+          // Only sample fully-opaque neighbours — they are the only
+          // pixels that carry the "real" product colour.
+          if (aj < 235) continue;
+          const d2 = dx * dx + dy * dy;
+          if (d2 === 0) continue;
+          const wt = 1 / d2;
+          rSum += src[j] * wt;
+          gSum += src[j + 1] * wt;
+          bSum += src[j + 2] * wt;
+          wSum += wt;
+        }
+      }
+      if (wSum > 0) {
+        // Mix the original edge colour with the neighbour-inside
+        // colour. The lower the original alpha, the more we lean on
+        // the neighbour colour (since the original RGB is mostly
+        // background residue at that point).
+        const k = 1 - a / 255; // 0..1, higher when more transparent
+        const blendInside = 0.6 + 0.35 * k; // 0.6..0.95
+        const rIn = rSum / wSum;
+        const gIn = gSum / wSum;
+        const bIn = bSum / wSum;
+        data[i] = Math.round(src[i] * (1 - blendInside) + rIn * blendInside);
+        data[i + 1] = Math.round(
+          src[i + 1] * (1 - blendInside) + gIn * blendInside
+        );
+        data[i + 2] = Math.round(
+          src[i + 2] * (1 - blendInside) + bIn * blendInside
+        );
       }
     }
   }

@@ -273,6 +273,43 @@ In production the customer never sees a damaged hand: either the
 gates pass and the AI shadows ship, or the deterministic composite
 ships with a soft "rendu fidèle utilisé" note.
 
+### Polish pass (June 2026): smaller watch, softer contact band, alpha defringe
+
+Three changes that target the "sticker / halo" look that survived
+the safety overhaul:
+
+1. **Geometry tightening**
+   - Default `WATCH_TARGET_WRIST_RATIO` lowered from 0.92 → 0.86.
+   - Hard cap `WATCH_MAX_WRIST_RATIO` lowered from 1.08 → 0.98.
+   - Forearm anchor moved from 0.30 × palmWidth to 0.26 × palmWidth
+     so the watch sits at the base of the wrist instead of mid-arm.
+   - Anatomic band tightened to 0.18..0.34 × palmWidth (was
+     0.20..0.44).
+   These four knobs are exposed as env vars (`WATCH_TARGET_WRIST_RATIO`,
+   `WATCH_MAX_WRIST_RATIO`) so operators can adjust per catalogue
+   without redeploying.
+
+2. **Alpha defringe** (`lib/tryon/alphaRefine.ts::defringeEdges`).
+   The previous halo killer only attacked white pixels; black /
+   silver products kept a grey halo around bracelets and case
+   edges. The new defringe step rewrites the RGB of soft-edge
+   pixels (alpha 8..220) with a distance-weighted average of the
+   nearest fully-opaque INSIDE neighbours. The bracelet edge picks
+   up bracelet black instead of background grey, the halo simply
+   disappears. Alpha is untouched — only colour bleed is fixed.
+
+3. **Soft contact-ring blend** in `composeLockedAccessoryFinal`.
+   Where the ring used to be a binary {AI / user} switch, we now
+   build three discrete distance bands inside the ring (≈ 4 / 8 /
+   12 px from the product silhouette) with weights 0.85 / 0.55 /
+   0.25 toward the AI. The user photo dominates the rim, the AI
+   contact shadows live next to the watch, and the seam between
+   the two is a smooth gradient instead of a visible line.
+
+The safety guarantees (no fingers / nails / background controlled by
+the AI) are unchanged — the blend stays strictly inside the dilated
+product silhouette.
+
 ### Watch safety mode (emergency killswitch)
 
 When the auto-mask pipeline misbehaves on a specific catalogue and

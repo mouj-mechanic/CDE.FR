@@ -213,9 +213,18 @@ export async function composeLockedAccessoryFinal(
   }
 
   // Dilate the product core to get the OUTER edge of the contact ring.
+  // The full ring is `contactPx` wide. Inside it we build a soft
+  // weight that fades from 1.0 (right next to the core) to 0.0 (at the
+  // outer rim) so the user↔AI transition is gradient rather than a
+  // hard line — kills the "halo / hard band around the bracelet"
+  // effect.
   const contactPx = input.contactBandPx ?? 12;
   const outer = dilate(core.mask, w, h, contactPx);
-  // contact band = outer \ core
+  // Pre-compute several intermediate dilations to derive a discrete
+  // approximation of the distance field for the contact ring. We use
+  // 3 bands → weights 0.85 / 0.55 / 0.25.
+  const innerBand = dilate(core.mask, w, h, Math.max(2, Math.round(contactPx / 3)));
+  const midBand = dilate(core.mask, w, h, Math.max(3, Math.round((contactPx * 2) / 3)));
   const px = w * h;
   let contactCount = 0;
   const out = Buffer.alloc(px * 4);
@@ -229,12 +238,29 @@ export async function composeLockedAccessoryFinal(
       out[dstOff + 2] = compRaw.data[off + 2];
       out[dstOff + 3] = 255;
     } else if (outer[i] === 255) {
-      // contact band → AI result (preserves shadows / integration)
+      // contact band — soft blend between AI (shadows) and user base.
+      // Weight depends on how close we are to the product core:
+      //  - innermost band (≤ contactPx/3 away)  → 85% AI
+      //  - middle band   (≤ 2·contactPx/3 away) → 55% AI
+      //  - outer band    (≤ contactPx away)     → 25% AI
+      // This keeps the AI contact shadow where it matters (next to
+      // the watch) and lets the original photo dominate at the rim
+      // so no halo line appears.
+      const aiWeight =
+        innerBand[i] === 255 ? 0.85 : midBand[i] === 255 ? 0.55 : 0.25;
+      const userWeight = 1 - aiWeight;
       contactCount++;
-      const off = i * aiRaw.channels;
-      out[dstOff] = aiRaw.data[off];
-      out[dstOff + 1] = aiRaw.data[off + 1];
-      out[dstOff + 2] = aiRaw.data[off + 2];
+      const aOff = i * aiRaw.channels;
+      const uOff = i * userRaw.channels;
+      out[dstOff] = Math.round(
+        aiRaw.data[aOff] * aiWeight + userRaw.data[uOff] * userWeight
+      );
+      out[dstOff + 1] = Math.round(
+        aiRaw.data[aOff + 1] * aiWeight + userRaw.data[uOff + 1] * userWeight
+      );
+      out[dstOff + 2] = Math.round(
+        aiRaw.data[aOff + 2] * aiWeight + userRaw.data[uOff + 2] * userWeight
+      );
       out[dstOff + 3] = 255;
     } else {
       // outside everything → user base (untouched). This is what kills

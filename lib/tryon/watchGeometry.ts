@@ -77,22 +77,21 @@ export interface WatchPlacementValidation {
   notes: string[];
 }
 
-// Tightened production thresholds (May 2026).
+// Tightened production thresholds (June 2026 polish pass).
 //
-//   - Target band: 0.24..0.38 × palmWidth (centre 0.30). Anything
-//     above 0.38 reads as "mid-forearm watch", anything below 0.24
-//     drifts onto the back of the hand.
-//   - Hard ends: still accept 0.20..0.44 so the auto-clamp doesn't
-//     fight reasonable user adjustments.
-//   - Lateral: 0.22 × palmWidth max — slightly tighter than before so
-//     the watch stays centred over the forearm.
-//   - Size: 0.78..1.08 × wristWidth, hard target 0.92. Used to be
-//     1.25× which routinely produced oversized watches.
-const TARGET_MIN_FORE = 0.2;
-const TARGET_MAX_FORE = 0.44;
-const TARGET_MAX_LATERAL = 0.22;
-const TARGET_MIN_SIZE = 0.78;
-const TARGET_MAX_SIZE = 1.08;
+//   - Target band: 0.18..0.34 × palmWidth (centre 0.26). Anything
+//     above 0.34 reads as "mid-forearm watch" (sticker effect),
+//     anything below 0.18 drifts onto the back of the hand.
+//   - Lateral: 0.20 × palmWidth max — the watch stays tightly
+//     centred over the forearm axis. Lowered from 0.22.
+//   - Size: 0.72..0.98 × wristWidth, hard target 0.86. Used to be
+//     1.08× which still produced a "sticker / too big" look on
+//     standard hand photos.
+const TARGET_MIN_FORE = 0.18;
+const TARGET_MAX_FORE = 0.34;
+const TARGET_MAX_LATERAL = 0.2;
+const TARGET_MIN_SIZE = 0.72;
+const TARGET_MAX_SIZE = 0.98;
 
 export function validateWatchPlacement(
   g: WristGeometry
@@ -247,33 +246,35 @@ export function computeWristGeometry(
   // palmWidth = distance(indexMcp, pinkyMcp)
   const palmWidth = dist(indexMcp, pinkyMcp);
 
-  // watchCenter = wrist - handDir * palmWidth * 0.30
+  // watchCenter = wrist - handDir * palmWidth * 0.26
   //
-  //  Ideal forearm offset for a watch sits at ≈ 0.30 × palmWidth from
+  //  Ideal forearm offset for a watch sits at ≈ 0.26 × palmWidth from
   //  the wrist landmark toward the elbow. Anything lower drifts onto
   //  the back of the hand; anything higher reads as a mid-forearm
-  //  watch. validateWatchPlacement enforces 0.20..0.44 as the hard
-  //  range.
-  const cx = wrist.x - handDir.x * palmWidth * 0.3;
-  const cy = wrist.y - handDir.y * palmWidth * 0.3;
+  //  watch. Tightened from 0.30 to 0.26 in the June 2026 polish pass
+  //  to fight the "watch too low on the forearm" feedback.
+  //  validateWatchPlacement enforces 0.18..0.34 as the hard range.
+  const cx = wrist.x - handDir.x * palmWidth * 0.26;
+  const cy = wrist.y - handDir.y * palmWidth * 0.26;
 
   // ── Watch width sizing (anatomy-aware) ────────────────────────────
   //
   //  Anatomically: wristWidth ≈ 0.85 × palmWidth (knuckle span).
-  //  Target watch span = 0.92 × wristWidth (a realistic watch case is
-  //  typically a bit narrower than the wrist itself). Hard cap at
-  //  1.08 × wristWidth so even after user scaling the watch never
-  //  reads as oversized.
+  //  Target watch span = 0.86 × wristWidth (a realistic watch case is
+  //  noticeably narrower than the wrist). Hard cap at 0.98 × wristWidth
+  //  so even after user scaling the watch never reads as oversized.
   //
-  //   - WATCH_TARGET_WRIST_RATIO defaults to 0.92
-  //   - WATCH_MAX_WRIST_RATIO defaults to 1.08
+  //   - WATCH_TARGET_WRIST_RATIO defaults to 0.86
+  //   - WATCH_MAX_WRIST_RATIO defaults to 0.98
   //
   //  Operators can tighten further via env without re-deploying.
+  //  June 2026: previous defaults (0.92 / 1.08) still produced the
+  //  "sticker / too big" look on portrait wrist photos.
   const targetRatioRaw = process.env.WATCH_TARGET_WRIST_RATIO?.trim();
   const targetRatio = Number(targetRatioRaw);
   const targetWristRatio = Number.isFinite(targetRatio) && targetRatio > 0
     ? targetRatio
-    : 0.92;
+    : 0.86;
   const wristWidth = palmWidth * 0.85;
   const targetSpan = wristWidth * targetWristRatio;
   const width = targetSpan;

@@ -124,10 +124,11 @@ export async function renderWatchOverlay(
   // Apply user adjustments, but enforce a hard cap on the watch span.
   //
   //  Anatomic prior: wristWidth ≈ 0.85 × palmWidth. A realistic watch
-  //  case is 0.92 × wristWidth on average. Hard cap at 1.08 ×
-  //  wristWidth (≈ 0.92 × palmWidth) so the watch never reads as
+  //  case is 0.86 × wristWidth on average. Hard cap at 0.98 ×
+  //  wristWidth (≈ 0.83 × palmWidth) so the watch never reads as
   //  oversized regardless of user scale or product image aspect.
-  const maxAllowedWidth = base.palmWidth * 0.92;
+  //  Tightened from 0.92 to 0.83 in the June 2026 polish pass.
+  const maxAllowedWidth = base.palmWidth * 0.83;
   const userScaled = base.width * adj.scale;
   const cappedWidth = Math.min(userScaled, maxAllowedWidth);
   const scaleFactor = base.width === 0 ? 1 : cappedWidth / base.width;
