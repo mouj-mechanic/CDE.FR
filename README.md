@@ -262,6 +262,49 @@ OpenAI edits **only** contact shadows and skin blending. The product
 pixels always come from the deterministic composite via
 `composeLockedAccessoryFinal`.
 
+#### Editable-energy metric + auto-expansion
+
+The ring mask is intentionally thin (often < 1 % of the image in
+strict pixels) — so the legacy `whitePixels >= 200` count routinely
+flagged it as "below 0.5 %", which is what produced the *Mask is too
+small* error in production.
+
+We now use `computeEditableEnergy(maskBuf)` (`lib/tryon/maskValidation.ts`):
+
+```text
+editableEnergyRatio = Σ (v / 255) / totalPixels
+```
+
+This continuous metric matches how OpenAI's alpha mask consumes the
+gradient and correctly counts the feather band. Combined with
+per-category floors:
+
+| Category       | MIN ratio | TARGET band     | MAX ratio |
+| -------------- | --------- | --------------- | --------- |
+| `watch`        | 0.0035    | 0.008 – 0.025   | 0.12      |
+| `hand-jewelry` | 0.003     | 0.006 – 0.025   | 0.14      |
+| `glasses`      | 0.006     | 0.015 – 0.05    | 0.22      |
+| `headwear`     | 0.008     | 0.02  – 0.08    | 0.28      |
+| `clothes`      | 0.02      | 0.25  – 0.55    | 0.7       |
+
+When the initial ring lands below MIN, `autoMaskFromComposite` runs a
+**progressive expansion loop** — widening only the outer dilation
+(12 → 16 → 20 → 24 → 28 px), bumping the feather sigma slightly, and
+adding a contact-shadow patch underneath the product silhouette. The
+product core stays preserved at every step. If the loop never reaches
+MIN, the route falls back to the deterministic composite with a
+`auto_mask_too_small_fallback_used` warning — **the customer never
+sees a "Mask is too small" error**.
+
+Tune the loop via `.env.local`:
+
+```env
+WATCH_MASK_MIN_EDITABLE_RATIO=0.0035
+WATCH_MASK_TARGET_EDITABLE_RATIO=0.008
+WATCH_MASK_MAX_EDITABLE_RATIO=0.12
+WATCH_MASK_AUTO_EXPAND=true
+```
+
 ### Watch try-on — quality gates
 
 The watch category has the tightest gates because the product silhouette
@@ -614,6 +657,68 @@ steps.
 8. A black multicolour watch reference must not become a silver invented watch (`debug.qualityCheckFailed` or deterministic fallback).
 9. Hand anatomy outside the mask must stay preserved (`qualityChecks.outsideMaskPreserved`).
 10. Accessory success with product-lock engaged must show `debug.productLockApplied=true` and `productLocked=true`.
+
+---
+
+## Camera capture on iPhone
+
+The customer-facing camera modal (`components/CameraCapture.tsx`) is
+tuned for iOS Safari, the strictest mobile target. Most of the
+quirks come from a single root cause: iOS treats `getUserMedia` as a
+security feature and refuses any constraint it can't satisfy
+exactly — including the `facingMode: { exact: ... }` value most
+desktop tutorials suggest.
+
+What we do:
+
+- **HTTPS only.** `navigator.mediaDevices` is `undefined` on plain
+  HTTP origins on iOS. We detect this with
+  `detectCameraCapability({ isSecureContext, ... })` and surface the
+  "import a photo" fallback BEFORE prompting the user.
+- **Constraint cascade.** `buildCameraConstraintsCascade(mode)`
+  returns three increasingly relaxed `MediaStreamConstraints` —
+  always with `facingMode: { ideal: ... }` (never `exact`), and the
+  last one is simply `{ video: true }` which works on every iPhone
+  since iOS 11.
+- **`playsinline` + `webkit-playsinline`.** Both attributes are set
+  on the `<video>` element BEFORE the stream is attached. Without
+  them iOS goes full-screen and the modal layout breaks.
+- **`requestAnimationFrame` retry on `play()`.** iOS sometimes
+  rejects the first `video.play()` call when the user gesture has
+  already been consumed by a state update. We retry once on the
+  next animation frame.
+- **Native fallback.** When `getUserMedia` is unavailable or
+  refused, the modal opens a hidden `<input type="file"
+  capture="environment">`. iOS Safari then offers the native camera
+  picker — guaranteed to work since iOS 6.
+- **Per-category default facing mode.** `TryOnPanel` selects
+  `environment` (rear camera) for watch / hand-jewelry / headwear
+  and `user` (selfie cam) for glasses. Operators can override the
+  global default via `NEXT_PUBLIC_CAMERA_DEFAULT_FACING_MODE`.
+- **Stream cleanup.** `streamRef.current.getTracks().forEach(t =>
+  t.stop())` runs on close, on camera switch, on capture, and in
+  the `useEffect` cleanup so the LED never stays on.
+
+Deployment checklist:
+
+- Serve the app over HTTPS (Vercel, Netlify, Cloudflare Pages all
+  do this by default).
+- If embedding via `<iframe>`, add `allow="camera; microphone"` to
+  the parent iframe tag.
+- Add a `Permissions-Policy: camera=(self), microphone=()` header
+  on the embed host so Safari doesn't refuse the request silently.
+- On `localhost`, iOS only treats your laptop as "secure" — to test
+  on a phone you need an HTTPS tunnel (e.g. ngrok, Cloudflare
+  Tunnel) or a TLS dev cert.
+
+When the camera fails for any reason, the fallback button reads
+*"Prendre / importer une photo"* and goes through the OS native
+picker. The customer-facing copy NEVER mentions `NotAllowedError`,
+`OverconstrainedError`, or anything internal — see
+`cameraErrorMessageFromName()`.
+
+Unit tests for the constraint cascade and the capability detector
+live in `lib/camera/__tests__/constraints.test.ts`.
 
 ---
 

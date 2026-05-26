@@ -44,13 +44,84 @@ export const MAX_WHITE_RATIO_HAND_JEWELRY = 0.18;
 export const MAX_WHITE_RATIO_GLASSES = 0.22;
 export const MAX_WHITE_RATIO_HEADWEAR = 0.3;
 export const MAX_WHITE_RATIO_CLOTHES = 0.7;
-export const MIN_WHITE_RATIO = 0.005;
+
+/**
+ * Per-category MINIMUM editable energy ratios.
+ *
+ *  The previous global `MIN_WHITE_RATIO = 0.005` (0.5 %) was too high
+ *  for the new contact-only ring mask. A ring of 12–16 px around a
+ *  small wrist watch silhouette has total bright area well under 0.5 %
+ *  of a 1024×1536 image, especially after Gaussian feather (which
+ *  spreads pixels across the [50..200] range — counted as "soft").
+ *
+ *  We now use `computeEditableEnergy` (a weighted sum of v/255) so the
+ *  feathered band counts properly, and we lower the floor per
+ *  category.
+ */
+const MIN_EDITABLE_RATIO_BY_CATEGORY: Record<CategoryId, number> = {
+  watch: 0.0035,
+  "hand-jewelry": 0.003,
+  glasses: 0.006,
+  headwear: 0.008,
+  clothes: 0.02,
+};
+
+/**
+ * Per-category TARGET editable energy ratios.
+ *
+ *  Informational only — used by the auto-expansion logic in
+ *  `autoMaskFromComposite` to decide when to stop widening the ring.
+ *  When the energy ratio lands inside this band, no further widening
+ *  is attempted.
+ */
+const TARGET_EDITABLE_RATIO_BY_CATEGORY: Record<
+  CategoryId,
+  { min: number; max: number }
+> = {
+  watch: { min: 0.008, max: 0.025 },
+  "hand-jewelry": { min: 0.006, max: 0.025 },
+  glasses: { min: 0.015, max: 0.05 },
+  headwear: { min: 0.02, max: 0.08 },
+  clothes: { min: 0.25, max: 0.55 },
+};
+
+export const MIN_WHITE_RATIO = MIN_EDITABLE_RATIO_BY_CATEGORY.watch;
+
+export function minEditableRatioFor(category: CategoryId): number {
+  return MIN_EDITABLE_RATIO_BY_CATEGORY[category];
+}
+
+export function targetEditableRatioFor(category: CategoryId): {
+  min: number;
+  max: number;
+} {
+  return TARGET_EDITABLE_RATIO_BY_CATEGORY[category];
+}
 
 export interface MaskValidationResult {
   ok: boolean;
+  /**
+   * Stable error code so the route can decide whether to retry / fall
+   * back without parsing the message.
+   */
+  errorCode?: "mask-too-small" | "mask-too-large" | "mask-dimension" | "mask-unreadable";
   error?: string;
   warnings: TryOnWarning[];
+  /**
+   * Legacy white-pixel ratio (>=200). Kept for backwards compat. Use
+   * `editableEnergyRatio` for new decisions.
+   */
   whiteAreaRatio: number;
+  /**
+   * Weighted editable energy ratio in [0..1]. Sums v/255 across all
+   * pixels divided by total pixel count. Correctly counts feathered
+   * masks that the previous threshold-based logic missed.
+   */
+  editableEnergyRatio: number;
+  /** Ratio of pixels with v >= 200 (the strict "white" core). */
+  brightRatio: number;
+  /** Ratio of pixels with 50 <= v < 200 (the feather band). */
+  softRatio: number;
   dimensions: { width: number; height: number };
 }
 
@@ -83,16 +154,29 @@ const ADVICE: Record<CategoryId, string> = {
 };
 
 /**
- * Compute the ratio of fully-white pixels to total pixels.
+ * Compute the editable-energy ratio of a grayscale mask.
  *
- *  We use a luminance threshold (>= 200) rather than strict 255 so masks
- *  exported with anti-aliased edges still count their bright interior as
- *  "editable". The opposite goes for black: anything <= 50 counts as
- *  preserved. Pixels in between are blend / feather pixels — we count
- *  them as half toward the white ratio.
+ *  Old behaviour (threshold-based): counted v ≥ 200 as 1.0 and
+ *  50 ≤ v < 200 as 0.5. That heuristic underestimated soft / feathered
+ *  masks by 30–60 % — the new contact-only ring mask is mostly in the
+ *  60..160 range after Gaussian blur, so its measured ratio routinely
+ *  fell under the 0.5 % floor even though the visible band was
+ *  perfectly usable.
+ *
+ *  New behaviour: `editableEnergy = Σ (v / 255) / N` — a continuous
+ *  measure that matches how OpenAI's alpha mask consumes the gradient.
+ *  We also report the legacy brightRatio / softRatio for diagnostics.
+ *
+ *  Returns:
+ *    - editableEnergyRatio: weighted sum (canonical metric)
+ *    - brightRatio: ratio of pixels with v >= 200
+ *    - softRatio:   ratio of pixels with 50 <= v < 200
+ *    - width / height of the mask
  */
-async function computeWhiteRatio(maskBuf: Buffer): Promise<{
-  ratio: number;
+export async function computeEditableEnergy(maskBuf: Buffer): Promise<{
+  editableEnergyRatio: number;
+  brightRatio: number;
+  softRatio: number;
   width: number;
   height: number;
 }> {
@@ -102,15 +186,22 @@ async function computeWhiteRatio(maskBuf: Buffer): Promise<{
     .toBuffer({ resolveWithObject: true });
 
   const px = info.width * info.height;
-  let whitePixels = 0;
-  let featherPixels = 0;
+  let energy = 0;
+  let bright = 0;
+  let soft = 0;
   for (let i = 0; i < px; i++) {
     const v = data[i * info.channels]; // R channel (grayscale)
-    if (v >= 200) whitePixels++;
-    else if (v >= 50) featherPixels++;
+    energy += v / 255;
+    if (v >= 200) bright++;
+    else if (v >= 50) soft++;
   }
-  const ratio = (whitePixels + featherPixels * 0.5) / px;
-  return { ratio, width: info.width, height: info.height };
+  return {
+    editableEnergyRatio: energy / px,
+    brightRatio: bright / px,
+    softRatio: soft / px,
+    width: info.width,
+    height: info.height,
+  };
 }
 
 export async function validateMaskForCategory(
@@ -120,19 +211,21 @@ export async function validateMaskForCategory(
 ): Promise<MaskValidationResult> {
   const warnings: TryOnWarning[] = [];
 
-  // 1. Dimension match — early out, the route already pre-flights this
-  //    but we duplicate here so the helper is self-contained.
-  let stats: { ratio: number; width: number; height: number };
+  let stats: Awaited<ReturnType<typeof computeEditableEnergy>>;
   try {
-    stats = await computeWhiteRatio(maskBuf);
+    stats = await computeEditableEnergy(maskBuf);
   } catch (err) {
     return {
       ok: false,
+      errorCode: "mask-unreadable",
       error: `Mask is unreadable: ${
         err instanceof Error ? err.message : String(err)
       }.`,
       warnings,
       whiteAreaRatio: 0,
+      editableEnergyRatio: 0,
+      brightRatio: 0,
+      softRatio: 0,
       dimensions: { width: 0, height: 0 },
     };
   }
@@ -140,55 +233,68 @@ export async function validateMaskForCategory(
   if (stats.width !== baseDims.width || stats.height !== baseDims.height) {
     return {
       ok: false,
+      errorCode: "mask-dimension",
       error: `Mask dimensions do not match the base image (base ${baseDims.width}x${baseDims.height} vs mask ${stats.width}x${stats.height}).`,
       warnings,
-      whiteAreaRatio: stats.ratio,
+      whiteAreaRatio: stats.brightRatio,
+      editableEnergyRatio: stats.editableEnergyRatio,
+      brightRatio: stats.brightRatio,
+      softRatio: stats.softRatio,
       dimensions: { width: stats.width, height: stats.height },
     };
   }
 
-  // 2. White-area ratio bounds.
-  if (stats.ratio < MIN_WHITE_RATIO) {
+  // Editable energy gate. Per-category MIN. This is the authoritative
+  // signal — old `whiteAreaRatio` is kept on the result for legacy
+  // dashboards but no longer drives the decision.
+  const minEnergy = minEditableRatioFor(category);
+  if (stats.editableEnergyRatio < minEnergy) {
     return {
       ok: false,
-      error:
-        "Mask is too small. The white (editable) area is below 0.5% of the image.",
+      errorCode: "mask-too-small",
+      // Internal-only message. The route catches this code and either
+      // regenerates a wider mask or falls back to the deterministic
+      // composite — the customer NEVER sees this text.
+      error: `Internal auto-mask coverage is too small (editable energy ${(
+        stats.editableEnergyRatio * 100
+      ).toFixed(3)}% < ${(minEnergy * 100).toFixed(3)}% for ${category}).`,
       warnings,
-      whiteAreaRatio: stats.ratio,
+      whiteAreaRatio: stats.brightRatio,
+      editableEnergyRatio: stats.editableEnergyRatio,
+      brightRatio: stats.brightRatio,
+      softRatio: stats.softRatio,
       dimensions: { width: stats.width, height: stats.height },
     };
   }
 
   const cap = maxWhiteRatioFor(category);
-  if (stats.ratio > cap) {
+  if (stats.editableEnergyRatio > cap) {
     return {
       ok: false,
+      errorCode: "mask-too-large",
       error: `Mask covers ${Math.round(
-        stats.ratio * 100
+        stats.editableEnergyRatio * 100
       )}% of the image (max ${Math.round(
         cap * 100
-      )}% for ${category}). Customer identity may change. Tighten the mask.`,
+      )}% for ${category}). Customer identity may change.`,
       warnings,
-      whiteAreaRatio: stats.ratio,
+      whiteAreaRatio: stats.brightRatio,
+      editableEnergyRatio: stats.editableEnergyRatio,
+      brightRatio: stats.brightRatio,
+      softRatio: stats.softRatio,
       dimensions: { width: stats.width, height: stats.height },
     };
   }
 
-  // 3. Soft warnings — close to bounds.
-  if (stats.ratio > cap * 0.8) {
+  // Soft warnings — close to bounds.
+  if (stats.editableEnergyRatio > cap * 0.8) {
     warnings.push({
       code: "mask-too-large",
       message: "Mask covers too much of the image. Customer identity may change.",
     });
   }
-  if (stats.ratio < MIN_WHITE_RATIO * 4) {
-    warnings.push({
-      code: "mask-too-small",
-      message: "Mask is too small. Product may not blend correctly.",
-    });
-  }
 
-  // 4. Category-specific advice — always emitted, kept friendly.
+  // Category-specific advice — always emitted, kept friendly.
   warnings.push({
     code: `mask-advice-${category}`,
     message: ADVICE[category],
@@ -197,7 +303,10 @@ export async function validateMaskForCategory(
   return {
     ok: true,
     warnings,
-    whiteAreaRatio: stats.ratio,
+    whiteAreaRatio: stats.brightRatio,
+    editableEnergyRatio: stats.editableEnergyRatio,
+    brightRatio: stats.brightRatio,
+    softRatio: stats.softRatio,
     dimensions: { width: stats.width, height: stats.height },
   };
 }

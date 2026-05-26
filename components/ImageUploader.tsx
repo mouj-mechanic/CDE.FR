@@ -20,13 +20,27 @@ interface ImageUploaderProps {
   onImageSelect: (file: File, previewUrl: string) => void;
   onImageClear: () => void;
   error?: string | null;
+  /**
+   * Hint for the camera modal: "environment" defaults to the rear
+   * camera (best for wrist / hand shots, watches, jewelry, hats); "user"
+   * defaults to the selfie cam (good for glasses, headwear sometimes).
+   * Falls back to the env default when omitted.
+   */
+  preferredFacingMode?: "user" | "environment";
 }
+
+const ENV_DEFAULT_FACING_MODE: "user" | "environment" =
+  (process.env.NEXT_PUBLIC_CAMERA_DEFAULT_FACING_MODE as
+    | "user"
+    | "environment"
+    | undefined) ?? "environment";
 
 export function ImageUploader({
   previewUrl,
   onImageSelect,
   onImageClear,
   error,
+  preferredFacingMode = ENV_DEFAULT_FACING_MODE,
 }: ImageUploaderProps) {
   const [confettiTrigger, setConfettiTrigger] = useState(0);
   const [showXp, setShowXp] = useState(false);
@@ -186,6 +200,7 @@ export function ImageUploader({
       <CameraCapture
         open={cameraOpen}
         onClose={() => setCameraOpen(false)}
+        preferredFacingMode={preferredFacingMode}
         onCapture={(file, url) => {
           onImageSelect(file, url);
         }}

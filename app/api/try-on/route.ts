@@ -835,6 +835,20 @@ export async function POST(request: NextRequest) {
         : [];
     const allClientWarnings = [...clientWarnings, ...noMaskWarning];
 
+    // ── Mask-too-small one-shot server-side retry ─────────────────────
+    // The first OpenAI call may fail with `MaskValidationError(code=
+    // "mask-too-small")` when the client-supplied or first auto-mask
+    // is below `MIN_EDITABLE_RATIO`. We retry ONCE with a wider
+    // server-generated ring (autoMaskFromComposite already widens
+    // progressively). If that still fails, we drop into the
+    // deterministic fallback further down — the customer NEVER sees a
+    // raw "Mask is too small" message.
+    let maskTooSmallRetried = false;
+    let lastMaskTooSmallRetryDebug:
+      | { coverage: number; outerDilatePx?: number; featherPx?: number }
+      | null = null;
+
+    retryLoop: for (let __attempt = 0; __attempt < 2; __attempt++) {
     try {
       const result = await generateTryOnImage(params);
       const durationMs = Date.now() - startedAt;
@@ -1282,13 +1296,73 @@ export async function POST(request: NextRequest) {
       if (premiumError instanceof ProviderConfigError) {
         throw premiumError;
       }
-      // OpenAI mask requirement / dimension / validation errors are
-      // user-facing 400s.
+
+      // ── Mask-too-small one-shot retry ──────────────────────────────
+      // Regenerate via `autoMaskFromComposite` (which widens
+      // progressively) and re-enter the loop. We only attempt this
+      // once and only if we have a composite available — otherwise
+      // there's nothing to diff against.
       if (
+        premiumError instanceof MaskValidationError &&
+        premiumError.code === "mask-too-small" &&
+        !maskTooSmallRetried &&
+        inpaintComposite !== null
+      ) {
+        maskTooSmallRetried = true;
+        try {
+          const compositeBuf = Buffer.from(
+            await inpaintComposite.arrayBuffer()
+          );
+          const userBuf = Buffer.from(await userImage.arrayBuffer());
+          const meta = await sharp(compositeBuf).metadata();
+          const tw = meta.width ?? 1024;
+          const th = meta.height ?? 1024;
+          const auto = await autoMaskFromComposite({
+            userImage: userBuf,
+            compositeImage: compositeBuf,
+            targetWidth: tw,
+            targetHeight: th,
+            category,
+          });
+          if (auto && auto.buffer.length > 0) {
+            const newMaskFile = new File(
+              [new Uint8Array(auto.buffer)],
+              "auto-mask-retry.png",
+              { type: "image/png" }
+            );
+            params.inpaintMask = newMaskFile;
+            inpaintMask = newMaskFile;
+            lastMaskTooSmallRetryDebug = {
+              coverage: auto.coverage,
+              outerDilatePx: auto.debug?.outerDilatePx,
+              featherPx: auto.debug?.featherPx,
+            };
+            console.info(
+              `[try-on] mask-too-small retry: regenerated auto-mask coverage=${auto.coverage.toFixed(4)}`
+            );
+            continue retryLoop;
+          }
+        } catch (retryErr) {
+          console.warn(
+            "[try-on] mask-too-small server retry failed",
+            retryErr instanceof Error ? retryErr.message : retryErr
+          );
+        }
+        // Retry path exhausted — fall through to graceful deterministic
+        // fallback below (we deliberately do NOT return a 400).
+      }
+
+      // Other MaskValidationError variants stay 400 — they signal a
+      // developer-side configuration bug (mismatched dimensions,
+      // unreadable buffer). We also bubble MaskRequired / MaskDimension
+      // for the same reason.
+      const isFatalMaskError =
         premiumError instanceof MaskRequiredError ||
         premiumError instanceof MaskDimensionError ||
-        premiumError instanceof MaskValidationError
-      ) {
+        (premiumError instanceof MaskValidationError &&
+          premiumError.code !== "mask-too-small");
+
+      if (isFatalMaskError) {
         return NextResponse.json(
           {
             ok: false,
@@ -1307,6 +1381,88 @@ export async function POST(request: NextRequest) {
 
       const safeMessage = safeErrorMessage(premiumError);
       const durationMs = Date.now() - startedAt;
+
+      // ── Mask-too-small soft fallback ─────────────────────────────
+      // We tried the server retry above (or had no composite to retry
+      // with). Returning a 4xx/5xx with a raw mask-coverage message
+      // would leak internal vocabulary to the customer. Instead, we
+      // ALWAYS try to serve the deterministic composite — even when
+      // `apiOnlyMode` is set — and downgrade the response cleanly.
+      if (
+        premiumError instanceof MaskValidationError &&
+        premiumError.code === "mask-too-small"
+      ) {
+        if (finalPreview) {
+          const resultUrl = await uploadPreviewToCdn(finalPreview, hasFalKey);
+          const softWarnings = [
+            ...clientWarnings,
+            {
+              code: "auto_mask_too_small_fallback_used",
+              message:
+                "Nous avons utilisé le rendu le plus fiable pour préserver votre photo.",
+            },
+          ];
+          trackTryOnUsage({
+            merchantId,
+            category,
+            provider: "fast-overlay-fallback",
+            model: "canvas",
+            mock: false,
+            success: true,
+            durationMs,
+            errorCode: "MaskTooSmallFallback",
+          });
+          console.warn(
+            `[try-on] mask-too-small fallback category=${category} attempts=${
+              maskTooSmallRetried ? 1 : 0
+            } → deterministic composite`
+          );
+          return NextResponse.json({
+            ok: true,
+            resultUrl,
+            previewUrl: resultUrl,
+            generatedAt: Date.now(),
+            mock: false,
+            provider: "fast-overlay",
+            model: "canvas",
+            category,
+            durationMs,
+            renderMode: "fast-overlay" as RenderMode,
+            qualityStatus: "fallback_mask_too_small",
+            warnings: softWarnings,
+            placement: watchPlacement,
+            edgeQuality,
+            debug: {
+              imageCount: 1 + productImages.length + productUrls.length,
+              productImageCount: productImages.length + productUrls.length,
+              productWasCutout,
+              productImageSource,
+              productHasAlpha,
+              productMimeType,
+              usedOpenAI: false,
+              usedFal: false,
+              usedLocalRenderer: true,
+              maskUsed: false,
+              maskDebug: lastMaskTooSmallRetryDebug ?? undefined,
+              fallbackReason: "auto_mask_too_small",
+              maskRetryAttempted: maskTooSmallRetried,
+            },
+          });
+        }
+        // No deterministic preview to fall back to → soft 200 with a
+        // friendly note (still no raw technical message).
+        return NextResponse.json(
+          {
+            ok: false,
+            provider: openaiActive ? "openai" : envProvider,
+            renderMode: "api-image-edit" as RenderMode,
+            category,
+            error:
+              "Nous n'avons pas pu finaliser cet essayage. Essayez avec une autre photo (poignet plus dégagé, fond plus net).",
+          },
+          { status: 200 }
+        );
+      }
 
       // ── API-only mode → strict error, NEVER a local render ────────
       if (apiOnlyMode) {
@@ -1395,6 +1551,7 @@ export async function POST(request: NextRequest) {
       }
       throw premiumError;
     }
+    } // end retryLoop (mask-too-small one-shot retry)
   } catch (error) {
     const durationMs = Date.now() - startedAt;
     const safeMessage = safeErrorMessage(error);

@@ -1,5 +1,10 @@
 import sharp from "sharp";
 import type { CategoryId } from "@/types";
+import {
+  computeEditableEnergy,
+  minEditableRatioFor,
+  targetEditableRatioFor,
+} from "./maskValidation";
 
 /**
  * Server-side fallback mask generator.
@@ -75,8 +80,25 @@ export interface AutoMaskResult {
    * exactly match `targetWidth` × `targetHeight`.
    */
   buffer: Buffer;
-  /** Ratio of bright pixels (>= 25) to total pixels. 0..1. */
+  /**
+   * Editable-energy ratio (Σ v/255 / N). Canonical metric — matches
+   * `validateMaskForCategory`.
+   */
   coverage: number;
+  /**
+   * Diagnostic block exposing the parameters that actually produced
+   * this mask. Populated by `ensureMinimumWatchMaskCoverage` so the
+   * route can surface them in `debug.maskDebug` for QA.
+   */
+  debug?: {
+    outerDilatePx: number;
+    innerErodePx: number;
+    featherPx: number;
+    expansionAttempts: number;
+    brightRatio: number;
+    softRatio: number;
+    addedContactShadowPatch: boolean;
+  };
 }
 
 interface RawRGBA {
@@ -206,11 +228,152 @@ function buildRingMask(p: RingMaskParams): Buffer {
   return ring;
 }
 
+interface BuildMaskAtParams {
+  silhouette: Buffer;
+  width: number;
+  height: number;
+  category: CategoryId | undefined;
+  outerDilatePx: number;
+  innerErodePx: number;
+  featherPx: number;
+  addContactShadowPatch: boolean;
+}
+
+/**
+ * Render the BW mask at the given parameters. Returns the encoded PNG
+ * buffer + the editable-energy coverage. Pure render — no progressive
+ * expansion logic here.
+ */
+async function renderMaskAt(p: BuildMaskAtParams): Promise<{
+  buffer: Buffer;
+  coverage: number;
+  brightRatio: number;
+  softRatio: number;
+}> {
+  let dilated: Buffer;
+  switch (p.category) {
+    case "watch":
+    case "hand-jewelry":
+      dilated = buildRingMask({
+        silhouette: p.silhouette,
+        width: p.width,
+        height: p.height,
+        outerDilatePx: p.outerDilatePx,
+        innerErodePx: p.innerErodePx,
+      });
+      break;
+    case "glasses":
+      dilated = dilate(
+        p.silhouette,
+        p.width,
+        p.height,
+        Math.max(p.outerDilatePx, 8)
+      );
+      break;
+    case "headwear":
+    case "clothes":
+    default:
+      dilated = dilate(p.silhouette, p.width, p.height, p.outerDilatePx);
+      break;
+  }
+
+  // Optional contact-shadow patch under the product silhouette. Used
+  // when the ring mask alone is too thin to meet the minimum editable
+  // energy. We compute the silhouette bbox + add a soft ellipse under
+  // its bottom edge.
+  if (p.addContactShadowPatch) {
+    addContactShadowToMask(dilated, p.silhouette, p.width, p.height);
+  }
+
+  const rgba = Buffer.alloc(p.width * p.height * 4);
+  for (let i = 0; i < p.width * p.height; i++) {
+    const v = dilated[i];
+    rgba[i * 4] = v;
+    rgba[i * 4 + 1] = v;
+    rgba[i * 4 + 2] = v;
+    rgba[i * 4 + 3] = 255;
+  }
+  const sigma = Math.max(0.4, p.featherPx / 3);
+  const buffer = await sharp(rgba, {
+    raw: { width: p.width, height: p.height, channels: 4 },
+  })
+    .blur(sigma)
+    .png({ compressionLevel: 6 })
+    .toBuffer();
+
+  // Measure editable energy on the feathered output — that's the
+  // metric `validateMaskForCategory` uses.
+  const stats = await computeEditableEnergy(buffer);
+  return {
+    buffer,
+    coverage: stats.editableEnergyRatio,
+    brightRatio: stats.brightRatio,
+    softRatio: stats.softRatio,
+  };
+}
+
+/**
+ * Add a soft elliptical patch under the silhouette bbox to widen the
+ * editable contact band. Mutates `mask` in place. The patch is drawn
+ * as a horizontal capsule whose top sits at the silhouette's bottom
+ * edge — that's where the wrist contact shadow naturally lives.
+ */
+function addContactShadowToMask(
+  mask: Buffer,
+  silhouette: Buffer,
+  w: number,
+  h: number
+): void {
+  // Compute silhouette bbox.
+  let minX = w;
+  let maxX = 0;
+  let minY = h;
+  let maxY = 0;
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      if (silhouette[y * w + x] === 255) {
+        if (x < minX) minX = x;
+        if (x > maxX) maxX = x;
+        if (y < minY) minY = y;
+        if (y > maxY) maxY = y;
+      }
+    }
+  }
+  if (maxX < minX || maxY < minY) return;
+  const cx = (minX + maxX) / 2;
+  const cy = maxY + (maxY - minY) * 0.25;
+  const rx = (maxX - minX) * 0.55;
+  const ry = (maxY - minY) * 0.18;
+  if (rx <= 0 || ry <= 0) return;
+
+  const y0 = Math.max(0, Math.floor(cy - ry));
+  const y1 = Math.min(h - 1, Math.ceil(cy + ry));
+  const x0 = Math.max(0, Math.floor(cx - rx));
+  const x1 = Math.min(w - 1, Math.ceil(cx + rx));
+  for (let y = y0; y <= y1; y++) {
+    const dy = (y - cy) / ry;
+    for (let x = x0; x <= x1; x++) {
+      const dx = (x - cx) / rx;
+      const r = dx * dx + dy * dy;
+      if (r > 1) continue;
+      const v = Math.round(220 * (1 - r * r)); // soft falloff
+      const i = y * w + x;
+      if (v > mask[i]) mask[i] = v;
+    }
+  }
+}
+
 /**
  * Build a feathered B/W mask from the difference between the user
  * photo and the deterministic composite.
  *
  * Returns null when the silhouette is unusable (too small or too big).
+ *
+ *  For watch / hand-jewelry, the function progressively widens the
+ *  ring until the editable-energy ratio reaches the per-category
+ *  minimum (see `MIN_EDITABLE_RATIO_BY_CATEGORY`). It NEVER makes the
+ *  product core editable — only the outer ring + an optional contact
+ *  shadow patch is expanded. Hard ceiling at the per-category cap.
  */
 export async function autoMaskFromComposite(
   input: AutoMaskInput
@@ -225,7 +388,7 @@ export async function autoMaskFromComposite(
     toRawAt(input.compositeImage, W, H),
   ]);
 
-  const { mask, count } = diffSilhouette(
+  const { mask: silhouette, count } = diffSilhouette(
     userRaw,
     compRaw,
     PIXEL_DIFF_THRESHOLD
@@ -235,67 +398,160 @@ export async function autoMaskFromComposite(
     return null;
   }
 
-  // Category-aware mask building.
-  //
-  //   - watch / hand-jewelry → ring mask: outer dilate 12 px minus
-  //     inner erode 4 px. Product core preserved.
-  //   - glasses → moderate dilate, no erosion.
-  //   - headwear / clothes / unspecified → legacy full-silhouette mask
-  //     dilated by `dilatePx`.
-  let dilated: Buffer;
-  switch (input.category) {
-    case "watch":
-    case "hand-jewelry":
-      dilated = buildRingMask({
-        silhouette: mask,
-        width: W,
-        height: H,
-        outerDilatePx: 12,
-        innerErodePx: 4,
-      });
-      break;
-    case "glasses":
-      dilated = dilate(mask, W, H, Math.max(dilatePx, 8));
-      break;
-    case "headwear":
-    case "clothes":
-    default:
-      dilated = dilate(mask, W, H, dilatePx);
-      break;
+  // Single-pass render for categories that don't need auto-expansion.
+  if (input.category !== "watch" && input.category !== "hand-jewelry") {
+    const rendered = await renderMaskAt({
+      silhouette,
+      width: W,
+      height: H,
+      category: input.category,
+      outerDilatePx: dilatePx,
+      innerErodePx: 0,
+      featherPx,
+      addContactShadowPatch: false,
+    });
+    return {
+      buffer: rendered.buffer,
+      coverage: rendered.coverage,
+      debug: {
+        outerDilatePx: dilatePx,
+        innerErodePx: 0,
+        featherPx,
+        expansionAttempts: 0,
+        brightRatio: rendered.brightRatio,
+        softRatio: rendered.softRatio,
+        addedContactShadowPatch: false,
+      },
+    };
   }
 
-  // Promote the binary mask to a grayscale PNG and run a Gaussian blur
-  // to produce the feathered contact band. Sharp's `blur(sigma)` uses
-  // sigma in pixels — we approximate kernel radius ≈ 3·sigma.
-  // Building a 4-channel RGBA where R=G=B=mask, A=255 keeps the PNG
-  // browser-friendly while staying grayscale.
-  const rgba = Buffer.alloc(W * H * 4);
-  for (let i = 0; i < W * H; i++) {
-    const v = dilated[i];
-    rgba[i * 4] = v;
-    rgba[i * 4 + 1] = v;
-    rgba[i * 4 + 2] = v;
-    rgba[i * 4 + 3] = 255;
+  // Watch / hand-jewelry: ensure minimum coverage by progressively
+  // widening the outer ring + adding a contact shadow patch.
+  return await ensureMinimumWatchMaskCoverage({
+    silhouette,
+    width: W,
+    height: H,
+    category: input.category,
+  });
+}
+
+interface EnsureMinParams {
+  silhouette: Buffer;
+  width: number;
+  height: number;
+  category: CategoryId;
+}
+
+/**
+ * Progressively widen the ring mask until its editable-energy ratio is
+ * within the per-category target band. Never goes past the hard cap.
+ *
+ *  Expansion plan (per category):
+ *    1. outer = 12, inner = 4, feather = 8        → baseline
+ *    2. outer = 16, inner = 4, feather = 10       → slightly wider ring
+ *    3. outer = 20, inner = 4, feather = 12       → ring + start blending
+ *    4. outer = 24, inner = 5, feather = 12, +contact-patch
+ *    5. outer = 28, inner = 5, feather = 14, +contact-patch
+ *
+ *  The inner erosion is bumped to 5 px on the later passes so the
+ *  product core never starts drifting into the editable zone. The
+ *  contact-shadow patch sits underneath the silhouette and only
+ *  touches skin pixels.
+ */
+async function ensureMinimumWatchMaskCoverage(
+  p: EnsureMinParams
+): Promise<AutoMaskResult> {
+  const min = minEditableRatioFor(p.category);
+  const target = targetEditableRatioFor(p.category);
+  const cap =
+    p.category === "watch"
+      ? 0.12
+      : p.category === "hand-jewelry"
+        ? 0.14
+        : 0.18;
+
+  const plan: Array<{
+    outerDilatePx: number;
+    innerErodePx: number;
+    featherPx: number;
+    addContactShadowPatch: boolean;
+  }> = [
+    { outerDilatePx: 12, innerErodePx: 4, featherPx: 8, addContactShadowPatch: false },
+    { outerDilatePx: 16, innerErodePx: 4, featherPx: 10, addContactShadowPatch: false },
+    { outerDilatePx: 20, innerErodePx: 4, featherPx: 12, addContactShadowPatch: false },
+    { outerDilatePx: 24, innerErodePx: 5, featherPx: 12, addContactShadowPatch: true },
+    { outerDilatePx: 28, innerErodePx: 5, featherPx: 14, addContactShadowPatch: true },
+  ];
+
+  let last: {
+    buffer: Buffer;
+    coverage: number;
+    brightRatio: number;
+    softRatio: number;
+  } | null = null;
+  let chosen: (typeof plan)[number] = plan[0];
+
+  for (let attempt = 0; attempt < plan.length; attempt++) {
+    const cfg = plan[attempt];
+    const rendered = await renderMaskAt({
+      silhouette: p.silhouette,
+      width: p.width,
+      height: p.height,
+      category: p.category,
+      outerDilatePx: cfg.outerDilatePx,
+      innerErodePx: cfg.innerErodePx,
+      featherPx: cfg.featherPx,
+      addContactShadowPatch: cfg.addContactShadowPatch,
+    });
+    last = rendered;
+    chosen = cfg;
+    // Hard cap guard — stop early if we'd overshoot.
+    if (rendered.coverage >= cap) {
+      console.warn(
+        `[auto-mask] coverage ${rendered.coverage.toFixed(
+          4
+        )} reached cap ${cap}, stopping expansion (attempt ${attempt})`
+      );
+      break;
+    }
+    if (rendered.coverage >= target.min) {
+      return {
+        buffer: rendered.buffer,
+        coverage: rendered.coverage,
+        debug: {
+          outerDilatePx: cfg.outerDilatePx,
+          innerErodePx: cfg.innerErodePx,
+          featherPx: cfg.featherPx,
+          expansionAttempts: attempt,
+          brightRatio: rendered.brightRatio,
+          softRatio: rendered.softRatio,
+          addedContactShadowPatch: cfg.addContactShadowPatch,
+        },
+      };
+    }
+    // Still below target — try the next configuration.
   }
 
-  const sigma = Math.max(0.4, featherPx / 3);
-  const buffer = await sharp(rgba, {
-    raw: { width: W, height: H, channels: 4 },
-  })
-    .blur(sigma)
-    .png({ compressionLevel: 6 })
-    .toBuffer();
-
-  // Re-measure coverage on the feathered output for diagnostics.
-  const ch = await sharp(buffer)
-    .extractChannel(0)
-    .raw()
-    .toBuffer({ resolveWithObject: true });
-  let bright = 0;
-  for (let i = 0; i < ch.info.width * ch.info.height; i++) {
-    if (ch.data[i] >= 25) bright++;
+  // We ran the full expansion plan. Return the last attempt — the
+  // route gets to decide whether to use it (likely yes if coverage ≥
+  // min) or fall back to the deterministic composite.
+  const finalCoverage = last?.coverage ?? 0;
+  if (finalCoverage < min) {
+    console.warn(
+      `[auto-mask] could not reach minimum coverage ${min} for ${p.category}, best=${finalCoverage}`
+    );
   }
-  const coverage = bright / (W * H);
-
-  return { buffer, coverage };
+  return {
+    buffer: last?.buffer ?? Buffer.alloc(0),
+    coverage: finalCoverage,
+    debug: {
+      outerDilatePx: chosen.outerDilatePx,
+      innerErodePx: chosen.innerErodePx,
+      featherPx: chosen.featherPx,
+      expansionAttempts: plan.length,
+      brightRatio: last?.brightRatio ?? 0,
+      softRatio: last?.softRatio ?? 0,
+      addedContactShadowPatch: chosen.addContactShadowPatch,
+    },
+  };
 }

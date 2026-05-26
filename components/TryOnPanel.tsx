@@ -617,6 +617,13 @@ export function TryOnPanel({
                     error={
                       state.error && state.step === 2 ? state.error : null
                     }
+                    preferredFacingMode={
+                      // Wrist / hand / head accessories work best with
+                      // the rear camera. Selfie cam for glasses where
+                      // the customer typically points the phone at
+                      // their own face.
+                      category.id === "glasses" ? "user" : "environment"
+                    }
                   />
                   <PhotoQualityChecklist
                     file={state.userImage}

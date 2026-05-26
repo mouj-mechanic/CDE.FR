@@ -1,40 +1,91 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Camera, RefreshCw, Check, X, SwitchCamera } from "lucide-react";
+import {
+  buildCameraConstraintsCascade,
+  cameraErrorMessageFromName,
+  detectCameraCapability,
+  type CameraFacingMode,
+} from "@/lib/camera/constraints";
 
 interface CameraCaptureProps {
   open: boolean;
   onClose: () => void;
   onCapture: (file: File, previewUrl: string) => void;
+  /**
+   * Preferred initial facing mode. Wrist / hand photos benefit from
+   * the rear camera ("environment"); selfies want the front one
+   * ("user"). Falls back to whichever camera the device offers.
+   */
+  preferredFacingMode?: FacingMode;
+  /**
+   * Human-readable label shown above the modal. Defaults to "Prendre
+   * une photo".
+   */
+  label?: string;
 }
 
-type FacingMode = "user" | "environment";
-type Status = "idle" | "requesting" | "live" | "preview" | "error";
+type FacingMode = CameraFacingMode;
+type Status =
+  | "idle"
+  | "requesting"
+  | "live"
+  | "preview"
+  | "error"
+  | "insecure";
 
 /**
- * Live camera capture modal.
+ * Live camera capture modal, hardened for mobile Safari / iOS.
  *
- * - Uses `navigator.mediaDevices.getUserMedia` for a real-time preview.
- * - Snapshots the active frame to a canvas → JPEG blob → File.
- * - Lets the user retake or validate the shot.
- * - Falls back to a hidden `<input type="file" capture>` if getUserMedia
- *   is unavailable (older browsers, insecure context, denied permission).
- * - Front-facing camera by default (matches the use case: a person trying
- *   on accessories on themselves), with a toggle to swap to rear camera.
+ *  iOS Safari is notoriously fussy:
+ *    - getUserMedia requires HTTPS (or localhost on desktop).
+ *    - `facingMode: { exact: ... }` throws OverconstrainedError on
+ *      many devices — we use `{ ideal: ... }` and cascade down to
+ *      `video: true` if the device refuses.
+ *    - the <video> element MUST have both `playsinline` and the
+ *      legacy `webkit-playsinline` attribute set BEFORE the stream is
+ *      attached, otherwise iOS goes full-screen and the modal layout
+ *      breaks.
+ *    - `video.play()` returns a Promise that rejects when the user
+ *      gesture chain is broken; we re-attempt on the next animation
+ *      frame because iOS sometimes drops the first call silently.
+ *
+ *  When getUserMedia is unusable (insecure context, denied permission,
+ *  no camera) we fall back to a hidden `<input type="file" capture>`
+ *  so the customer can still snap a picture via the native camera
+ *  UI. That path works on every iPhone since iOS 6.
  */
-export function CameraCapture({ open, onClose, onCapture }: CameraCaptureProps) {
+export function CameraCapture({
+  open,
+  onClose,
+  onCapture,
+  preferredFacingMode = "user",
+  label = "Prendre une photo",
+}: CameraCaptureProps) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const fallbackInputRef = useRef<HTMLInputElement | null>(null);
 
-  const [facingMode, setFacingMode] = useState<FacingMode>("user");
+  const [facingMode, setFacingMode] = useState<FacingMode>(preferredFacingMode);
   const [status, setStatus] = useState<Status>("idle");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [capturedFile, setCapturedFile] = useState<File | null>(null);
+
+  const capability = useMemo(() => {
+    if (typeof window === "undefined" || typeof navigator === "undefined") {
+      return "unsupported" as const;
+    }
+    return detectCameraCapability({
+      isSecureContext: Boolean(window.isSecureContext),
+      hasMediaDevices: Boolean(navigator.mediaDevices),
+      hasGetUserMedia:
+        typeof navigator.mediaDevices?.getUserMedia === "function",
+    });
+  }, []);
 
   const stopStream = useCallback(() => {
     const stream = streamRef.current;
@@ -47,54 +98,96 @@ export function CameraCapture({ open, onClose, onCapture }: CameraCaptureProps) 
     }
   }, []);
 
+  /**
+   * Attach a stream to the <video> element and play it. iOS Safari
+   * needs both `playsinline` attributes set BEFORE we call play(),
+   * otherwise it'll either go full-screen or silently refuse.
+   */
+  const attachAndPlay = useCallback(async (stream: MediaStream) => {
+    const video = videoRef.current;
+    if (!video) return false;
+
+    video.setAttribute("playsinline", "true");
+    video.setAttribute("webkit-playsinline", "true");
+    video.setAttribute("autoplay", "true");
+    video.muted = true;
+    video.playsInline = true;
+    video.srcObject = stream;
+
+    // iOS Safari sometimes resolves play() with NotAllowedError when
+    // the gesture chain is lost between the click → effect → promise.
+    // We retry once on the next animation frame.
+    const tryPlay = async (): Promise<boolean> => {
+      try {
+        await video.play();
+        return true;
+      } catch {
+        return false;
+      }
+    };
+    if (await tryPlay()) return true;
+    return await new Promise<boolean>((resolve) => {
+      requestAnimationFrame(async () => {
+        const ok = await tryPlay();
+        resolve(ok);
+      });
+    });
+  }, []);
+
+  /**
+   * Try a list of constraints until one of them succeeds. We start
+   * with the richest (ideal facing mode + sane resolution) and degrade
+   * gracefully — `video: true` always works if any camera exists.
+   */
   const startStream = useCallback(
     async (mode: FacingMode) => {
       setStatus("requesting");
       setErrorMessage(null);
       stopStream();
 
-      if (
-        typeof navigator === "undefined" ||
-        !navigator.mediaDevices ||
-        typeof navigator.mediaDevices.getUserMedia !== "function"
-      ) {
+      if (capability === "insecure") {
+        setStatus("insecure");
+        setErrorMessage(
+          "La caméra nécessite une connexion sécurisée (HTTPS). Vous pouvez importer une photo à la place."
+        );
+        return;
+      }
+      if (capability === "unsupported") {
         setStatus("error");
         setErrorMessage(
-          "La caméra n'est pas accessible depuis ce navigateur. Utilisez l'import de fichier."
+          "Votre navigateur ne propose pas l'accès direct à la caméra. Importez plutôt une photo."
         );
         return;
       }
 
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: { ideal: mode } },
-          audio: false,
-        });
-        streamRef.current = stream;
-        if (videoRef.current) {
-          videoRef.current.srcObject = stream;
-          await videoRef.current.play().catch(() => {});
-        }
-        setStatus("live");
-      } catch (err) {
-        setStatus("error");
-        const name = (err as { name?: string })?.name ?? "Error";
-        if (name === "NotAllowedError" || name === "SecurityError") {
-          setErrorMessage(
-            "Accès à la caméra refusé. Autorisez la caméra dans les réglages du navigateur."
+      const cascade = buildCameraConstraintsCascade(mode);
+      let lastErrName = "Error";
+      for (const constraints of cascade) {
+        try {
+          const stream = await navigator.mediaDevices.getUserMedia(
+            constraints
           );
-        } else if (name === "NotFoundError" || name === "OverconstrainedError") {
-          setErrorMessage(
-            "Aucune caméra détectée. Importez plutôt une photo depuis votre appareil."
-          );
-        } else {
-          setErrorMessage(
-            "Impossible d'ouvrir la caméra. Importez plutôt une photo."
-          );
+          streamRef.current = stream;
+          const ok = await attachAndPlay(stream);
+          if (!ok) {
+            setStatus("error");
+            setErrorMessage(
+              "Impossible de démarrer la vidéo de la caméra. Importez plutôt une photo."
+            );
+            return;
+          }
+          setStatus("live");
+          return;
+        } catch (err) {
+          lastErrName = (err as { name?: string })?.name ?? "Error";
+          // Loop again with looser constraints.
         }
       }
+
+      setStatus("error");
+      setErrorMessage(cameraErrorMessageFromName(lastErrName));
     },
-    [stopStream]
+    [capability, stopStream, attachAndPlay]
   );
 
   useEffect(() => {
@@ -111,6 +204,8 @@ export function CameraCapture({ open, onClose, onCapture }: CameraCaptureProps) 
     }
     startStream(facingMode);
     return () => stopStream();
+    // We intentionally exclude `facingMode` so opening doesn't restart
+    // — handleSwitchCamera triggers that explicitly.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
@@ -136,9 +231,9 @@ export function CameraCapture({ open, onClose, onCapture }: CameraCaptureProps) 
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
-    // Front camera streams are mirrored on screen but exporting the raw
-    // frame keeps the actual orientation, which is what we want for the
-    // AI model (the customer's real left/right).
+    // Front-facing streams are mirrored on screen for the UX, but we
+    // export the un-mirrored frame so the AI sees the customer's true
+    // left/right.
     ctx.drawImage(video, 0, 0, width, height);
 
     canvas.toBlob(
@@ -173,8 +268,6 @@ export function CameraCapture({ open, onClose, onCapture }: CameraCaptureProps) 
   const handleValidate = useCallback(() => {
     if (capturedFile && previewUrl) {
       onCapture(capturedFile, previewUrl);
-      // Hand off ownership of the object URL to the parent; clear refs so
-      // the cleanup effect below doesn't revoke it after close.
       setPreviewUrl(null);
       setCapturedFile(null);
       onClose();
@@ -195,6 +288,7 @@ export function CameraCapture({ open, onClose, onCapture }: CameraCaptureProps) 
   if (!open) return null;
 
   const mirror = facingMode === "user";
+  const fallbackCapture: "user" | "environment" = facingMode;
 
   return (
     <AnimatePresence>
@@ -207,7 +301,7 @@ export function CameraCapture({ open, onClose, onCapture }: CameraCaptureProps) 
         className="fixed inset-0 z-[100] flex items-center justify-center bg-ink/80 p-3 backdrop-blur-sm"
         role="dialog"
         aria-modal="true"
-        aria-label="Prendre une photo"
+        aria-label={label}
         onClick={(e) => {
           if (e.target === e.currentTarget) onClose();
         }}
@@ -223,9 +317,7 @@ export function CameraCapture({ open, onClose, onCapture }: CameraCaptureProps) 
           <div className="flex items-center justify-between border-b border-ink/10 px-4 py-3">
             <div className="flex items-center gap-2 text-ink">
               <Camera className="h-5 w-5 text-bordeaux" aria-hidden />
-              <h3 className="font-display text-base font-semibold">
-                Prendre une photo
-              </h3>
+              <h3 className="font-display text-base font-semibold">{label}</h3>
             </div>
             <button
               type="button"
@@ -238,12 +330,19 @@ export function CameraCapture({ open, onClose, onCapture }: CameraCaptureProps) 
           </div>
 
           <div className="relative aspect-[3/4] w-full bg-ink/95">
+            {/*
+              Always mount the <video> when the live/requesting flows
+              are active, even before the stream resolves — that way
+              videoRef is non-null when getUserMedia returns and we
+              don't lose the user gesture on iOS.
+            */}
             {(status === "live" || status === "requesting") && (
               <video
                 ref={videoRef}
                 playsInline
                 muted
                 autoPlay
+                disablePictureInPicture
                 className={`h-full w-full object-cover ${
                   mirror ? "scale-x-[-1] transform" : ""
                 }`}
@@ -265,7 +364,7 @@ export function CameraCapture({ open, onClose, onCapture }: CameraCaptureProps) 
               </div>
             )}
 
-            {status === "error" && (
+            {(status === "error" || status === "insecure") && (
               <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 px-6 text-center">
                 <p className="text-sm text-white/90">
                   {errorMessage ?? "Caméra indisponible."}
@@ -275,18 +374,26 @@ export function CameraCapture({ open, onClose, onCapture }: CameraCaptureProps) 
                   onClick={() => fallbackInputRef.current?.click()}
                   className="btn-primary"
                 >
-                  Importer une photo
+                  <Camera className="h-5 w-5" aria-hidden />
+                  Prendre / importer une photo
                 </button>
-                <input
-                  ref={fallbackInputRef}
-                  type="file"
-                  accept="image/jpeg,image/png,image/webp"
-                  capture="user"
-                  className="hidden"
-                  onChange={handleFallbackChange}
-                />
               </div>
             )}
+
+            {/*
+              The hidden file input is ALWAYS mounted so iOS Safari can
+              fall through to it from the error/insecure states (and so
+              we can trigger it programmatically from the "Prendre /
+              importer une photo" button).
+            */}
+            <input
+              ref={fallbackInputRef}
+              type="file"
+              accept="image/jpeg,image/png,image/webp"
+              capture={fallbackCapture}
+              className="hidden"
+              onChange={handleFallbackChange}
+            />
 
             {status === "live" && (
               <button
@@ -343,7 +450,9 @@ export function CameraCapture({ open, onClose, onCapture }: CameraCaptureProps) 
               </>
             )}
 
-            {(status === "requesting" || status === "error") && (
+            {(status === "requesting" ||
+              status === "error" ||
+              status === "insecure") && (
               <button
                 type="button"
                 onClick={onClose}

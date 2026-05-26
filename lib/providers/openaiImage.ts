@@ -90,10 +90,25 @@ export class MaskDimensionError extends Error {
   }
 }
 
+export type MaskValidationErrorCode =
+  | "mask-too-small"
+  | "mask-too-large"
+  | "mask-dimension"
+  | "mask-unreadable"
+  | "mask-invalid";
+
 export class MaskValidationError extends Error {
-  constructor(detail: string) {
+  /**
+   * Stable machine-readable code. The route catches it to decide
+   * whether to (a) silently regenerate a wider mask, (b) fall back to
+   * the deterministic composite, or (c) surface a 4xx. Customers never
+   * see the underlying message.
+   */
+  readonly code: MaskValidationErrorCode;
+  constructor(detail: string, code: MaskValidationErrorCode = "mask-invalid") {
     super(detail);
     this.name = "MaskValidationError";
+    this.code = code;
   }
 }
 
@@ -579,29 +594,31 @@ export async function normalizeEditInputsForOpenAI(
     }
   }
 
-  // 3) Coverage bounds. We compute on the *editable* portion of the
-  //    alpha mask (alpha < 32 → editable).
+  // 3) Coverage bounds — measured as *editable energy* on the alpha
+  //    mask (Σ (255 - alpha) / 255 / N). This matches the metric used
+  //    by `validateMaskForCategory` so the two gates can't disagree.
   let maskCoverage = 0;
   if (p.alphaMask) {
     const alphaRaw = await sharp(p.alphaMask)
       .extractChannel("alpha")
       .raw()
       .toBuffer({ resolveWithObject: true });
-    let editable = 0;
+    let energy = 0;
     for (let i = 0; i < alphaRaw.data.length; i++) {
-      if (alphaRaw.data[i] < 32) editable++;
+      energy += (255 - alphaRaw.data[i]) / 255;
     }
-    maskCoverage = editable / alphaRaw.data.length;
+    maskCoverage = energy / alphaRaw.data.length;
   } else if (p.rawMaskBW) {
     const bwRaw = await sharp(p.rawMaskBW)
       .removeAlpha()
       .raw()
       .toBuffer({ resolveWithObject: true });
-    let bright = 0;
-    for (let i = 0; i < bwRaw.info.width * bwRaw.info.height; i++) {
-      if (bwRaw.data[i * bwRaw.info.channels] >= 200) bright++;
+    let energy = 0;
+    const N = bwRaw.info.width * bwRaw.info.height;
+    for (let i = 0; i < N; i++) {
+      energy += bwRaw.data[i * bwRaw.info.channels] / 255;
     }
-    maskCoverage = bright / (bwRaw.info.width * bwRaw.info.height);
+    maskCoverage = energy / N;
   }
 
   const cap = COVERAGE_HARD_CAP[p.category] ?? 0.3;
@@ -613,7 +630,8 @@ export async function normalizeEditInputsForOpenAI(
         maskCoverage * 100
       )}% of the image (max ${Math.round(
         cap * 100
-      )}% for ${p.category}). The customer image may change too much.`
+      )}% for ${p.category}). The customer image may change too much.`,
+      "mask-too-large"
     );
   }
   if (maskCoverage > soft) {
@@ -805,6 +823,25 @@ export interface OpenAIImageMeta {
   /** Validation warnings raised by `maskValidation` and friends. */
   warnings: TryOnWarning[];
   /**
+   * Optional diagnostic block exposed for the internal `debug.maskDebug`
+   * panel. Populated by `autoMaskFromComposite` when the route uses
+   * server-side auto-masking. Allows QA to inspect why a given mask
+   * was widened or rejected.
+   */
+  maskDebug?: {
+    editableEnergyRatio: number;
+    brightRatio: number;
+    softRatio: number;
+    maskCoverageBeforeExpansion?: number;
+    maskCoverageAfterExpansion?: number;
+    expansionAttempts?: number;
+    outerDilatePx?: number;
+    innerErodePx?: number;
+    featherPx?: number;
+    contactShadowPatchAdded?: boolean;
+    fallbackReason?: string;
+  };
+  /**
    * Raw PNG buffer of the AI result (after aspect restoration). Kept
    * here so callers (the API route) can run post-processing
    * (product-lock re-stamp) without decoding the base64 data URL
@@ -896,7 +933,10 @@ export async function generateOpenAIImageTryOn(
       params.category
     );
     if (!validation.ok) {
-      throw new MaskValidationError(validation.error ?? "Invalid mask.");
+      throw new MaskValidationError(
+        validation.error ?? "Invalid mask.",
+        validation.errorCode ?? "mask-invalid"
+      );
     }
     warnings.push(...validation.warnings);
     const squaredMask = await fitMask(rawMask, targetW, targetH);
