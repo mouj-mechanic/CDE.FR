@@ -46,19 +46,38 @@ Useful pages while developing:
 
 Copy `.env.example` to `.env.local` and fill in what you need.
 
-| Key                       | Purpose                                                                          |
-| ------------------------- | -------------------------------------------------------------------------------- |
-| `AI_TRYON_PROVIDER`       | `mock` (default), `openai`, `fal`, or `auto`                                     |
-| `TRYON_RENDER_MODE`       | `auto` (default), `fast`, or `premium` — see "Render pipeline" below             |
-| `OPENAI_API_KEY`          | OpenAI API key — required for `AI_TRYON_PROVIDER=openai`                         |
-| `OPENAI_IMAGE_MODEL`      | Optional, defaults to `gpt-image-1`                                              |
-| `OPENAI_IMAGE_SIZE`       | `1024x1024` (default), `1024x1536`, `1536x1024`, or `auto`                       |
-| `OPENAI_IMAGE_QUALITY`    | `low` / `medium` / `high` (default) / `auto`                                     |
-| `OPENAI_USE_MASKED_EDIT`  | `true` (default). When `false`, the API skips the alpha mask                     |
-| `FAL_KEY`                 | fal.ai API key — required for `AI_TRYON_PROVIDER=fal`                            |
-| `FASHN_API_KEY`           | Optional, reserved for a future direct FASHN integration                         |
-| `AI_TRYON_API_KEY`        | Legacy generic fallback (also accepted as `FAL_KEY`)                             |
-| `NEXT_PUBLIC_AI_PROVIDER` | Mirrors the provider name on the client (used by the privacy note + UI badges)   |
+| Key                          | Purpose                                                                          |
+| ---------------------------- | -------------------------------------------------------------------------------- |
+| `AI_TRYON_PROVIDER`          | `mock` (default), `openai`, `fal`, or `auto`                                     |
+| `TRYON_RENDER_MODE`          | `auto` (default), `fast`, `premium`, or **`api-only`**                           |
+| `DISABLE_LOCAL_RENDER`       | `true` to forbid any local renderer as the final image (no fast-overlay fallback)|
+| `OPENAI_API_KEY`             | OpenAI API key — required for `AI_TRYON_PROVIDER=openai`                         |
+| `OPENAI_IMAGE_MODEL`         | Optional, defaults to `gpt-image-1`                                              |
+| `OPENAI_IMAGE_SIZE`          | `1024x1024` (default), `1024x1536`, `1536x1024`, or `auto`                       |
+| `OPENAI_IMAGE_QUALITY`       | `low` / `medium` / `high` (default) / `auto`                                     |
+| `OPENAI_USE_MASKED_EDIT`     | `true` (default). When `false`, the API skips the alpha mask                     |
+| `REQUIRE_MASK_FOR_OPENAI`    | `false` (default). When `true`, generation without a mask returns 400            |
+| `WATCH_USE_MASKED_EDIT`      | Per-category mask flag (defaults to `true`)                                      |
+| `GLASSES_USE_MASKED_EDIT`    | Per-category mask flag (defaults to `true`)                                      |
+| `HEADWEAR_USE_MASKED_EDIT`   | Per-category mask flag (defaults to `true`)                                      |
+| `HAND_JEWELRY_USE_MASKED_EDIT` | Per-category mask flag (defaults to `true`)                                    |
+| `CLOTHES_USE_MASKED_EDIT`    | Per-category mask flag (defaults to `true`)                                      |
+| `FAL_KEY`                    | fal.ai API key — required for `AI_TRYON_PROVIDER=fal`                            |
+| `FASHN_API_KEY`              | Optional, reserved for a future direct FASHN integration                         |
+| `AI_TRYON_API_KEY`           | Legacy generic fallback (also accepted as `FAL_KEY`)                             |
+| `NEXT_PUBLIC_AI_PROVIDER`    | Mirrors the provider name on the client (used by the privacy note + UI badges)   |
+
+### API-only mode
+
+Set any of `AI_TRYON_PROVIDER=openai`, `TRYON_RENDER_MODE=api-only`, or
+`DISABLE_LOCAL_RENDER=true` to enter strict mode:
+
+- The fast-overlay deterministic path is **never** returned as the final
+  image — even if a client-side preview was uploaded.
+- If OpenAI fails, `/api/try-on` responds with `{ ok: false, error: "OpenAI image edit failed. No local renderer fallback was used because API-only mode is enabled.", … }` and HTTP 502.
+- `debug.usedLocalRenderer` is always `false` in success responses.
+- The mask uploader UI lets operators attach a manual `maskImage` PNG to
+  any category for testing.
 
 ### Provider modes
 

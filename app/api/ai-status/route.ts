@@ -5,6 +5,16 @@ export const runtime = "nodejs";
 /**
  * Diagnostic endpoint. Reports which AI provider is configured and whether
  * the matching credential is present. Never returns the secret itself.
+ *
+ * Response shape (matches the OpenAI integration spec):
+ *   {
+ *     provider,
+ *     publicProvider,
+ *     hasOpenAIKey,
+ *     hasFalKey,
+ *     openaiModel,
+ *     mode
+ *   }
  */
 export async function GET() {
   const provider = process.env.AI_TRYON_PROVIDER || "mock";
@@ -21,7 +31,9 @@ export async function GET() {
     | "mock";
 
   if (provider === "openai") {
-    mode = hasOpenAIKey ? "real-ai-openai" : "openai-configured-but-missing-key";
+    mode = hasOpenAIKey
+      ? "real-ai-openai"
+      : "openai-configured-but-missing-key";
   } else if (provider === "fal") {
     mode = hasFalKey ? "real-ai-fal" : "fal-configured-but-missing-key";
   } else if (provider === "auto") {
@@ -41,8 +53,8 @@ export async function GET() {
     ok,
     provider,
     publicProvider,
-    hasFalKey,
     hasOpenAIKey,
+    hasFalKey,
     openaiModel,
     mode,
   });

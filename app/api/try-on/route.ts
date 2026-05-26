@@ -1,7 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
+import sharp from "sharp";
 import { fal } from "@fal-ai/client";
 import { isValidCategoryId } from "@/lib/categories";
 import { generateTryOnImage, ProviderConfigError } from "@/lib/tryOnService";
+import {
+  MaskDimensionError,
+  MaskRequiredError,
+  OpenAIConfigError,
+} from "@/lib/providers/openaiImage";
 import { ACCEPTED_IMAGE_TYPES, MAX_FILE_SIZE } from "@/lib/utils";
 import { trackTryOnUsage } from "@/lib/usage";
 import type {
@@ -132,6 +138,21 @@ export async function POST(request: NextRequest) {
   // available — see lib/tryOnService.ts).
   const openaiActive =
     hasOpenAIKey && (envProvider === "openai" || envProvider === "auto");
+
+  /**
+   * Strict "API-only" mode — when on, the route never returns a locally
+   * rendered image (fast-overlay, canvas composite, mock) as the *final*
+   * result. If OpenAI fails, the response is an error JSON, not a fallback.
+   *
+   * Triggered by ANY of:
+   *  - AI_TRYON_PROVIDER=openai (the explicit choice)
+   *  - TRYON_RENDER_MODE=api-only
+   *  - DISABLE_LOCAL_RENDER=true
+   */
+  const apiOnlyMode =
+    envProvider === "openai" ||
+    envRenderMode === "api-only" ||
+    (process.env.DISABLE_LOCAL_RENDER ?? "").trim().toLowerCase() === "true";
 
   try {
     const formData = await request.formData();
@@ -369,14 +390,66 @@ export async function POST(request: NextRequest) {
       (hasFalKey || hasOpenAIKey) &&
       envProvider !== "mock";
 
+    // In API-only mode every category MUST go through OpenAI — no
+    // fast-overlay path, no canvas-as-final-result. Local renderers may
+    // still produce the optional composite/mask we forward to OpenAI
+    // (that's an *input*, not a *result*). A manual mask alone (no
+    // composite) also disables fast-overlay because the user is asking
+    // for guided editing.
     const useFast =
+      !apiOnlyMode &&
       !useInpainting &&
+      inpaintMask === null &&
       previewImage !== null &&
       isAccessory &&
       (requested === "fast" || requested === "auto");
 
+    // ── Validate mask dimensions vs base image ────────────────────────
+    // Per spec: "if mask is present but dimensions mismatch base image,
+    // reject with validation error". Cheap up-front check via sharp.
+    if (inpaintMask) {
+      try {
+        const baseDimsSrc = inpaintComposite ?? userImage;
+        const [baseMeta, maskMeta] = await Promise.all([
+          sharp(Buffer.from(await baseDimsSrc.arrayBuffer())).metadata(),
+          sharp(Buffer.from(await inpaintMask.arrayBuffer())).metadata(),
+        ]);
+        if (
+          baseMeta.width &&
+          baseMeta.height &&
+          maskMeta.width &&
+          maskMeta.height &&
+          (baseMeta.width !== maskMeta.width ||
+            baseMeta.height !== maskMeta.height)
+        ) {
+          return NextResponse.json(
+            {
+              ok: false,
+              provider: openaiActive ? "openai" : envProvider,
+              renderMode: openaiActive ? "api-image-edit" : "premium-ai",
+              category,
+              error: `Mask dimensions do not match the base image (base ${baseMeta.width}x${baseMeta.height} vs mask ${maskMeta.width}x${maskMeta.height}).`,
+            },
+            { status: 400 }
+          );
+        }
+      } catch (validationErr) {
+        const msg = safeErrorMessage(validationErr);
+        return NextResponse.json(
+          {
+            ok: false,
+            provider: openaiActive ? "openai" : envProvider,
+            renderMode: openaiActive ? "api-image-edit" : "premium-ai",
+            category,
+            error: `Mask validation failed: ${msg}`,
+          },
+          { status: 400 }
+        );
+      }
+    }
+
     console.info(
-      `[try-on] start provider=${envProvider} category=${category} hasFalKey=${hasFalKey} hasOpenAIKey=${hasOpenAIKey} openaiActive=${openaiActive} requested=${requested} useFast=${useFast} useInpainting=${useInpainting} productImages=${productImages.length} productUrls=${productUrls.length} productImageSource=${productImageSource} productHasAlpha=${productHasAlpha} productMimeType=${productMimeType}`
+      `[try-on] start provider=${envProvider} category=${category} apiOnlyMode=${apiOnlyMode} hasFalKey=${hasFalKey} hasOpenAIKey=${hasOpenAIKey} openaiActive=${openaiActive} requested=${requested} useFast=${useFast} useInpainting=${useInpainting} productImages=${productImages.length} productUrls=${productUrls.length} productImageSource=${productImageSource} productHasAlpha=${productHasAlpha} productMimeType=${productMimeType}`
     );
 
     if (useFast && previewImage) {
@@ -408,6 +481,7 @@ export async function POST(request: NextRequest) {
       });
 
       return NextResponse.json({
+        ok: true,
         resultUrl,
         previewUrl: resultUrl,
         generatedAt: Date.now(),
@@ -428,6 +502,10 @@ export async function POST(request: NextRequest) {
           productImageSource,
           productHasAlpha,
           productMimeType,
+          usedOpenAI: false,
+          usedFal: false,
+          usedLocalRenderer: true,
+          maskUsed: false,
         },
       });
     }
@@ -440,6 +518,9 @@ export async function POST(request: NextRequest) {
       : productUrls;
     const finalProductImages = productWasCutout ? [] : productImages;
 
+    // Forward the mask whenever it's present — OpenAI image edit can
+    // accept a mask without a composite. The composite is only attached
+    // when the client explicitly asks for inpainting refinement.
     const params: TryOnRequest = {
       category,
       userImage,
@@ -451,12 +532,25 @@ export async function POST(request: NextRequest) {
       ringFinger,
       renderModeRequest: renderModeRequest,
       ...(useInpainting && inpaintComposite && inpaintMask
-        ? {
-            inpaintComposite,
-            inpaintMask,
-          }
-        : {}),
+        ? { inpaintComposite, inpaintMask }
+        : inpaintMask
+          ? { inpaintMask }
+          : {}),
     };
+
+    // Surface a friendly warning when no mask is provided but the
+    // OpenAI path is active — the spec mentions this explicitly.
+    const noMaskWarning =
+      openaiActive && !inpaintMask
+        ? [
+            {
+              code: "openai-no-mask",
+              message:
+                "No mask provided. The edit may be less constrained.",
+            },
+          ]
+        : [];
+    const allClientWarnings = [...clientWarnings, ...noMaskWarning];
 
     try {
       const result = await generateTryOnImage(params);
@@ -464,8 +558,6 @@ export async function POST(request: NextRequest) {
 
       const usedOpenAI = result.provider === "openai";
       const usedFal = result.provider === "fal";
-      // The OpenAI provider attaches its own meta on the result (typed
-      // separately so the rest of the codebase doesn't have to know).
       const openaiMeta =
         (result as TryOnResponse & { openaiMeta?: { maskUsed?: boolean } })
           .openaiMeta ?? null;
@@ -481,11 +573,14 @@ export async function POST(request: NextRequest) {
         productMimeType,
         usedOpenAI,
         usedFal,
+        // Final image came from a hosted AI provider, never from a local
+        // renderer in the success path.
+        usedLocalRenderer: false,
         maskUsed: usedOpenAI ? Boolean(openaiMeta?.maskUsed) : useInpainting,
       };
 
       const renderMode: RenderMode = usedOpenAI
-        ? "gpt-image-edit"
+        ? "api-image-edit"
         : result.provider === "mock"
           ? "mock"
           : category === "clothes" && result.model?.includes("fashn")
@@ -493,7 +588,7 @@ export async function POST(request: NextRequest) {
             : "premium-ai";
 
       console.info(
-        `[try-on] success provider=${result.provider} model=${result.model} mock=${Boolean(result.mock)} renderMode=${renderMode} durationMs=${durationMs} imageCount=${debug.imageCount} productImageCount=${debug.productImageCount}`
+        `[try-on] success provider=${result.provider} model=${result.model} mock=${Boolean(result.mock)} renderMode=${renderMode} maskUsed=${debug.maskUsed} usedLocalRenderer=false durationMs=${durationMs} imageCount=${debug.imageCount} productImageCount=${debug.productImageCount}`
       );
 
       trackTryOnUsage({
@@ -507,12 +602,13 @@ export async function POST(request: NextRequest) {
       });
 
       return NextResponse.json({
+        ok: true,
         ...result,
         durationMs,
         debug,
         renderMode,
         qualityStatus: "passed",
-        warnings: clientWarnings,
+        warnings: allClientWarnings,
         placement: watchPlacement,
         edgeQuality,
       });
@@ -522,12 +618,63 @@ export async function POST(request: NextRequest) {
       if (premiumError instanceof ProviderConfigError) {
         throw premiumError;
       }
-      // If we have a deterministic preview (or the composite that was sent
-      // for inpainting), gracefully fall back to it.
+      // OpenAI mask requirement / dimension errors are user-facing 400s.
+      if (
+        premiumError instanceof MaskRequiredError ||
+        premiumError instanceof MaskDimensionError
+      ) {
+        return NextResponse.json(
+          {
+            ok: false,
+            provider: "openai",
+            renderMode: "api-image-edit" as RenderMode,
+            category,
+            error: premiumError.message,
+          },
+          { status: 400 }
+        );
+      }
+      // OpenAI config errors are configuration issues.
+      if (premiumError instanceof OpenAIConfigError) {
+        throw new ProviderConfigError(premiumError.message);
+      }
+
+      const safeMessage = safeErrorMessage(premiumError);
+      const durationMs = Date.now() - startedAt;
+
+      // ── API-only mode → strict error, NEVER a local render ────────
+      if (apiOnlyMode) {
+        console.error(
+          `[try-on] api-only-failed category=${category} durationMs=${durationMs} message=${safeMessage}`
+        );
+        trackTryOnUsage({
+          merchantId,
+          category,
+          provider: openaiActive ? "openai" : envProvider,
+          model: "unknown",
+          mock: false,
+          success: false,
+          durationMs,
+          errorCode:
+            premiumError instanceof Error ? premiumError.name : "Error",
+        });
+        return NextResponse.json(
+          {
+            ok: false,
+            provider: openaiActive ? "openai" : envProvider,
+            renderMode: "api-image-edit" as RenderMode,
+            category,
+            error:
+              "OpenAI image edit failed. No local renderer fallback was used because API-only mode is enabled.",
+            details: safeMessage,
+          },
+          { status: 502 }
+        );
+      }
+
+      // ── Legacy graceful fallback (non-api-only, fal-style providers) ─
       const fallbackPreview = previewImage ?? inpaintComposite;
       if (fallbackPreview) {
-        const durationMs = Date.now() - startedAt;
-        const safeMessage = safeErrorMessage(premiumError);
         console.warn(
           `[try-on] premium-failed category=${category} durationMs=${durationMs} message=${safeMessage} → returning fast preview`
         );
@@ -552,6 +699,7 @@ export async function POST(request: NextRequest) {
             premiumError instanceof Error ? premiumError.name : "Error",
         });
         return NextResponse.json({
+          ok: true,
           resultUrl,
           previewUrl: resultUrl,
           generatedAt: Date.now(),
@@ -572,6 +720,10 @@ export async function POST(request: NextRequest) {
             productImageSource,
             productHasAlpha,
             productMimeType,
+            usedOpenAI: false,
+            usedFal: false,
+            usedLocalRenderer: true,
+            maskUsed: false,
           },
         });
       }
@@ -583,7 +735,7 @@ export async function POST(request: NextRequest) {
 
     if (error instanceof ProviderConfigError) {
       console.error(
-        `[try-on] config-error provider=${envProvider} hasFalKey=${hasFalKey} durationMs=${durationMs} message=${safeMessage}`
+        `[try-on] config-error provider=${envProvider} hasFalKey=${hasFalKey} hasOpenAIKey=${hasOpenAIKey} durationMs=${durationMs} message=${safeMessage}`
       );
       if (categoryForUsage) {
         trackTryOnUsage({
@@ -597,7 +749,16 @@ export async function POST(request: NextRequest) {
         });
       }
       return NextResponse.json(
-        { error: safeMessage, details: safeMessage, provider: envProvider },
+        {
+          ok: false,
+          provider: envProvider,
+          renderMode: openaiActive
+            ? ("api-image-edit" as RenderMode)
+            : ("premium-ai" as RenderMode),
+          category: categoryForUsage,
+          error: safeMessage,
+          details: safeMessage,
+        },
         { status: 500 }
       );
     }
@@ -619,6 +780,7 @@ export async function POST(request: NextRequest) {
       }
       return NextResponse.json(
         {
+          ok: false,
           error: "Real AI generation failed",
           details: safeMessage,
           provider: "fal",
@@ -639,6 +801,9 @@ export async function POST(request: NextRequest) {
         errorCode: error instanceof Error ? error.name : "Error",
       });
     }
-    return NextResponse.json({ error: safeMessage }, { status: 500 });
+    return NextResponse.json(
+      { ok: false, error: safeMessage },
+      { status: 500 }
+    );
   }
 }

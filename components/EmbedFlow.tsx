@@ -31,6 +31,7 @@ import { CategoryIcon } from "./CategoryIcon";
 import { PrivacyNote } from "./PrivacyNote";
 import { ConsentCheckbox } from "./ConsentCheckbox";
 import { PhotoQualityChecklist } from "./PhotoQualityChecklist";
+import { MaskTestUploader } from "./MaskTestUploader";
 import { cn } from "@/lib/utils";
 
 interface EmbedFlowProps {
@@ -57,6 +58,7 @@ export function EmbedFlow({
   const [watchOverrideUrl, setWatchOverrideUrl] = useState<string | null>(null);
   const [refining, setRefining] = useState(false);
   const [refineError, setRefineError] = useState<string | null>(null);
+  const [manualMask, setManualMask] = useState<File | null>(null);
   const category = getCategory(categoryId) as Category;
 
   const [state, dispatch] = useReducer(tryOnReducer, {
@@ -204,6 +206,11 @@ export function EmbedFlow({
     if (productTitle) formData.append("notes", `Article : ${productTitle}`);
     if (merchantId) formData.append("merchantId", merchantId);
 
+    // Optional manual mask attached by the operator (debug / testing).
+    if (manualMask) {
+      formData.append("maskImage", manualMask);
+    }
+
     try {
       const result = await safeFetchJson<
         TryOnResponse & {
@@ -246,6 +253,8 @@ export function EmbedFlow({
           renderMode: data.renderMode,
           qualityStatus: data.qualityStatus,
           warnings: data.warnings,
+          maskUsed: data.debug?.maskUsed,
+          usedLocalRenderer: data.debug?.usedLocalRenderer,
         },
       });
     } catch (err) {
@@ -266,6 +275,7 @@ export function EmbedFlow({
     merchantId,
     handJewelryType,
     ringFinger,
+    manualMask,
   ]);
 
   /**
@@ -351,6 +361,8 @@ export function EmbedFlow({
             renderMode: result.data.renderMode,
             qualityStatus: result.data.qualityStatus,
             warnings: result.data.warnings,
+            maskUsed: result.data.debug?.maskUsed,
+            usedLocalRenderer: result.data.debug?.usedLocalRenderer,
           },
         });
         setWatchOverrideUrl(null);
@@ -406,6 +418,8 @@ export function EmbedFlow({
                   renderMode={state.resultMeta?.renderMode}
                   qualityStatus={state.resultMeta?.qualityStatus}
                   warnings={state.resultMeta?.warnings}
+                  maskUsed={state.resultMeta?.maskUsed}
+                  usedLocalRenderer={state.resultMeta?.usedLocalRenderer}
                   onDownload={() => {}}
                   onRetry={() => {
                     setWatchOverrideUrl(null);
@@ -594,6 +608,7 @@ export function EmbedFlow({
             onFingerChange={setRingFinger}
           />
         )}
+        <MaskTestUploader value={manualMask} onChange={setManualMask} />
         <ConsentCheckbox checked={consent} onChange={setConsent} />
       </div>
 

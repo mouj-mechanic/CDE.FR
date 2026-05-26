@@ -31,6 +31,7 @@ import { HandJewelryOptions } from "./HandJewelryOptions";
 import { CategoryIcon } from "./CategoryIcon";
 import { LaunchButton } from "./LaunchButton";
 import { WatchAdjustPanel } from "./WatchAdjustPanel";
+import { MaskTestUploader } from "./MaskTestUploader";
 
 interface TryOnPanelProps {
   category: Category;
@@ -53,6 +54,8 @@ export function TryOnPanel({
   const [watchOverrideUrl, setWatchOverrideUrl] = useState<string | null>(null);
   const [refining, setRefining] = useState(false);
   const [refineError, setRefineError] = useState<string | null>(null);
+  // Optional manual mask uploaded by the operator (any category).
+  const [manualMask, setManualMask] = useState<File | null>(null);
 
   useEffect(() => {
     if (initialProducts && initialProducts.length > 0) {
@@ -218,6 +221,13 @@ export function TryOnPanel({
     }
     if (merchantId) formData.append("merchantId", merchantId);
 
+    // Optional manual mask — works for every category. The route reads
+    // it under the same `maskImage` key as the watch's auto-generated
+    // contact-band mask.
+    if (manualMask) {
+      formData.append("maskImage", manualMask);
+    }
+
     try {
       const result = await safeFetchJson<
         TryOnResponse & {
@@ -261,6 +271,8 @@ export function TryOnPanel({
           renderMode: data.renderMode,
           qualityStatus: data.qualityStatus,
           warnings: data.warnings,
+          maskUsed: data.debug?.maskUsed,
+          usedLocalRenderer: data.debug?.usedLocalRenderer,
         },
       });
     } catch (err) {
@@ -280,6 +292,7 @@ export function TryOnPanel({
     merchantId,
     handJewelryType,
     ringFinger,
+    manualMask,
   ]);
 
   /**
@@ -378,6 +391,8 @@ export function TryOnPanel({
             renderMode: result.data.renderMode,
             qualityStatus: result.data.qualityStatus,
             warnings: result.data.warnings,
+            maskUsed: result.data.debug?.maskUsed,
+            usedLocalRenderer: result.data.debug?.usedLocalRenderer,
           },
         });
         setWatchOverrideUrl(null);
@@ -466,6 +481,8 @@ export function TryOnPanel({
                   renderMode={state.resultMeta?.renderMode}
                   qualityStatus={state.resultMeta?.qualityStatus}
                   warnings={state.resultMeta?.warnings}
+                  maskUsed={state.resultMeta?.maskUsed}
+                  usedLocalRenderer={state.resultMeta?.usedLocalRenderer}
                   onDownload={() => {}}
                   onRetry={() => {
                     setWatchOverrideUrl(null);
@@ -631,6 +648,10 @@ export function TryOnPanel({
                       className="input-field mt-2 resize-none"
                     />
                   </div>
+                  <MaskTestUploader
+                    value={manualMask}
+                    onChange={setManualMask}
+                  />
                   <ConsentCheckbox checked={consent} onChange={setConsent} />
                 </div>
               )}

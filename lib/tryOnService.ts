@@ -71,7 +71,9 @@ function readProviderEnv(): ProviderEnv {
  *
  * - `AI_TRYON_PROVIDER=mock`   → image factice locale.
  * - `AI_TRYON_PROVIDER=openai` → OpenAI GPT Image (gpt-image-1 par défaut).
- *                                 Requiert OPENAI_API_KEY.
+ *                                 Requiert OPENAI_API_KEY. **Strict** :
+ *                                 toute erreur remonte (jamais de fallback
+ *                                 silencieux vers fal/mock/local).
  * - `AI_TRYON_PROVIDER=fal`    → fal.ai routing :
  *     - clothes        : FASHN si configuré, sinon FLUX Kontext
  *     - headwear/glasses/watch/hand-jewelry : FLUX inpaint (si masque) sinon
@@ -94,6 +96,8 @@ export async function generateTryOnImage(
         "OPENAI_API_KEY is missing. AI_TRYON_PROVIDER=openai but no OpenAI key is configured."
       );
     }
+    // Strict: any failure bubbles up to /api/try-on which decides the
+    // user-visible behaviour (clean error vs deterministic fallback).
     return openaiTryOn({
       ...params,
       inpaintComposite: params.inpaintComposite,

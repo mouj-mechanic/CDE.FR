@@ -110,9 +110,12 @@ export interface TryOnRequest {
   /** Render mode requested by the client. */
   renderModeRequest?: "fast" | "premium" | "auto";
   /**
-   * Inpainting refinement pack (currently the watch category). When both
-   * fields are provided, the service routes to FLUX Fill which preserves
-   * unmasked pixels exactly — protecting the dial, logo and hand anatomy.
+   * Inpainting refinement pack. When both fields are provided, the
+   * service routes to a mask-aware model:
+   *  - openai → gpt-image-1 image edit with alpha mask.
+   *  - fal    → FLUX Fill / FLUX LoRA Inpainting.
+   * Unmasked pixels are preserved exactly — protecting product details
+   * and hand/face anatomy.
    */
   inpaintComposite?: File;
   inpaintMask?: File;
@@ -129,6 +132,12 @@ export interface TryOnResponseDebug {
   usedOpenAI?: boolean;
   /** True when the request was handled by a fal.ai model. */
   usedFal?: boolean;
+  /**
+   * True when the API returned a locally rendered image (fast-overlay /
+   * canvas) as the *final* result. In API-only mode this must always be
+   * false.
+   */
+  usedLocalRenderer?: boolean;
   /** Whether an OpenAI alpha mask was attached to the edit call. */
   maskUsed?: boolean;
 }
@@ -137,7 +146,7 @@ export type RenderMode =
   | "fast-overlay"
   | "premium-ai"
   | "specialized-vton"
-  | "gpt-image-edit"
+  | "api-image-edit"
   | "mock";
 
 export type QualityStatus =
@@ -197,6 +206,10 @@ export interface TryOnResultMeta {
   renderMode?: RenderMode;
   qualityStatus?: QualityStatus;
   warnings?: TryOnWarning[];
+  /** Mirror of debug.maskUsed for UI consumption. */
+  maskUsed?: boolean;
+  /** Mirror of debug.usedLocalRenderer for UI consumption. */
+  usedLocalRenderer?: boolean;
 }
 
 export interface TryOnState {

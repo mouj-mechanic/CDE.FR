@@ -123,73 +123,9 @@ const INPAINT_PROMPTS: Partial<Record<CategoryId, string>> = {
     "the background.",
 };
 
-// ──────────────────────────────────────────────────────────────────────────
-//  OpenAI GPT Image prompts
-// ──────────────────────────────────────────────────────────────────────────
-//
-// Different from the FLUX inpaint prompt: gpt-image-1 takes
-//   image[0] = customer / wrist / face photo (or pre-rendered composite)
-//   image[1] = transparent product reference (when no composite is sent)
-// and an optional alpha mask. The wording reflects this multi-image setup
-// and explicitly tells the model what to preserve.
-
-interface OpenAIPromptOptions {
-  hasMask: boolean;
-  notes?: string;
-}
-
-const OPENAI_PROMPTS: Record<CategoryId, (o: OpenAIPromptOptions) => string> = {
-  watch: ({ hasMask }) =>
-    "Use the customer wrist photo as the base image and the transparent " +
-    "watch product image as the exact reference. Add the watch naturally " +
-    "around the visible wrist. " +
-    (hasMask
-      ? "If a mask is provided, edit only the masked area. "
-      : "") +
-    "The watch must have realistic scale, correct perspective, natural " +
-    "contact shadows, and the strap should follow the wrist curvature. " +
-    "Preserve the original hand, fingers, skin texture, arm hair, " +
-    "background, lighting, and anatomy. Do not create extra fingers. " +
-    "Do not change the hand pose. Do not paste the watch as a flat " +
-    "sticker. Do not include any product background. Return a realistic " +
-    "e-commerce virtual try-on preview.",
-
-  glasses: () =>
-    "Use the face photo as the base image and the glasses image as the " +
-    "exact reference. Place the glasses naturally on the face, aligned " +
-    "with the eyes and nose bridge. Preserve identity, expression, skin, " +
-    "and background. Do not alter facial anatomy unnecessarily.",
-
-  "hand-jewelry": () =>
-    "Use the hand photo as the base image and the jewelry product image " +
-    "as the exact reference. Place the jewelry naturally on the selected " +
-    "finger or wrist. Preserve the hand anatomy, skin texture, and " +
-    "background. Do not place the jewelry across multiple fingers.",
-
-  headwear: () =>
-    "Use the portrait photo as the base image and the headwear product " +
-    "image as the exact reference. Place the cap, hat, or beanie " +
-    "naturally on the head with realistic scale and shadow. Preserve " +
-    "identity, face, hairline as much as possible, and background.",
-
-  clothes: () =>
-    "Use the customer photo as the base image and the clothing product " +
-    "image as the exact reference. Dress the person in the selected " +
-    "garment while preserving identity, body proportions, pose, and " +
-    "background. Preserve the clothing's overall style, color, and " +
-    "visible details.",
-};
-
-export function buildOpenAIPrompt(
-  category: CategoryId,
-  opts: OpenAIPromptOptions
-): string {
-  const base = OPENAI_PROMPTS[category](opts);
-  if (opts.notes && opts.notes.trim()) {
-    return `${base} Additional context: ${opts.notes.trim()}`;
-  }
-  return base;
-}
+// OpenAI GPT Image prompts moved to `lib/prompts/openaiTryOnPrompts.ts`.
+// That module is the single source of truth for the OpenAI path and
+// supports per-subtype (ring/bracelet) and per-finger variants.
 
 export function buildInpaintPrompt(
   category: CategoryId,

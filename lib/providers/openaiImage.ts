@@ -1,68 +1,118 @@
 import OpenAI, { toFile } from "openai";
 import sharp from "sharp";
-import type { TryOnRequest, TryOnResponse } from "@/types";
-import { buildOpenAIPrompt } from "./prompts";
+import type {
+  CategoryId,
+  FingerId,
+  HandJewelryType,
+  TryOnRequest,
+  TryOnResponse,
+} from "@/types";
+import {
+  buildOpenAITryOnPrompt,
+  isMaskedEditEnabledFor,
+} from "@/lib/prompts/openaiTryOnPrompts";
 
 /**
- * OpenAI GPT Image provider.
+ * OpenAI GPT Image provider — *single source of truth* for try-on edits
+ * when AI_TRYON_PROVIDER=openai.
  *
  *  Endpoint: `client.images.edit({ model, image, mask, prompt, n, size })`
  *
- *  ─── Differences vs fal.ai inpainting ────────────────────────────────────
- *  • Mask format: alpha-channel PNG (transparent = editable, opaque = preserved).
- *    Our pipeline produces a B&W mask (white = editable, black = preserved) —
- *    we convert it server-side with `sharp` before calling the SDK.
- *  • Multi-image input: `gpt-image-1` accepts an array of up to 16 images
- *    via the `image` field. We pass the user/composite as the base + the
- *    transparent product PNG as a reference, and the prompt anchors them.
- *  • Output: `b64_json` by default. We return a `data:` URL that the
- *    frontend already knows how to render. If you'd prefer a hosted URL,
- *    swap the return path with an upload to your CDN.
+ *  Flow (every category):
+ *    1. Validate inputs (key, product image, optional mask dimensions).
+ *    2. Square-pad user/composite + product images to the target size.
+ *    3. Convert the optional B/W mask → alpha PNG (transparent =
+ *       editable, opaque = preserved). Match dimensions exactly.
+ *    4. Build a strict, category-aware prompt (per-finger for rings,
+ *       per-subtype for bracelets, etc.).
+ *    5. Call gpt-image-1 image-edit and return the result as a
+ *       `data:image/png;base64,…` URL.
  *
- *  ─── Security ────────────────────────────────────────────────────────────
- *  - Reads OPENAI_API_KEY from process.env.
- *  - Never logs the key, never returns it in error messages.
- *  - Caller is the API route; the key never reaches the browser.
+ *  Security:
+ *    - Reads OPENAI_API_KEY from process.env. Never logs it.
+ *    - Never returns the key in error messages.
+ *    - Caller is the API route; the key never reaches the browser.
+ *
+ *  Strictness:
+ *    - Throws a typed `OpenAIConfigError` when OPENAI_API_KEY is missing.
+ *    - Throws a typed `MaskRequiredError` when REQUIRE_MASK_FOR_OPENAI=true
+ *      and no mask was supplied.
+ *    - Throws on dimension mismatch between mask and base image.
  */
 
 export const OPENAI_DEFAULT_MODEL = "gpt-image-1";
 const OPENAI_DEFAULT_SIZE = "1024x1024";
 const OPENAI_DEFAULT_QUALITY = "high";
 
-/** Tunable parameters resolved from env at call time. */
-function readOpenAIEnv() {
+// ──────────────────────────────────────────────────────────────────────────
+//  Errors
+// ──────────────────────────────────────────────────────────────────────────
+
+export class OpenAIConfigError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "OpenAIConfigError";
+  }
+}
+
+export class MaskRequiredError extends Error {
+  constructor() {
+    super(
+      "Mask is required for API-only OpenAI editing but no mask was provided."
+    );
+    this.name = "MaskRequiredError";
+  }
+}
+
+export class MaskDimensionError extends Error {
+  constructor(detail: string) {
+    super(`Mask dimensions do not match the base image. ${detail}`);
+    this.name = "MaskDimensionError";
+  }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+//  Env
+// ──────────────────────────────────────────────────────────────────────────
+
+interface OpenAIEnv {
+  apiKey: string | undefined;
+  model: string;
+  size: "1024x1024" | "1024x1536" | "1536x1024" | "auto";
+  quality: "low" | "medium" | "high" | "auto";
+  requireMask: boolean;
+}
+
+function readOpenAIEnv(): OpenAIEnv {
   const apiKey = process.env.OPENAI_API_KEY?.trim();
   const model =
     process.env.OPENAI_IMAGE_MODEL?.trim() || OPENAI_DEFAULT_MODEL;
   const size =
-    (process.env.OPENAI_IMAGE_SIZE?.trim() as
-      | "1024x1024"
-      | "1024x1536"
-      | "1536x1024"
-      | "auto"
-      | undefined) || OPENAI_DEFAULT_SIZE;
+    (process.env.OPENAI_IMAGE_SIZE?.trim() as OpenAIEnv["size"] | undefined) ||
+    OPENAI_DEFAULT_SIZE;
   const quality =
     (process.env.OPENAI_IMAGE_QUALITY?.trim() as
-      | "low"
-      | "medium"
-      | "high"
-      | "auto"
+      | OpenAIEnv["quality"]
       | undefined) || OPENAI_DEFAULT_QUALITY;
-  const useMaskedEdit =
-    (process.env.OPENAI_USE_MASKED_EDIT?.trim().toLowerCase() ?? "true") !==
-    "false";
-  return { apiKey, model, size, quality, useMaskedEdit };
+  const requireMask =
+    (process.env.REQUIRE_MASK_FOR_OPENAI?.trim().toLowerCase() ?? "false") ===
+    "true";
+  return { apiKey, model, size, quality, requireMask };
 }
 
+// ──────────────────────────────────────────────────────────────────────────
+//  Image utilities (sharp)
+// ──────────────────────────────────────────────────────────────────────────
+
 /**
- * Convert our pipeline B&W mask (white = editable, black = preserved) into
+ * Convert our pipeline B/W mask (white = editable, black = preserved) into
  * an alpha-channel PNG suitable for OpenAI image edit.
  *
  *  - OpenAI mask convention:
  *      transparent pixels (alpha = 0)   → "AI may repaint"
  *      opaque pixels       (alpha = 255) → "AI must preserve"
  *
- *  - Our convention:
+ *  - Our convention (and the spec for manual masks uploaded by the user):
  *      white pixel (R = 255) → editable
  *      black pixel (R = 0)   → preserved
  *
@@ -79,8 +129,6 @@ async function bwMaskToAlphaPng(bwMaskBuf: Buffer): Promise<Buffer> {
   for (let i = 0; i < px; i++) {
     const src = i * info.channels;
     const dst = i * 4;
-    // R = G = B = 0 (mask colour is irrelevant). Alpha is the inverse of
-    // the grayscale value (R channel suffices since input is grayscale).
     rgba[dst] = 0;
     rgba[dst + 1] = 0;
     rgba[dst + 2] = 0;
@@ -88,47 +136,52 @@ async function bwMaskToAlphaPng(bwMaskBuf: Buffer): Promise<Buffer> {
   }
 
   return await sharp(rgba, {
-    raw: {
-      width: info.width,
-      height: info.height,
-      channels: 4,
-    },
+    raw: { width: info.width, height: info.height, channels: 4 },
   })
     .png({ compressionLevel: 6 })
     .toBuffer();
 }
 
 /**
- * Resize an image to fit OpenAI's preferred size while keeping aspect.
- * We use `cover` so the wrist stays centred (the watch case is the most
- * sensitive — a center-crop preserves the relevant area).
+ * Square-resize for OpenAI. Uses `cover` so the body part stays centred
+ * (the wrist/face/torso is typically near the centre — preferable to
+ * losing pixels via `contain`).
  */
 async function squareForOpenAI(
   src: Buffer,
   targetSize: number
 ): Promise<Buffer> {
   return await sharp(src)
-    .resize(targetSize, targetSize, {
-      fit: "cover",
-      position: "center",
-    })
+    .resize(targetSize, targetSize, { fit: "cover", position: "center" })
     .png()
     .toBuffer();
 }
 
+async function getDimensions(
+  buf: Buffer
+): Promise<{ width: number; height: number; hasAlpha: boolean }> {
+  const meta = await sharp(buf).metadata();
+  return {
+    width: meta.width ?? 0,
+    height: meta.height ?? 0,
+    hasAlpha: Boolean(meta.hasAlpha),
+  };
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+//  OpenAI SDK call
+// ──────────────────────────────────────────────────────────────────────────
+
 interface ImageEditCallOptions {
   apiKey: string;
   model: string;
-  size: "1024x1024" | "1024x1536" | "1536x1024" | "auto";
-  quality: "low" | "medium" | "high" | "auto";
+  size: OpenAIEnv["size"];
+  quality: OpenAIEnv["quality"];
   prompt: string;
-  /** Base image(s). For gpt-image-1 may be a single PNG or an array. */
   baseImages: Buffer[];
-  /** Optional alpha-channel mask, must match base[0] dimensions. */
   alphaMask: Buffer | null;
 }
 
-/** Wraps the SDK call with structured logs and a typed return. */
 async function callOpenAIImageEdit(
   opts: ImageEditCallOptions
 ): Promise<{ b64: string }> {
@@ -143,9 +196,6 @@ async function callOpenAIImageEdit(
     ? await toFile(opts.alphaMask, "tryon-mask.png", { type: "image/png" })
     : undefined;
 
-  // gpt-image-1 accepts both a single file and a File[]; older models like
-  // dall-e-2 only accept a single file. We pass an array for gpt-image-1
-  // and unwrap when there's only one.
   const imageParam =
     imageFiles.length > 1 && opts.model.includes("gpt-image")
       ? imageFiles
@@ -158,8 +208,6 @@ async function callOpenAIImageEdit(
     n: 1,
     size: opts.size,
   };
-  // `quality` is only honoured by gpt-image-* — including it on older
-  // models would error out.
   if (opts.model.includes("gpt-image")) {
     editParams.quality = opts.quality;
   }
@@ -167,8 +215,6 @@ async function callOpenAIImageEdit(
     editParams.mask = maskFile;
   }
 
-  // The SDK's typing for `images.edit` is generic; cast through unknown so
-  // we keep our explicit param shape without fighting overloaded variants.
   const res = (await client.images.edit(
     editParams as unknown as Parameters<typeof client.images.edit>[0]
   )) as {
@@ -177,10 +223,8 @@ async function callOpenAIImageEdit(
 
   const first = res.data?.[0];
   if (!first) throw new Error("OpenAI image edit returned no result.");
-
   if (first.b64_json) return { b64: first.b64_json };
 
-  // Fallback for endpoints that return URLs (older models).
   if (first.url) {
     const fetched = await fetch(first.url);
     if (!fetched.ok) {
@@ -195,126 +239,219 @@ async function callOpenAIImageEdit(
   throw new Error("OpenAI image edit response missing b64_json/url.");
 }
 
-export interface OpenAIImageParams extends TryOnRequest {
-  /**
-   * Optional pre-rendered composite (deterministic preview produced
-   * client-side). When present, used as the base instead of the raw user
-   * photo so OpenAI only refines blending/shadows.
-   */
-  inpaintComposite?: File;
-  /** Optional B&W contact-band mask (same dimensions as composite). */
-  inpaintMask?: File;
+// ──────────────────────────────────────────────────────────────────────────
+//  Public API
+// ──────────────────────────────────────────────────────────────────────────
+
+/** Spec-shaped input for the canonical entrypoint. */
+export interface GenerateOpenAIImageTryOnParams {
+  /** Customer photo (base image). */
+  userImage: File;
+  /** One or more product reference images. The first is used as the
+   *  primary product reference. */
+  productImages: File[];
+  /** Optional B/W mask (white = editable, black = preserved). */
+  maskImage?: File | null;
+  /** Optional pre-rendered composite (overrides userImage as base). */
+  compositeImage?: File | null;
+  category: CategoryId;
+  /** Hand-jewelry subtype. */
+  productSubtype?: HandJewelryType;
+  /** Target finger for rings. */
+  targetFinger?: FingerId;
+  /** Optional override for the prompt (caller-built). */
+  prompt?: string;
+  /** Optional overrides for env defaults. */
+  quality?: OpenAIEnv["quality"];
+  size?: OpenAIEnv["size"];
+  /** Free-form merchant notes appended to the prompt. */
+  notes?: string;
 }
 
 export interface OpenAIImageMeta {
   maskUsed: boolean;
   productHasAlpha: boolean;
   baseImageCount: number;
+  /** Whether a deterministic composite was used as the base image. */
+  compositeUsedAsBase: boolean;
 }
 
-export async function openaiTryOn(
-  params: OpenAIImageParams
-): Promise<TryOnResponse & { openaiMeta: OpenAIImageMeta }> {
+export interface GenerateOpenAIImageTryOnResult {
+  resultUrl: string;
+  generatedAt: number;
+  durationMs: number;
+  provider: "openai";
+  model: string;
+  category: CategoryId;
+  meta: OpenAIImageMeta;
+}
+
+/**
+ * Canonical entrypoint per the spec. Strict, no fallbacks.
+ *  - Throws OpenAIConfigError if OPENAI_API_KEY is missing.
+ *  - Throws MaskRequiredError if REQUIRE_MASK_FOR_OPENAI=true and no mask.
+ *  - Throws MaskDimensionError if the mask doesn't match the base image.
+ *  - Throws on any SDK / network error so the route can return an error
+ *    JSON instead of silently rendering locally.
+ */
+export async function generateOpenAIImageTryOn(
+  params: GenerateOpenAIImageTryOnParams
+): Promise<GenerateOpenAIImageTryOnResult> {
   const env = readOpenAIEnv();
   if (!env.apiKey) {
-    throw new Error(
+    throw new OpenAIConfigError(
       "OPENAI_API_KEY is missing. Set it in your environment to use the OpenAI provider."
     );
   }
 
+  const size = params.size ?? env.size;
+  const quality = params.quality ?? env.quality;
   const targetSize =
-    env.size === "auto" ? 1024 : Number(env.size.split("x")[0]) || 1024;
+    size === "auto" ? 1024 : Number(size.split("x")[0]) || 1024;
 
-  // ── Build base image(s) ────────────────────────────────────────────
-  // Priority 1 : the deterministic composite (already has the watch placed).
-  // Priority 2 : the raw user photo + the transparent product as a second
-  //              reference image (multi-image edit).
-  const baseImages: Buffer[] = [];
-  let primaryBuf: Buffer;
+  // ── 1. Resolve base image (composite > user photo) ─────────────────
+  const compositeUsedAsBase = Boolean(params.compositeImage);
+  const primaryBuf = Buffer.from(
+    await (params.compositeImage ?? params.userImage).arrayBuffer()
+  );
+  const primaryDims = await getDimensions(primaryBuf);
 
-  if (params.inpaintComposite) {
-    primaryBuf = Buffer.from(await params.inpaintComposite.arrayBuffer());
-  } else {
-    primaryBuf = Buffer.from(await params.userImage.arrayBuffer());
+  // ── 2. Mask handling — validate dimensions BEFORE resizing ────────
+  const useMaskedEdit = isMaskedEditEnabledFor(params.category);
+  const haveRawMask = Boolean(params.maskImage);
+  const willUseMask = haveRawMask && useMaskedEdit;
+
+  if (env.requireMask && !haveRawMask) {
+    throw new MaskRequiredError();
   }
+
+  let alphaMask: Buffer | null = null;
+  if (willUseMask && params.maskImage) {
+    const rawMask = Buffer.from(await params.maskImage.arrayBuffer());
+    const maskDims = await getDimensions(rawMask);
+    if (
+      maskDims.width !== primaryDims.width ||
+      maskDims.height !== primaryDims.height
+    ) {
+      throw new MaskDimensionError(
+        `Base ${primaryDims.width}x${primaryDims.height} vs mask ${maskDims.width}x${maskDims.height}.`
+      );
+    }
+    const squaredMask = await squareForOpenAI(rawMask, targetSize);
+    alphaMask = await bwMaskToAlphaPng(squaredMask);
+  }
+
+  // ── 3. Build base image array ─────────────────────────────────────
+  const baseImages: Buffer[] = [];
   baseImages.push(await squareForOpenAI(primaryBuf, targetSize));
 
-  // Add the product image as a second reference (gpt-image-1 only).
+  // Pass the product as a second reference (gpt-image-1 multi-image
+  // edit). When a composite is already present, the composite already
+  // bakes the product in — but adding the clean product reference helps
+  // the model recover details lost during warping/blending.
+  let productHasAlpha = false;
   if (
-    !params.inpaintComposite &&
     params.productImages.length > 0 &&
     env.model.includes("gpt-image")
   ) {
     const productBuf = Buffer.from(
       await params.productImages[0].arrayBuffer()
     );
+    productHasAlpha = (await getDimensions(productBuf)).hasAlpha;
     baseImages.push(await squareForOpenAI(productBuf, targetSize));
   }
 
-  // ── Build alpha mask (if any + feature flag on) ────────────────────
-  let alphaMask: Buffer | null = null;
-  if (env.useMaskedEdit && params.inpaintMask) {
-    const rawMask = Buffer.from(await params.inpaintMask.arrayBuffer());
-    // The mask must match the *primary* base image exactly.
-    const squaredMask = await squareForOpenAI(rawMask, targetSize);
-    alphaMask = await bwMaskToAlphaPng(squaredMask);
-  }
-
-  // Detect alpha on the product image (debug only — does not change behaviour).
-  let productHasAlpha = false;
-  if (params.productImages[0]) {
-    try {
-      const meta = await sharp(
-        Buffer.from(await params.productImages[0].arrayBuffer())
-      ).metadata();
-      productHasAlpha = Boolean(meta.hasAlpha);
-    } catch {
-      productHasAlpha = false;
-    }
-  }
-
-  const prompt = buildOpenAIPrompt(params.category, {
-    hasMask: Boolean(alphaMask),
-    notes: params.notes,
-  });
+  // ── 4. Build prompt (or honour caller-provided override) ─────────
+  const prompt =
+    params.prompt ??
+    buildOpenAITryOnPrompt({
+      category: params.category,
+      productSubtype: params.productSubtype,
+      maskUsed: Boolean(alphaMask),
+      targetFinger: params.targetFinger,
+      notes: params.notes,
+    });
 
   console.info(
-    `[openai-image] start category=${params.category} model=${env.model} size=${env.size} quality=${env.quality} maskUsed=${Boolean(alphaMask)} baseImages=${baseImages.length} productHasAlpha=${productHasAlpha}`
+    `[try-on] category=${params.category}\n` +
+      `[try-on] provider=openai\n` +
+      `[try-on] renderMode=api-image-edit\n` +
+      `[try-on] maskUsed=${Boolean(alphaMask)}\n` +
+      `[try-on] usedLocalRenderer=false\n` +
+      `[try-on] model=${env.model}\n` +
+      `[try-on] productSubtype=${params.productSubtype ?? "n/a"} targetFinger=${
+        params.targetFinger ?? "n/a"
+      } size=${size} quality=${quality}`
   );
 
+  // ── 5. Call OpenAI ───────────────────────────────────────────────
   const startedAt = Date.now();
   const { b64 } = await callOpenAIImageEdit({
     apiKey: env.apiKey,
     model: env.model,
-    size: env.size,
-    quality: env.quality,
+    size,
+    quality,
     prompt,
     baseImages,
     alphaMask,
   });
   const durationMs = Date.now() - startedAt;
+
   console.info(
-    `[openai-image] success category=${params.category} durationMs=${durationMs}`
+    `[try-on] durationMs=${durationMs} provider=openai model=${env.model} category=${params.category}`
   );
 
-  // Return as a data URL so the frontend can render directly.
-  const resultUrl = `data:image/png;base64,${b64}`;
-
   return {
-    resultUrl,
+    resultUrl: `data:image/png;base64,${b64}`,
     generatedAt: Date.now(),
-    mock: false,
+    durationMs,
     provider: "openai",
     model: env.model,
     category: params.category,
-    debug: {
-      imageCount: baseImages.length + (alphaMask ? 1 : 0),
-      productImageCount: params.productImages.length,
-    },
-    openaiMeta: {
+    meta: {
       maskUsed: Boolean(alphaMask),
       productHasAlpha,
       baseImageCount: baseImages.length,
+      compositeUsedAsBase,
     },
+  };
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+//  Legacy adapter — TryOnRequest in, TryOnResponse out
+// ──────────────────────────────────────────────────────────────────────────
+
+export interface OpenAIImageParams extends TryOnRequest {
+  inpaintComposite?: File;
+  inpaintMask?: File;
+}
+
+export async function openaiTryOn(
+  params: OpenAIImageParams
+): Promise<TryOnResponse & { openaiMeta: OpenAIImageMeta }> {
+  const result = await generateOpenAIImageTryOn({
+    userImage: params.userImage,
+    productImages: params.productImages,
+    maskImage: params.inpaintMask ?? null,
+    compositeImage: params.inpaintComposite ?? null,
+    category: params.category,
+    productSubtype: params.handJewelryType,
+    targetFinger: params.ringFinger,
+    notes: params.notes,
+  });
+
+  return {
+    resultUrl: result.resultUrl,
+    generatedAt: result.generatedAt,
+    durationMs: result.durationMs,
+    mock: false,
+    provider: result.provider,
+    model: result.model,
+    category: result.category,
+    debug: {
+      imageCount: result.meta.baseImageCount + (result.meta.maskUsed ? 1 : 0),
+      productImageCount: params.productImages.length,
+    },
+    openaiMeta: result.meta,
   };
 }

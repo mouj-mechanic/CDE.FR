@@ -1,0 +1,70 @@
+feat(openai): API-only mode + per-category masked editing for all categories
+
+Force final image to come from OpenAI GPT Image for every try-on
+category (watch, glasses, headwear, hand-jewelry, clothes). Local
+canvas / fast-overlay renderers are now inputs (composite + mask), not
+final outputs.
+
+Backend
+- lib/providers/openaiImage.ts:
+  * Add `generateOpenAIImageTryOn({ userImage, productImages,
+    maskImage, compositeImage, category, productSubtype, targetFinger,
+    prompt, quality, size, notes })` per the spec.
+  * Validate mask dimensions vs base image; throw MaskDimensionError.
+  * Honour REQUIRE_MASK_FOR_OPENAI; throw MaskRequiredError when set.
+  * Per-category mask flags via isMaskedEditEnabledFor().
+  * Sharp-based B/W -> alpha PNG conversion preserved.
+  * `openaiTryOn(TryOnRequest)` adapter unchanged for the legacy path.
+- lib/prompts/openaiTryOnPrompts.ts: dedicated, strict prompts per
+  category with subtype (ring/bracelet) and target-finger variants.
+- lib/providers/prompts.ts: drop the redundant OpenAI prompt block.
+- lib/tryOnService.ts: provider=openai is strict (no silent fallback).
+- app/api/try-on/route.ts:
+  * apiOnlyMode = provider=openai || TRYON_RENDER_MODE=api-only ||
+    DISABLE_LOCAL_RENDER=true. Skips fast-overlay path.
+  * Accepts a manual maskImage on every category (not just watch
+    refinement).
+  * Pre-flight validation of mask dimensions; 400 on mismatch.
+  * On OpenAI failure in api-only mode -> 502 error JSON, never a
+    local renderer fallback.
+  * Adds `usedLocalRenderer`, `usedOpenAI`, `usedFal`, `maskUsed` to
+    debug; sets renderMode="api-image-edit" for the openai path.
+- app/api/ai-status/route.ts: shape now matches the spec
+  (provider, publicProvider, hasOpenAIKey, hasFalKey, openaiModel,
+   mode).
+
+Frontend
+- components/MaskTestUploader.tsx: optional PNG mask upload usable in
+  every category (TryOnPanel + EmbedFlow). Sends FormData[maskImage].
+- components/ResultView.tsx: new badges
+    * "Généré avec GPT Image" for renderMode=api-image-edit
+    * "Édition guidée par masque" when debug.maskUsed=true
+    * "Attention : rendu local utilisé" when usedLocalRenderer=true
+- TryOnPanel + EmbedFlow forward debug.maskUsed/usedLocalRenderer into
+  resultMeta so ResultView can render the badges.
+
+Types
+- RenderMode adds "api-image-edit" (replaces the previous
+  "gpt-image-edit" placeholder). TryOnResponseDebug adds
+  usedLocalRenderer. TryOnResultMeta mirrors maskUsed +
+  usedLocalRenderer for UI consumption.
+
+Env
+- New: REQUIRE_MASK_FOR_OPENAI, TRYON_RENDER_MODE=api-only,
+  DISABLE_LOCAL_RENDER, plus per-category flags
+  WATCH_USE_MASKED_EDIT / GLASSES_USE_MASKED_EDIT /
+  HEADWEAR_USE_MASKED_EDIT / HAND_JEWELRY_USE_MASKED_EDIT /
+  CLOTHES_USE_MASKED_EDIT.
+- README + .env.example updated. Recommended config now lives at the
+  top of .env.example with provider=openai + api-only=true.
+
+Logs
+- Server emits the spec'd structured trace:
+    [try-on] category=...
+    [try-on] provider=openai
+    [try-on] renderMode=api-image-edit
+    [try-on] maskUsed=true|false
+    [try-on] usedLocalRenderer=false
+    [try-on] model=gpt-image-1
+    [try-on] durationMs=...
+- API key never logged.

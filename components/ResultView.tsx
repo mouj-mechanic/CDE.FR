@@ -30,6 +30,18 @@ interface ResultViewProps {
   renderMode?: RenderMode;
   qualityStatus?: QualityStatus;
   warnings?: TryOnWarning[];
+  /**
+   * True when the API attached an alpha mask to the OpenAI edit call.
+   * Surfaces the "Édition guidée par masque" badge.
+   */
+  maskUsed?: boolean;
+  /**
+   * True when the displayed image came from a local (canvas / fast-overlay)
+   * renderer. In API-only mode this should never be true; if it is, a
+   * warning is shown so testers know the OpenAI call did not produce the
+   * final result.
+   */
+  usedLocalRenderer?: boolean;
 }
 
 const REVEAL_START_MS = 150;
@@ -49,6 +61,8 @@ export function ResultView({
   renderMode,
   qualityStatus,
   warnings,
+  maskUsed,
+  usedLocalRenderer,
 }: ResultViewProps) {
   const [phase, setPhase] = useState<Phase>("waiting");
   const [showBurst, setShowBurst] = useState(false);
@@ -191,8 +205,8 @@ export function ResultView({
                 ? "Aperçu rapide"
                 : renderMode === "specialized-vton"
                   ? "Rendu spécialisé vêtements"
-                  : renderMode === "gpt-image-edit"
-                    ? "Generated with GPT Image"
+                  : renderMode === "api-image-edit"
+                    ? "Généré avec GPT Image"
                     : renderMode === "premium-ai"
                       ? "Rendu IA premium"
                       : mock
@@ -204,9 +218,9 @@ export function ResultView({
                 </span>
               )}
             </span>
-            {!mock && provider === "openai" && (
+            {!mock && provider === "openai" && maskUsed && (
               <span className="text-[10px] uppercase tracking-wider text-ink-muted/70">
-                Provider: OpenAI · Mask-guided edit
+                Édition guidée par masque
               </span>
             )}
             {!mock &&
@@ -225,6 +239,11 @@ export function ResultView({
             {qualityStatus === "fallback-preview" && (
               <span className="text-[11px] font-medium text-amber-800">
                 Rendu IA non validé, aperçu rapide utilisé.
+              </span>
+            )}
+            {usedLocalRenderer === true && renderMode !== "fast-overlay" && (
+              <span className="text-[11px] font-medium text-amber-800">
+                Attention : rendu local utilisé
               </span>
             )}
           </div>
