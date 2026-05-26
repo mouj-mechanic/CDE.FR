@@ -87,6 +87,12 @@ export interface WatchRotationResult {
   /** Diagnostic label for QA dashboards: `landmarks` / `fallback` / `manual`. */
   method: "landmarks" | "fallback" | "manual";
   /**
+   * True when the "force-min-on-diagonal" safety bumped the rotation
+   * because the forearm was clearly diagonal but the geometric
+   * estimate was suspiciously close to 0°. See `forceMinimumRotationForDiagonalForearm`.
+   */
+  forcedMinimumApplied?: boolean;
+  /**
    * Useful unit vectors for downstream rendering. Image convention
    * (+x right, +y down).
    */
@@ -235,6 +241,80 @@ function envMaxCorrection(): number {
   return Number.isFinite(v) && v > 0 ? v : 12;
 }
 
+function envForceMinOnDiagonal(): boolean {
+  // Default ON: when the forearm is clearly diagonal (>15° off
+  // vertical) but the computed rotation is suspiciously small
+  // (|deg| < 15°), bump the rotation to a visible angle. Catches
+  // both the "MediaPipe missed the wrist landmark" and "landmarks
+  // suggest a vertical hand even though the photo is diagonal"
+  // failure modes that produce sticker-flat watches in production.
+  const raw = process.env.WATCH_ROTATION_FORCE_MIN_ON_DIAGONAL?.trim();
+  if (raw === undefined || raw === "") return true;
+  return raw.toLowerCase() !== "false" && raw !== "0";
+}
+
+function envForceMinTargetDeg(): number {
+  const raw = process.env.WATCH_ROTATION_FORCE_MIN_DEG?.trim();
+  const v = raw ? Number(raw) : 32;
+  return Number.isFinite(v) && v > 0 ? v : 32;
+}
+
+function envDiagonalThresholdDeg(): number {
+  const raw = process.env.WATCH_ROTATION_DIAGONAL_THRESHOLD_DEG?.trim();
+  const v = raw ? Number(raw) : 15;
+  return Number.isFinite(v) && v > 0 ? v : 15;
+}
+
+/**
+ * Decide whether the forearm direction is "diagonal" enough to warrant
+ * a visible watch rotation. A vertical forearm (≈ 90° or -90°) is
+ * naturally aligned with a vertical strap and should NOT be force-
+ * rotated. A diagonal forearm (e.g. 130° = coming from bottom-left)
+ * MUST produce a non-zero rotation.
+ *
+ *  Returns the SIGN of the expected rotation (+1 for forearms in the
+ *  90..180° band, -1 for forearms in the 0..-90° band) and 0 when the
+ *  forearm is close enough to vertical to skip the safety.
+ */
+export function forceMinimumRotationForDiagonalForearm(input: {
+  forearmAxisDeg: number;
+  currentRotationDeg: number;
+  thresholdDeg?: number;
+  targetDeg?: number;
+  side?: HandSide;
+}): { rotationDeg: number; forced: boolean } {
+  const threshold = Math.abs(input.thresholdDeg ?? 15);
+  const target = Math.abs(input.targetDeg ?? 32);
+  const forearm = normalizeAngle180(input.forearmAxisDeg);
+  // Vertical = ±90°. Anything within `threshold` of vertical is too
+  // close to a straight portrait pose to need forcing.
+  const distFromVertical = Math.min(
+    Math.abs(forearm - 90),
+    Math.abs(forearm + 90)
+  );
+  if (distFromVertical <= threshold) {
+    return { rotationDeg: input.currentRotationDeg, forced: false };
+  }
+  // Already a meaningful rotation? Leave it alone.
+  if (Math.abs(input.currentRotationDeg) >= threshold) {
+    return { rotationDeg: input.currentRotationDeg, forced: false };
+  }
+  // Determine the expected sign:
+  //   forearm in (90°, 180°]   → bottom-left arm  → positive rotation
+  //   forearm in [-180°, -90°) → top-left arm     → negative rotation
+  //   forearm in (0°, 90°)     → bottom-right arm → negative rotation
+  //   forearm in (-90°, 0°)    → top-right arm    → positive rotation
+  let sign: number;
+  if (forearm > 90 || forearm < -90) {
+    sign = forearm > 0 ? 1 : -1;
+  } else {
+    sign = forearm > 0 ? -1 : 1;
+  }
+  // Mirror hands get the opposite forcing direction.
+  if (input.side === "left") sign = -sign;
+  return { rotationDeg: sign * target, forced: true };
+}
+
 function envProductStrapAxis(meta?: ProductMeta): number {
   if (meta && typeof meta.strapAxisDeg === "number") {
     return meta.strapAxisDeg;
@@ -301,10 +381,29 @@ export function computeWatchRotation(
     });
 
     const beforeClamp = baseRotationDeg + correctionDeg;
-    const rotationDeg = clampRotationForWatch(beforeClamp, confidence);
+    let rotationDeg = clampRotationForWatch(beforeClamp, confidence);
+
+    // Safety: force a visible rotation when the forearm is clearly
+    // diagonal but the geometric estimate landed near 0°. Catches
+    // landmark mistakes that would otherwise produce a sticker-flat
+    // watch on photos where the forearm is obviously diagonal.
+    let forcedMinimumApplied = false;
+    if (envForceMinOnDiagonal()) {
+      const forced = forceMinimumRotationForDiagonalForearm({
+        forearmAxisDeg,
+        currentRotationDeg: rotationDeg,
+        thresholdDeg: envDiagonalThresholdDeg(),
+        targetDeg: envForceMinTargetDeg(),
+        side,
+      });
+      if (forced.forced) {
+        rotationDeg = clampRotationForWatch(forced.rotationDeg, 1);
+        forcedMinimumApplied = true;
+      }
+    }
     const rotationRad = (rotationDeg * Math.PI) / 180;
 
-    return {
+    const result: WatchRotationResult = {
       rotationDeg,
       rotationRad,
       forearmAxisDeg,
@@ -317,12 +416,28 @@ export function computeWatchRotation(
       confidence,
       method:
         confidence < (input.minConfidence ?? 0.35) ? "fallback" : "landmarks",
+      forcedMinimumApplied,
       debugVectors: {
         handDir,
         forearm,
         wrist,
       },
     };
+
+    if (typeof console !== "undefined" && console.info) {
+      console.info("[WATCH_ROTATION] geometry", {
+        forearmAxisDeg: round(forearmAxisDeg),
+        productStrapAxisDeg: round(strapAxis),
+        baseRotationDeg: round(baseRotationDeg),
+        correctionDeg: round(correctionDeg),
+        finalRotationDeg: round(rotationDeg),
+        forcedMinimumApplied,
+        confidence: round(confidence, 2),
+        side,
+        method: result.method,
+      });
+    }
+    return result;
   }
 
   // ── Fallback — landmarks unavailable ──────────────────────────────
@@ -347,7 +462,7 @@ export function computeWatchRotation(
     baseRotationDeg + correctionDeg,
     0
   );
-  return {
+  const fallbackResult: WatchRotationResult = {
     rotationDeg,
     rotationRad: (rotationDeg * Math.PI) / 180,
     forearmAxisDeg,
@@ -359,12 +474,30 @@ export function computeWatchRotation(
     side: input.side ?? "unknown",
     confidence: 0,
     method: "fallback",
+    forcedMinimumApplied: false,
     debugVectors: {
       handDir: { x: 0, y: -1 },
       forearm: { x: 0, y: 1 },
       wrist: { x: W / 2, y: H * 0.55 },
     },
   };
+  if (typeof console !== "undefined" && console.info) {
+    console.info("[WATCH_ROTATION] geometry-fallback", {
+      forearmAxisDeg: round(forearmAxisDeg),
+      productStrapAxisDeg: round(strapAxis),
+      baseRotationDeg: round(baseRotationDeg),
+      correctionDeg: round(correctionDeg),
+      finalRotationDeg: round(rotationDeg),
+      method: "fallback",
+    });
+  }
+  return fallbackResult;
+}
+
+function round(v: number, digits = 1): number {
+  if (!Number.isFinite(v)) return 0;
+  const m = Math.pow(10, digits);
+  return Math.round(v * m) / m;
 }
 
 function avgVisibility(hand: LandmarkPoint[], idx: number[]): number {

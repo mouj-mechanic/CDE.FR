@@ -241,6 +241,25 @@ export async function renderWatchOverlay(
 
   ctx.save();
   ctx.translate(geometry.cx, geometry.cy);
+  // Log the rotation actually being applied to the canvas. If this
+  // value diverges from `geometry.rotationDebug.finalRotationDeg`,
+  // there is a bug between the geometry engine and this renderer.
+  // [WATCH_ROTATION] tag makes it easy to grep in browser DevTools.
+  const appliedRotationDeg = (geometry.rotation * 180) / Math.PI;
+  if (typeof console !== "undefined" && console.info) {
+    console.info("[WATCH_ROTATION] render-apply", {
+      appliedRotationDeg: Math.round(appliedRotationDeg * 10) / 10,
+      geometryFinalRotationDeg:
+        geometry.rotationDebug?.rotationDeg !== undefined
+          ? Math.round(geometry.rotationDebug.rotationDeg * 10) / 10
+          : null,
+      forcedMinimumApplied:
+        geometry.rotationDebug?.forcedMinimumApplied ?? null,
+      cx: Math.round(geometry.cx),
+      cy: Math.round(geometry.cy),
+      confidence: Math.round(geometry.confidence * 100) / 100,
+    });
+  }
   ctx.rotate(geometry.rotation);
 
   // Shadows go first, centred on the silhouette canvas centre.

@@ -365,6 +365,19 @@ export async function compositeLockedProduct(
     .png({ compressionLevel: 6 })
     .toBuffer();
 
+  if (input.category === "watch" || input.category === "hand-jewelry") {
+    // [WATCH_ROTATION] trace — the silhouette already carries the
+    // client-side rotation because it is derived from the rotated
+    // composite. Logging silhouetteRatio + bbox here lets us prove
+    // the product-lock step did NOT re-stamp a non-rotated source.
+    console.info("[WATCH_ROTATION] product-lock", {
+      category: input.category,
+      silhouetteRatio: Math.round(ratio * 1000) / 1000,
+      width: w,
+      height: h,
+      stamped: true,
+    });
+  }
   return {
     buffer,
     width: w,

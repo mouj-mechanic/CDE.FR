@@ -277,6 +277,22 @@ export async function composeLockedAccessoryFinal(
     .png({ compressionLevel: 6 })
     .toBuffer();
 
+  if (input.category === "watch" || input.category === "hand-jewelry") {
+    // [WATCH_ROTATION] trace — `core` is the silhouette of the
+    // ROTATED deterministic composite. Its presence guarantees the
+    // product core in the final image is the rotated product, not
+    // the source PNG. If the watch reads as vertical in the final
+    // output, the source must be the geometry, not this compositor.
+    console.info("[WATCH_ROTATION] compose-locked-final", {
+      category: input.category,
+      productCoreRatio: Math.round(coreRatio * 1000) / 1000,
+      contactBandRatio: Math.round((contactCount / (w * h)) * 1000) / 1000,
+      width: w,
+      height: h,
+      productCoreSource: "rotated_deterministic_composite",
+    });
+  }
+
   return {
     buffer,
     width: w,

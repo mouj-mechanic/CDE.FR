@@ -6,6 +6,7 @@ import {
   computeAnatomicalRotationCorrection,
   computeWatchRotation,
   checkWatchRotationQuality,
+  forceMinimumRotationForDiagonalForearm,
 } from "../watchRotation";
 import type { TryOnLandmarks } from "../types";
 
@@ -308,6 +309,53 @@ describe("checkWatchRotationQuality", () => {
     expect(out.valid).toBe(false);
     expect(out.acceptable).toBe(false);
     expect(out.reason).toBe("fail");
+  });
+
+  it("forces a visible rotation when forearm is diagonal but estimate is near 0°", () => {
+    // This is the production failure mode: landmarks suggest vertical
+    // hand even though the photo shows a diagonal forearm. Without the
+    // safety the watch reads as a sticker. Enable via env override.
+    const original = process.env.WATCH_ROTATION_FORCE_MIN_ON_DIAGONAL;
+    process.env.WATCH_ROTATION_FORCE_MIN_ON_DIAGONAL = "true";
+    try {
+      const out = forceMinimumRotationForDiagonalForearm({
+        forearmAxisDeg: 130, // bottom-left forearm
+        currentRotationDeg: 5, // estimate landed near 0
+      });
+      expect(out.forced).toBe(true);
+      expect(out.rotationDeg).toBe(32);
+    } finally {
+      if (original === undefined)
+        delete process.env.WATCH_ROTATION_FORCE_MIN_ON_DIAGONAL;
+      else process.env.WATCH_ROTATION_FORCE_MIN_ON_DIAGONAL = original;
+    }
+  });
+
+  it("does NOT force when the forearm is close to vertical", () => {
+    const out = forceMinimumRotationForDiagonalForearm({
+      forearmAxisDeg: 92, // basically vertical, only 2° off
+      currentRotationDeg: 3,
+    });
+    expect(out.forced).toBe(false);
+    expect(out.rotationDeg).toBe(3);
+  });
+
+  it("does NOT override an existing meaningful rotation", () => {
+    const out = forceMinimumRotationForDiagonalForearm({
+      forearmAxisDeg: 130,
+      currentRotationDeg: 28, // already meaningful
+    });
+    expect(out.forced).toBe(false);
+    expect(out.rotationDeg).toBe(28);
+  });
+
+  it("flips the sign for a bottom-right forearm", () => {
+    const out = forceMinimumRotationForDiagonalForearm({
+      forearmAxisDeg: 50, // bottom-right (forearm exits to bottom-right)
+      currentRotationDeg: 5,
+    });
+    expect(out.forced).toBe(true);
+    expect(out.rotationDeg).toBe(-32);
   });
 
   it("treats 180°-flipped angles as equivalent (strap is a line)", () => {
