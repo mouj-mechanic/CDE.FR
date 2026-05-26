@@ -275,6 +275,7 @@ export function TryOnPanel({
           maskUsed: data.debug?.maskUsed,
           usedLocalRenderer: data.debug?.usedLocalRenderer,
           qualityChecks: data.qualityChecks,
+          productLocked: data.productLocked ?? data.debug?.productLocked,
         },
       });
     } catch (err) {
@@ -487,6 +488,7 @@ export function TryOnPanel({
                   maskUsed={state.resultMeta?.maskUsed}
                   usedLocalRenderer={state.resultMeta?.usedLocalRenderer}
                   qualityChecks={state.resultMeta?.qualityChecks}
+                  productLocked={state.resultMeta?.productLocked}
                   onDownload={() => {}}
                   onRetry={() => {
                     setWatchOverrideUrl(null);

@@ -45,8 +45,27 @@ export const NO_MASK_FOCUS_BLOCK =
   "preserved pixels and never modify them.";
 
 /**
- * Compose the four blocks together. Caller picks whether the mask block
- * or the no-mask focus block is appended.
+ * Product-lock block — used when the product was already pre-rendered
+ * onto the base image (the "locked product" pipeline). After the AI
+ * returns, the original transparent product PNG is composited back on
+ * top, so any AI re-drawing of the product itself will be discarded.
+ *
+ * The wording reflects that and steers the model toward *integration
+ * only* (shadows, contact, blending) instead of *generation*.
+ */
+export const PRODUCT_LOCK_BLOCK =
+  "The product has already been positioned and rendered on the base " +
+  "image as a locked reference layer. Only improve the local " +
+  "integration around the product: contact shadows, edge blending, " +
+  "subtle local lighting, and surface contact. Do not redesign, move, " +
+  "replace, recolor, or redraw the product. Do not change product " +
+  "details, dial, frame, lenses, stones, fabric, logos, links, or " +
+  "metal finish. Do not change the customer, hand, fingers, face, " +
+  "skin, body, background, pose, or lighting outside the masked area.";
+
+/**
+ * Compose the standard preservation footer. Caller picks whether the
+ * mask block or the no-mask focus block is appended.
  */
 export function preservationFooter(opts: { maskUsed: boolean }): string {
   return [
@@ -54,5 +73,19 @@ export function preservationFooter(opts: { maskUsed: boolean }): string {
     PRODUCT_FIDELITY_BLOCK,
     NO_HALLUCINATION_BLOCK,
     opts.maskUsed ? MASK_BLOCK : NO_MASK_FOCUS_BLOCK,
+  ].join("\n\n");
+}
+
+/**
+ * Footer for the product-lock pipeline. Replaces PRODUCT_FIDELITY_BLOCK
+ * with the stronger PRODUCT_LOCK_BLOCK and *always* appends MASK_BLOCK
+ * (a mask is required by the lock pipeline).
+ */
+export function productLockFooter(): string {
+  return [
+    CUSTOMER_PRESERVATION_BLOCK,
+    PRODUCT_LOCK_BLOCK,
+    NO_HALLUCINATION_BLOCK,
+    MASK_BLOCK,
   ].join("\n\n");
 }

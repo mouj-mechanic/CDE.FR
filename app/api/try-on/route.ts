@@ -9,18 +9,24 @@ import {
   MaskValidationError,
   OpenAIConfigError,
 } from "@/lib/providers/openaiImage";
+import {
+  compositeLockedProduct,
+  isProductLockEnabled,
+  ProductLockError,
+} from "@/lib/tryon/productLockComposite";
 import { ACCEPTED_IMAGE_TYPES, MAX_FILE_SIZE } from "@/lib/utils";
 import { trackTryOnUsage } from "@/lib/usage";
 import type {
   CategoryId,
   FingerId,
   HandJewelryType,
+  QualityChecks,
   RenderMode,
-  TryOnRequest,
   TryOnResponse,
   TryOnWarning,
   WatchPlacementResponse,
 } from "@/types";
+import type { TryOnRequestWithLockHint } from "@/lib/tryOnService";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
@@ -574,10 +580,32 @@ export async function POST(request: NextRequest) {
       ? await fetchCutoutBuffers(productCutoutUrls)
       : [];
 
+    // ── Decide whether the product-lock pipeline can apply ────────────
+    // Lock requires:
+    //   - OpenAI provider active
+    //   - the env flag is on (OPENAI_PRODUCT_LOCK ≠ false)
+    //   - this is an accessory category (clothes deform, lock breaks fit)
+    //   - we have BOTH a composite (so we know where the product is) AND
+    //     a mask (so the AI only edits the contact band).
+    const productLockEnabled = isProductLockEnabled();
+    const productLockCandidate =
+      openaiActive &&
+      productLockEnabled &&
+      isAccessory &&
+      inpaintComposite !== null &&
+      inpaintMask !== null;
+
     // Forward the mask whenever it's present — OpenAI image edit can
-    // accept a mask without a composite. The composite is only attached
-    // when the client explicitly asks for inpainting refinement.
-    const params: TryOnRequest = {
+    // accept a mask without a composite. The composite is forwarded when:
+    //   - the client explicitly asks for inpainting refinement, OR
+    //   - the product-lock pipeline is engaged (which needs both layers
+    //     to derive the silhouette server-side).
+    const forwardComposite =
+      (useInpainting || productLockCandidate) &&
+      inpaintComposite !== null &&
+      inpaintMask !== null;
+
+    const params: TryOnRequestWithLockHint = {
       category,
       userImage,
       productImages: finalProductImages,
@@ -588,7 +616,8 @@ export async function POST(request: NextRequest) {
       handJewelryType,
       ringFinger,
       renderModeRequest: renderModeRequest,
-      ...(useInpainting && inpaintComposite && inpaintMask
+      productLocked: productLockCandidate,
+      ...(forwardComposite && inpaintComposite && inpaintMask
         ? { inpaintComposite, inpaintMask }
         : inpaintMask
           ? { inpaintMask }
@@ -622,6 +651,91 @@ export async function POST(request: NextRequest) {
           }
         ).openaiMeta ?? null;
 
+      // ── Product-lock post-processing ────────────────────────────
+      // For accessory categories with composite+mask, re-stamp the
+      // original product PNG on top of the AI output. The function
+      // returns `productLocked=false` (with a skip reason) when the
+      // diff-derived silhouette is unusable — that's a soft warning,
+      // not an error. A hard ProductLockError aborts the request:
+      // we never want to silently ship an unlocked accessory result
+      // when the operator opted into the lock pipeline.
+      let finalResultUrl = result.resultUrl;
+      let lockedProductLocked = false;
+      let productFidelityMode: QualityChecks["productFidelityMode"] =
+        usedOpenAI ? "ai-only" : undefined;
+      let productSilhouetteRatio: number | undefined;
+      const lockWarnings: TryOnWarning[] = [];
+
+      if (
+        usedOpenAI &&
+        productLockCandidate &&
+        openaiMeta &&
+        openaiMeta.compositeAtTargetSize
+      ) {
+        try {
+          const lockResult = await compositeLockedProduct({
+            baseImageAfterAI: openaiMeta.resultBuffer,
+            compositeBeforeAI: openaiMeta.compositeAtTargetSize,
+            userBaseImage: openaiMeta.baseAtTargetSize,
+            category,
+          });
+          lockedProductLocked = lockResult.productLocked;
+          productFidelityMode = lockResult.productFidelityMode;
+          productSilhouetteRatio = lockResult.silhouetteRatio;
+          if (lockResult.productLocked) {
+            finalResultUrl = `data:image/png;base64,${lockResult.buffer.toString(
+              "base64"
+            )}`;
+          } else if (lockResult.skipReason) {
+            lockWarnings.push({
+              code: "product-lock-skipped",
+              message: `Product lock not applied: ${lockResult.skipReason}`,
+            });
+          }
+        } catch (lockErr) {
+          // Hard failure of the lock pipeline. The spec says: do NOT
+          // silently return a bad result. Surface a clear 502.
+          console.error(
+            `[try-on] product-lock-failed category=${category} message=${
+              lockErr instanceof Error ? lockErr.message : lockErr
+            }`
+          );
+          if (lockErr instanceof ProductLockError) {
+            return NextResponse.json(
+              {
+                ok: false,
+                provider: "openai",
+                renderMode: "api-image-edit-product-lock" as RenderMode,
+                category,
+                error: "Product fidelity lock failed.",
+                details: lockErr.message,
+              },
+              { status: 502 }
+            );
+          }
+          throw lockErr;
+        }
+      } else if (usedOpenAI && category === "clothes") {
+        productFidelityMode = "ai-only";
+        lockWarnings.push({
+          code: "clothes-fidelity-warning",
+          message:
+            "Clothing try-on may slightly reinterpret garment details. Use high-quality product images for better fidelity.",
+        });
+      } else if (
+        usedOpenAI &&
+        productLockEnabled &&
+        isAccessory &&
+        !productLockCandidate
+      ) {
+        productFidelityMode = "ai-only";
+        lockWarnings.push({
+          code: "product-lock-unavailable",
+          message:
+            "Product lock unavailable: a composite + mask are required to enforce product fidelity.",
+        });
+      }
+
       const debug = {
         ...(result.debug ?? {
           imageCount: 1 + productImages.length + productUrls.length,
@@ -637,25 +751,78 @@ export async function POST(request: NextRequest) {
         // renderer in the success path.
         usedLocalRenderer: false,
         maskUsed: usedOpenAI ? Boolean(openaiMeta?.maskUsed) : useInpainting,
+        productLocked: lockedProductLocked,
       };
 
       const renderMode: RenderMode = usedOpenAI
-        ? "api-image-edit"
+        ? lockedProductLocked
+          ? "api-image-edit-product-lock"
+          : "api-image-edit"
         : result.provider === "mock"
           ? "mock"
           : category === "clothes" && result.model?.includes("fashn")
             ? "specialized-vton"
             : "premium-ai";
 
+      // ── Strict customer preservation gate ──────────────────────────
+      // The spec says: if the AI changed too much outside the mask, we
+      // must not silently accept it. In API-only mode we surface a 502
+      // with a tightening hint. Otherwise we degrade to a warning.
+      const outsideOk = openaiMeta?.qualityChecks.outsideMaskPreserved ?? true;
+      const customerStrictMode =
+        (process.env.OPENAI_PRESERVE_CUSTOMER_STRICT ?? "true")
+          .trim()
+          .toLowerCase() !== "false";
+      if (
+        usedOpenAI &&
+        customerStrictMode &&
+        !outsideOk &&
+        apiOnlyMode &&
+        Boolean(openaiMeta?.maskUsed)
+      ) {
+        console.warn(
+          `[try-on] strict-preservation-failed category=${category} score=${openaiMeta?.qualityChecks.outsideMaskChangeScore.toFixed(
+            3
+          )}`
+        );
+        return NextResponse.json(
+          {
+            ok: false,
+            provider: "openai",
+            renderMode,
+            category,
+            error:
+              "The edit changed too much of the customer image. Use a tighter mask.",
+            qualityChecks: {
+              ...openaiMeta?.qualityChecks,
+              productLocked: lockedProductLocked,
+              productFidelityMode,
+              productSilhouetteRatio,
+            },
+          },
+          { status: 502 }
+        );
+      }
+
       // Merge the provider's own warnings (mask validation, low-res
       // product, outside-mask drift, etc.) with the client warnings.
       const mergedWarnings: TryOnWarning[] = [
         ...allClientWarnings,
         ...(openaiMeta?.warnings ?? []),
+        ...lockWarnings,
       ];
 
+      const mergedQualityChecks: QualityChecks | undefined = openaiMeta
+        ? {
+            ...openaiMeta.qualityChecks,
+            productLocked: lockedProductLocked,
+            productFidelityMode,
+            productSilhouetteRatio,
+          }
+        : undefined;
+
       console.info(
-        `[try-on] success provider=${result.provider} model=${result.model} mock=${Boolean(result.mock)} renderMode=${renderMode} maskUsed=${debug.maskUsed} usedLocalRenderer=false durationMs=${durationMs} imageCount=${debug.imageCount} productImageCount=${debug.productImageCount} ${
+        `[try-on] success provider=${result.provider} model=${result.model} mock=${Boolean(result.mock)} renderMode=${renderMode} maskUsed=${debug.maskUsed} productLocked=${lockedProductLocked} productFidelityMode=${productFidelityMode ?? "n/a"} usedLocalRenderer=false durationMs=${durationMs} imageCount=${debug.imageCount} productImageCount=${debug.productImageCount} ${
           openaiMeta
             ? `outsideMaskScore=${openaiMeta.qualityChecks.outsideMaskChangeScore.toFixed(3)} outsideMaskPreserved=${openaiMeta.qualityChecks.outsideMaskPreserved}`
             : ""
@@ -674,7 +841,13 @@ export async function POST(request: NextRequest) {
 
       return NextResponse.json({
         ok: true,
-        ...result,
+        resultUrl: finalResultUrl,
+        previewUrl: result.previewUrl,
+        generatedAt: result.generatedAt,
+        mock: result.mock,
+        provider: result.provider,
+        model: result.model,
+        category: result.category ?? category,
         durationMs,
         debug,
         renderMode,
@@ -683,9 +856,10 @@ export async function POST(request: NextRequest) {
         placement: watchPlacement,
         edgeQuality,
         // OpenAI fidelity surface
-        qualityChecks: openaiMeta?.qualityChecks,
-        preserveCustomerStrict: usedOpenAI,
+        qualityChecks: mergedQualityChecks,
+        preserveCustomerStrict: usedOpenAI && customerStrictMode,
         preserveProductStrict: usedOpenAI,
+        productLocked: lockedProductLocked,
       });
     } catch (premiumError) {
       // ProviderConfigError must still bubble — that's a misconfiguration,

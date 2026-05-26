@@ -1,5 +1,5 @@
 import type { CategoryId, FingerId, HandJewelryType } from "@/types";
-import { preservationFooter } from "./preservationBlocks";
+import { preservationFooter, productLockFooter } from "./preservationBlocks";
 
 /**
  * OpenAI GPT Image prompt builder.
@@ -24,6 +24,12 @@ export interface OpenAITryOnPromptOptions {
   maskUsed: boolean;
   targetFinger?: FingerId;
   notes?: string;
+  /**
+   * True when the product has been pre-composited onto the base image and
+   * will be re-stamped on top after the AI returns (product-lock
+   * pipeline). The prompt switches to "integrate only — do not redraw".
+   */
+  productLocked?: boolean;
 }
 
 const FINGER_LABEL: Record<FingerId, string> = {
@@ -34,7 +40,92 @@ const FINGER_LABEL: Record<FingerId, string> = {
 };
 
 // ──────────────────────────────────────────────────────────────────────────
-//  Category-specific leads
+//  Category-specific leads — product-LOCK variants
+//  ("the product has already been positioned, only integrate").
+// ──────────────────────────────────────────────────────────────────────────
+
+/**
+ * Generic accessory lock lead. Exported so non-default callers (e.g.
+ * future operator overrides) can reach for the generic wording without
+ * picking a specific category.
+ */
+export const ACCESSORY_LOCK_GENERIC =
+  "Use the customer image as the base. The product has already been " +
+  "positioned as a locked reference layer. Edit only the masked area " +
+  "to improve realistic contact shadows, edge blending, local " +
+  "lighting, and surface integration. Do not redesign, move, replace, " +
+  "recolor, or redraw the product. Do not change the customer, hand, " +
+  "fingers, face, skin, body, background, pose, or lighting outside " +
+  "the mask. Everything outside the mask must remain unchanged.";
+
+function watchLockLead(): string {
+  return (
+    "The watch is already positioned on the wrist as a locked product " +
+    "reference. Improve only the local contact shadows, wrist " +
+    "integration, edge blending, and realistic lighting around the " +
+    "watch. Do not move the watch. Do not redraw the watch. Do not " +
+    "change the dial, bracelet, metal, size, color, or details. Do " +
+    "not alter the hand, fingers, skin texture, arm hair, background, " +
+    "or anatomy."
+  );
+}
+
+function glassesLockLead(): string {
+  return (
+    "The glasses are already positioned as a locked product reference. " +
+    "Improve only local shadows, reflections, and blending around the " +
+    "frame, nose bridge, and temples. Do not redesign the frame. Do " +
+    "not change the eyes, face, skin, mouth, hair, identity, or " +
+    "background."
+  );
+}
+
+function ringLockLead(opts: OpenAITryOnPromptOptions): string {
+  const finger = opts.targetFinger
+    ? FINGER_LABEL[opts.targetFinger]
+    : "the selected finger";
+  return (
+    `The ring is already positioned on ${finger} as a locked product ` +
+    "reference. Improve only contact shadows, reflections, and " +
+    "blending around the ring. Do not change the ring design, stones, " +
+    "metal, shape, or color. Do not alter fingers, nails, hand " +
+    "anatomy, skin, or background."
+  );
+}
+
+function braceletLockLead(): string {
+  return (
+    "The bracelet is already positioned around the wrist as a locked " +
+    "product reference. Improve only contact shadows, reflections, " +
+    "and blending around the bracelet. Do not change the bracelet " +
+    "design, stones, metal, shape, or color. Do not alter the wrist, " +
+    "fingers, hand anatomy, skin, or background."
+  );
+}
+
+function genericHandJewelryLockLead(): string {
+  return (
+    "The jewelry is already positioned as a locked product reference. " +
+    "Improve only contact shadows, reflections, and blending around " +
+    "the jewelry. Do not change the ring or bracelet design, stones, " +
+    "metal, shape, or color. Do not alter fingers, nails, hand " +
+    "anatomy, skin, or background."
+  );
+}
+
+function headwearLockLead(): string {
+  return (
+    "The headwear is already positioned as a locked product reference. " +
+    "Improve only edge blending, shadows, and lighting around the " +
+    "headwear. Do not redesign the product. Do not change the face, " +
+    "hair, identity, or background."
+  );
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+//  Category-specific leads — placement variants
+//  (used when the product was NOT pre-composited; the AI must still
+//  place it on the body).
 // ──────────────────────────────────────────────────────────────────────────
 
 function watchLead(): string {
@@ -114,7 +205,9 @@ function clothesLead(): string {
     "product image as the exact product reference. Dress the person in " +
     "the garment with realistic fit, folds, fabric texture, and " +
     "perspective. Preserve the exact garment color, pattern, logos, " +
-    "fabric texture, and cut from the reference."
+    "fabric texture, and cut from the reference. Preserve the face, " +
+    "hair, hands, and identity exactly. Avoid altering anything " +
+    "outside the garment area."
   );
 }
 
@@ -122,41 +215,68 @@ function clothesLead(): string {
 //  Public API
 // ──────────────────────────────────────────────────────────────────────────
 
-export function buildOpenAITryOnPrompt(o: OpenAITryOnPromptOptions): string {
-  let lead: string;
+function pickAccessoryLockLead(o: OpenAITryOnPromptOptions): string {
   switch (o.category) {
     case "watch":
-      lead = watchLead();
-      break;
+      return watchLockLead();
     case "glasses":
-      lead = glassesLead();
-      break;
+      return glassesLockLead();
     case "headwear":
-      lead = headwearLead();
-      break;
+      return headwearLockLead();
     case "hand-jewelry":
-      if (o.productSubtype === "ring") lead = ringLead(o);
-      else if (o.productSubtype === "bracelet") lead = braceletLead();
-      else lead = genericHandJewelryLead();
-      break;
+      if (o.productSubtype === "ring") return ringLockLead(o);
+      if (o.productSubtype === "bracelet") return braceletLockLead();
+      return genericHandJewelryLockLead();
     case "clothes":
-      lead = clothesLead();
-      break;
-    default: {
-      const _never: never = o.category;
-      throw new Error(`Unsupported category: ${String(_never)}`);
-    }
+      // Clothes do not use the lock pipeline; this branch is unreachable
+      // in practice but kept for exhaustiveness.
+      return ACCESSORY_LOCK_GENERIC;
   }
+}
 
-  const footer = preservationFooter({ maskUsed: o.maskUsed });
+function pickPlacementLead(o: OpenAITryOnPromptOptions): string {
+  switch (o.category) {
+    case "watch":
+      return watchLead();
+    case "glasses":
+      return glassesLead();
+    case "headwear":
+      return headwearLead();
+    case "hand-jewelry":
+      if (o.productSubtype === "ring") return ringLead(o);
+      if (o.productSubtype === "bracelet") return braceletLead();
+      return genericHandJewelryLead();
+    case "clothes":
+      return clothesLead();
+  }
+}
+
+export function buildOpenAITryOnPrompt(o: OpenAITryOnPromptOptions): string {
+  // Clothes never use the lock pipeline (garments must deform to the
+  // body — re-stamping the original PNG breaks fit). Everything else
+  // gets the "the product is already positioned, integrate only" lead
+  // when productLocked is true.
+  const useLock = Boolean(o.productLocked) && o.category !== "clothes";
+
+  const lead = useLock
+    ? pickAccessoryLockLead(o)
+    : pickPlacementLead(o);
+
+  const footer = useLock
+    ? productLockFooter()
+    : preservationFooter({ maskUsed: o.maskUsed });
+
   let prompt = `${lead}\n\n${footer}`;
   if (o.notes && o.notes.trim()) {
     prompt += `\n\nAdditional context: ${o.notes.trim()}`;
   }
-  prompt +=
-    "\n\nReturn a realistic e-commerce virtual try-on preview. Do not " +
-    "include any product background. Do not paste the product as a flat " +
-    "sticker.";
+  prompt += useLock
+    ? "\n\nReturn a realistic e-commerce virtual try-on preview. Do " +
+      "not redraw the product itself — only refine local lighting and " +
+      "shadows."
+    : "\n\nReturn a realistic e-commerce virtual try-on preview. Do " +
+      "not include any product background. Do not paste the product " +
+      "as a flat sticker.";
   return prompt;
 }
 

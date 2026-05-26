@@ -1,4 +1,10 @@
 import type { CategoryId, TryOnRequest, TryOnResponse } from "@/types";
+
+/** Internal field — set by the API route when the lock pipeline is engaged. */
+export interface TryOnRequestWithLockHint extends TryOnRequest {
+  productLocked?: boolean;
+}
+
 import { pickMockResult } from "./mockResults";
 import { falKontextTryOn, FAL_KONTEXT_MODEL } from "./providers/falKontext";
 import {
@@ -82,7 +88,7 @@ function readProviderEnv(): ProviderEnv {
  *                                 fal si FAL_KEY présent, sinon mock.
  */
 export async function generateTryOnImage(
-  params: TryOnRequest
+  params: TryOnRequestWithLockHint
 ): Promise<TryOnResponse> {
   const { provider, falKey, fashnKey, openaiKey } = readProviderEnv();
 
@@ -103,6 +109,7 @@ export async function generateTryOnImage(
       inpaintComposite: params.inpaintComposite,
       inpaintMask: params.inpaintMask,
       productCutoutBuffers: params.productCutoutBuffers,
+      productLocked: params.productLocked,
     });
   }
 
@@ -113,6 +120,7 @@ export async function generateTryOnImage(
         inpaintComposite: params.inpaintComposite,
         inpaintMask: params.inpaintMask,
         productCutoutBuffers: params.productCutoutBuffers,
+        productLocked: params.productLocked,
       });
     }
     if (falKey) return runFal(params, falKey, fashnKey);

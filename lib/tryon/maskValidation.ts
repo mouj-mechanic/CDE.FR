@@ -19,8 +19,16 @@ import type { CategoryId, TryOnWarning } from "@/types";
  *    operators can act on them.
  */
 
-export const MAX_WHITE_RATIO_ACCESSORY = 0.35; // watch/glasses/headwear/hand-jewelry
-export const MAX_WHITE_RATIO_CLOTHES = 0.75;
+/**
+ * Max ratio of white (editable) pixels to total pixels.
+ *
+ * Tightened compared to the first pass: with the product-lock pipeline
+ * the mask only needs to cover the contact band around the product
+ * (shadows, blending). A 25% mask would mean we are asking the AI to
+ * touch a quarter of the customer image — way too much.
+ */
+export const MAX_WHITE_RATIO_ACCESSORY = 0.25; // watch/glasses/headwear/hand-jewelry
+export const MAX_WHITE_RATIO_CLOTHES = 0.7;
 export const MIN_WHITE_RATIO = 0.005;
 
 export interface MaskValidationResult {
@@ -39,15 +47,15 @@ function maxWhiteRatioFor(category: CategoryId): number {
 
 const ADVICE: Record<CategoryId, string> = {
   watch:
-    "Mask should focus on the wrist only — avoid covering fingers or the full hand.",
+    "Mask should focus on the wrist / product contact area only — do not cover fingers or the full hand.",
   glasses:
-    "Mask should focus on eyes, nose bridge, and frame area only — avoid the mouth and full face.",
+    "Mask should focus on eyes, nose bridge, frame, and temples — do not cover the mouth or full face.",
   headwear:
-    "Mask should focus on the headwear area / top of head — avoid covering the full face.",
+    "Mask should focus on the headwear area / top of head — do not cover the full face.",
   "hand-jewelry":
-    "Mask should focus on the target finger or wrist segment only — avoid the whole hand.",
+    "Mask should focus on a single finger segment (ring) or the wrist area (bracelet) — do not cover the whole hand.",
   clothes:
-    "Mask should cover the garment area but avoid face and hair when possible.",
+    "Mask should cover the garment area only — avoid face, hair, and hands when possible.",
 };
 
 /**

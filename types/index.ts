@@ -146,6 +146,8 @@ export interface TryOnResponseDebug {
   usedLocalRenderer?: boolean;
   /** Whether an OpenAI alpha mask was attached to the edit call. */
   maskUsed?: boolean;
+  /** Whether the product-lock pipeline successfully re-stamped the product. */
+  productLocked?: boolean;
 }
 
 /** Lightweight server-side fidelity checks computed after generation. */
@@ -158,6 +160,21 @@ export interface QualityChecks {
   productFidelityWarning: boolean;
   /** Aggregate flag: anything that should make the operator double-check. */
   customerPreservationWarning: boolean;
+  /**
+   * True when the original product PNG was re-stamped on top of the AI
+   * result (product-lock pipeline). Always false for clothes.
+   */
+  productLocked?: boolean;
+  /** How product fidelity was enforced for this generation. */
+  productFidelityMode?:
+    | "ai-only"
+    | "locked-overlay-after-ai"
+    | "locked-overlay-skipped";
+  /**
+   * Ratio of pixels considered "product silhouette" when running the
+   * lock pipeline. Useful for debugging. 0..1.
+   */
+  productSilhouetteRatio?: number;
 }
 
 export type RenderMode =
@@ -165,6 +182,8 @@ export type RenderMode =
   | "premium-ai"
   | "specialized-vton"
   | "api-image-edit"
+  /** OpenAI image edit + product-lock re-stamp on top (accessories). */
+  | "api-image-edit-product-lock"
   | "mock";
 
 export type QualityStatus =
@@ -218,6 +237,12 @@ export interface TryOnResponse {
    */
   preserveCustomerStrict?: boolean;
   preserveProductStrict?: boolean;
+  /**
+   * Top-level mirror of `qualityChecks.productLocked` for callers that
+   * just want to know "did the original product PNG win?". Mirrors the
+   * spec's `productLocked` field on the API response.
+   */
+  productLocked?: boolean;
 }
 
 export interface ProductResolveResult {
@@ -239,6 +264,8 @@ export interface TryOnResultMeta {
   usedLocalRenderer?: boolean;
   /** Quality checks computed server-side (OpenAI path). */
   qualityChecks?: QualityChecks;
+  /** Top-level mirror of qualityChecks.productLocked for UI consumption. */
+  productLocked?: boolean;
 }
 
 export interface TryOnState {

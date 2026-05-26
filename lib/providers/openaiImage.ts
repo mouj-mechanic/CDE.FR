@@ -399,6 +399,13 @@ export interface GenerateOpenAIImageTryOnParams {
   quality?: OpenAIQuality;
   size?: OpenAISize;
   notes?: string;
+  /**
+   * True when the caller plans to re-stamp the original product PNG on
+   * top of the result (product-lock pipeline). The prompt switches to
+   * "the product is already positioned, only integrate". Has no effect
+   * on the actual API call — only the prompt wording.
+   */
+  productLocked?: boolean;
 }
 
 export interface QualityChecks {
@@ -424,6 +431,25 @@ export interface OpenAIImageMeta {
   qualityChecks: QualityChecks;
   /** Validation warnings raised by `maskValidation` and friends. */
   warnings: TryOnWarning[];
+  /**
+   * Raw PNG buffer of the AI result. Kept here so callers (the API
+   * route) can run post-processing (product-lock re-stamp) without
+   * decoding the base64 data URL again. Not serialised to JSON — the
+   * route picks specific fields explicitly.
+   */
+  resultBuffer: Buffer;
+  /**
+   * Resized *user* image (no product) at the target size. Used by the
+   * product-lock pipeline to diff against the composite and recover the
+   * product silhouette. Always present.
+   */
+  baseAtTargetSize: Buffer;
+  /**
+   * Resized composite (user photo + placed product) at the target size.
+   * Present only when the caller supplied `compositeImage` — that's the
+   * input the product-lock pipeline diffs against `baseAtTargetSize`.
+   */
+  compositeAtTargetSize?: Buffer;
 }
 
 export interface GenerateOpenAIImageTryOnResult {
@@ -507,6 +533,16 @@ export async function generateOpenAIImageTryOn(
   const squaredBase = await fitCover(primaryBuf, targetW, targetH);
   baseImages.push(squaredBase);
 
+  // Always keep a target-size version of the *original* user image too,
+  // so post-processing (product-lock diff) has both layers regardless
+  // of whether a composite was used.
+  const userBaseBuf = compositeUsedAsBase
+    ? Buffer.from(await params.userImage.arrayBuffer())
+    : primaryBuf;
+  const userAtTargetSize = compositeUsedAsBase
+    ? await fitCover(userBaseBuf, targetW, targetH)
+    : squaredBase;
+
   // Multi-image: when the model supports it, stack:
   //   1. base (already pushed)
   //   2. transparent product cutout (highest fidelity reference)
@@ -575,6 +611,7 @@ export async function generateOpenAIImageTryOn(
       maskUsed: Boolean(alphaMask),
       targetFinger: params.targetFinger,
       notes: params.notes,
+      productLocked: params.productLocked,
     });
 
   console.info(
@@ -655,6 +692,9 @@ export async function generateOpenAIImageTryOn(
       size: resolved,
       qualityChecks,
       warnings,
+      resultBuffer: resultBuf,
+      baseAtTargetSize: userAtTargetSize,
+      compositeAtTargetSize: compositeUsedAsBase ? squaredBase : undefined,
     },
   };
   // Note: `maskAtTargetSize` is intentionally unused — kept here in case
@@ -671,6 +711,11 @@ export interface OpenAIImageParams extends TryOnRequest {
   inpaintMask?: File;
   /** Server-fetched cutout buffers (route resolves productCutoutUrls). */
   productCutoutBuffers?: Buffer[];
+  /**
+   * True when the route plans to re-stamp the product after the AI call
+   * (product-lock pipeline). Drives the prompt wording.
+   */
+  productLocked?: boolean;
 }
 
 export async function openaiTryOn(
@@ -694,6 +739,7 @@ export async function openaiTryOn(
     productSubtype: params.handJewelryType,
     targetFinger: params.ringFinger,
     notes: params.notes,
+    productLocked: params.productLocked,
   });
 
   return {

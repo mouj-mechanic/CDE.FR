@@ -37,7 +37,7 @@ interface ResultViewProps {
   warnings?: TryOnWarning[];
   /**
    * True when the API attached an alpha mask to the OpenAI edit call.
-   * Surfaces the "Édition guidée par masque" badge.
+   * Surfaces the "Édition masquée" badge.
    */
   maskUsed?: boolean;
   /**
@@ -49,6 +49,12 @@ interface ResultViewProps {
   usedLocalRenderer?: boolean;
   /** Server-computed fidelity checks (OpenAI path). */
   qualityChecks?: QualityChecks;
+  /**
+   * True when the original product PNG was re-stamped on top of the AI
+   * result. Surfaces the "Produit verrouillé" badge and an explanatory
+   * note.
+   */
+  productLocked?: boolean;
 }
 
 const REVEAL_START_MS = 150;
@@ -71,6 +77,7 @@ export function ResultView({
   maskUsed,
   usedLocalRenderer,
   qualityChecks,
+  productLocked,
 }: ResultViewProps) {
   const [phase, setPhase] = useState<Phase>("waiting");
   const [showBurst, setShowBurst] = useState(false);
@@ -213,7 +220,8 @@ export function ResultView({
                 ? "Aperçu rapide"
                 : renderMode === "specialized-vton"
                   ? "Rendu spécialisé vêtements"
-                  : renderMode === "api-image-edit"
+                  : renderMode === "api-image-edit" ||
+                      renderMode === "api-image-edit-product-lock"
                     ? "Généré avec GPT Image"
                     : renderMode === "premium-ai"
                       ? "Rendu IA premium"
@@ -226,9 +234,32 @@ export function ResultView({
                 </span>
               )}
             </span>
-            {!mock && provider === "openai" && maskUsed && (
-              <span className="text-[10px] uppercase tracking-wider text-ink-muted/70">
-                Édition guidée par masque
+
+            {/* Fidelity badges — strict pipeline transparency */}
+            {!mock && provider === "openai" && (
+              <div className="mt-1 flex flex-wrap items-center justify-center gap-1.5">
+                {productLocked && (
+                  <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-emerald-800">
+                    Produit verrouillé
+                  </span>
+                )}
+                {qualityChecks?.outsideMaskPreserved === true && (
+                  <span className="inline-flex items-center gap-1 rounded-full bg-sky-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-sky-800">
+                    Client préservé
+                  </span>
+                )}
+                {maskUsed && (
+                  <span className="inline-flex items-center gap-1 rounded-full bg-bordeaux/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-bordeaux">
+                    Édition masquée
+                  </span>
+                )}
+              </div>
+            )}
+
+            {productLocked && (
+              <span className="mt-0.5 text-[10px] text-ink-muted/80">
+                L&apos;article original a été conservé comme référence
+                verrouillée.
               </span>
             )}
             {!mock &&
@@ -256,10 +287,11 @@ export function ResultView({
             )}
             {qualityChecks?.outsideMaskPreserved === false && (
               <span className="text-[11px] font-medium text-amber-800">
-                Attention : modifications hors masque détectées (préservation
-                du client : {Math.round(
+                L&apos;IA a trop modifié l&apos;image client. Essayez un
+                masque plus précis. (préservation : {Math.round(
                   qualityChecks.outsideMaskChangeScore * 100
-                )}%)
+                )}
+                %)
               </span>
             )}
             {qualityChecks?.productFidelityWarning === true && (
