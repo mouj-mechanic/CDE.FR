@@ -319,11 +319,12 @@ describe("checkWatchRotationQuality", () => {
     process.env.WATCH_ROTATION_FORCE_MIN_ON_DIAGONAL = "true";
     try {
       const out = forceMinimumRotationForDiagonalForearm({
-        forearmAxisDeg: 130, // bottom-left forearm
+        forearmAxisDeg: 130, // bottom-left forearm (40° off vertical)
         currentRotationDeg: 5, // estimate landed near 0
       });
       expect(out.forced).toBe(true);
-      expect(out.rotationDeg).toBe(32);
+      // 40° tilt × 2 = 80°, capped to target 35°
+      expect(out.rotationDeg).toBe(35);
     } finally {
       if (original === undefined)
         delete process.env.WATCH_ROTATION_FORCE_MIN_ON_DIAGONAL;
@@ -343,7 +344,7 @@ describe("checkWatchRotationQuality", () => {
   it("does NOT override an existing meaningful rotation", () => {
     const out = forceMinimumRotationForDiagonalForearm({
       forearmAxisDeg: 130,
-      currentRotationDeg: 28, // already meaningful
+      currentRotationDeg: 28, // already meaningful (≥ 18)
     });
     expect(out.forced).toBe(false);
     expect(out.rotationDeg).toBe(28);
@@ -351,11 +352,12 @@ describe("checkWatchRotationQuality", () => {
 
   it("flips the sign for a bottom-right forearm", () => {
     const out = forceMinimumRotationForDiagonalForearm({
-      forearmAxisDeg: 50, // bottom-right (forearm exits to bottom-right)
+      forearmAxisDeg: 50, // bottom-right (40° off vertical)
       currentRotationDeg: 5,
     });
     expect(out.forced).toBe(true);
-    expect(out.rotationDeg).toBe(-32);
+    // 40° tilt × 2 capped to target 35°, negative sign
+    expect(out.rotationDeg).toBe(-35);
   });
 
   it("treats 180°-flipped angles as equivalent (strap is a line)", () => {

@@ -283,23 +283,30 @@ export function forceMinimumRotationForDiagonalForearm(input: {
   targetDeg?: number;
   side?: HandSide;
 }): { rotationDeg: number; forced: boolean } {
-  const threshold = Math.abs(input.thresholdDeg ?? 15);
-  const target = Math.abs(input.targetDeg ?? 32);
+  // We use a CONTINUOUS amplification rather than a hard threshold
+  // so even small forearm tilts produce a visible (if subtle) watch
+  // rotation. The previous "all-or-nothing" force at 15° threshold
+  // missed the very common case of a wrist photo where the forearm
+  // is only 5-12° off vertical — geometrically correct but visually
+  // boring because a strictly vertical strap reads as a sticker.
+  const threshold = Math.abs(input.thresholdDeg ?? 3); // 3° dead zone
+  const target = Math.abs(input.targetDeg ?? 35);
   const forearm = normalizeAngle180(input.forearmAxisDeg);
-  // Vertical = ±90°. Anything within `threshold` of vertical is too
-  // close to a straight portrait pose to need forcing.
+
   const distFromVertical = Math.min(
     Math.abs(forearm - 90),
     Math.abs(forearm + 90)
   );
+  // Truly vertical (within `threshold` deadzone) → no forcing.
   if (distFromVertical <= threshold) {
     return { rotationDeg: input.currentRotationDeg, forced: false };
   }
-  // Already a meaningful rotation? Leave it alone.
-  if (Math.abs(input.currentRotationDeg) >= threshold) {
+  // The current rotation is already meaningfully tilted in the
+  // right direction → leave it alone.
+  if (Math.abs(input.currentRotationDeg) >= 18) {
     return { rotationDeg: input.currentRotationDeg, forced: false };
   }
-  // Determine the expected sign:
+  // Determine the expected sign of rotation:
   //   forearm in (90°, 180°]   → bottom-left arm  → positive rotation
   //   forearm in [-180°, -90°) → top-left arm     → negative rotation
   //   forearm in (0°, 90°)     → bottom-right arm → negative rotation
@@ -310,9 +317,13 @@ export function forceMinimumRotationForDiagonalForearm(input: {
   } else {
     sign = forearm > 0 ? -1 : 1;
   }
-  // Mirror hands get the opposite forcing direction.
   if (input.side === "left") sign = -sign;
-  return { rotationDeg: sign * target, forced: true };
+  // Amplify the actual tilt by 2× and clamp by `target`. A 5° tilt
+  // → 10° rotation; a 15° tilt → 30°; a 20° tilt → capped at target.
+  //  This makes ALL noticeable tilts produce a perceptibly rotated
+  //  watch, while preserving the geometric direction.
+  const amplified = Math.min(target, Math.max(distFromVertical * 2, 12));
+  return { rotationDeg: sign * amplified, forced: true };
 }
 
 function envProductStrapAxis(meta?: ProductMeta): number {
