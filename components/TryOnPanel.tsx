@@ -31,8 +31,6 @@ import { HandJewelryOptions } from "./HandJewelryOptions";
 import { CategoryIcon } from "./CategoryIcon";
 import { LaunchButton } from "./LaunchButton";
 import { WatchAdjustPanel } from "./WatchAdjustPanel";
-import { MaskTestUploader } from "./MaskTestUploader";
-import { FidelityHintBanner } from "./FidelityHintBanner";
 
 interface TryOnPanelProps {
   category: Category;
@@ -55,8 +53,6 @@ export function TryOnPanel({
   const [watchOverrideUrl, setWatchOverrideUrl] = useState<string | null>(null);
   const [refining, setRefining] = useState(false);
   const [refineError, setRefineError] = useState<string | null>(null);
-  // Optional manual mask uploaded by the operator (any category).
-  const [manualMask, setManualMask] = useState<File | null>(null);
 
   useEffect(() => {
     if (initialProducts && initialProducts.length > 0) {
@@ -134,16 +130,35 @@ export function TryOnPanel({
       console.warn("[tryon] user image compression failed", err);
     }
 
-    let uploadPreview: Blob | null = pipelineResult?.previewBlob ?? null;
-    if (uploadPreview) {
+    // Composite + mask: PNG, alpha-preserving, never re-encoded as JPEG.
+    // We downsample the composite to a reasonable cap (1280 px on the
+    // longest side) so the payload stays under Vercel's 4.5 MB cap, but
+    // we keep the lossless PNG encoding so the customer's pose, the
+    // product silhouette and the contact band reach the server intact.
+    let compositeBlob: Blob | null = pipelineResult?.previewBlob ?? null;
+    let maskBlob: Blob | null = pipelineResult?.maskBlob ?? null;
+    if (compositeBlob) {
       try {
-        uploadPreview = await compressImageBlob(uploadPreview, {
+        compositeBlob = await compressImageBlob(compositeBlob, {
           maxDim: 1280,
-          quality: 0.85,
-          mimeType: "image/jpeg",
+          quality: 0.92,
+          mimeType: "image/png",
         });
       } catch (err) {
-        console.warn("[tryon] preview compression failed", err);
+        console.warn("[tryon] composite resize failed", err);
+      }
+    }
+    if (maskBlob) {
+      try {
+        // Resize the mask to the SAME max dim as the composite so the
+        // pair stays dimensionally consistent on the server.
+        maskBlob = await compressImageBlob(maskBlob, {
+          maxDim: 1280,
+          quality: 0.92,
+          mimeType: "image/png",
+        });
+      } catch (err) {
+        console.warn("[tryon] mask resize failed", err);
       }
     }
 
@@ -154,16 +169,22 @@ export function TryOnPanel({
     formData.append("handJewelryType", handJewelryType);
     formData.append("ringFinger", ringFinger);
 
-    if (uploadPreview) {
+    if (compositeBlob) {
       formData.append(
-        "previewImage",
-        new File([uploadPreview], "trywithai-preview.jpg", {
-          type: uploadPreview.type || "image/jpeg",
+        "compositeImage",
+        new File([compositeBlob], "trywithai-composite.png", {
+          type: "image/png",
         })
       );
       formData.append(
         "warnings",
         JSON.stringify(pipelineResult?.warnings ?? [])
+      );
+    }
+    if (maskBlob) {
+      formData.append(
+        "maskImage",
+        new File([maskBlob], "trywithai-mask.png", { type: "image/png" })
       );
     }
     if (pipelineResult) {
@@ -222,13 +243,6 @@ export function TryOnPanel({
     }
     if (merchantId) formData.append("merchantId", merchantId);
 
-    // Optional manual mask — works for every category. The route reads
-    // it under the same `maskImage` key as the watch's auto-generated
-    // contact-band mask.
-    if (manualMask) {
-      formData.append("maskImage", manualMask);
-    }
-
     try {
       const result = await safeFetchJson<
         TryOnResponse & {
@@ -276,6 +290,8 @@ export function TryOnPanel({
           usedLocalRenderer: data.debug?.usedLocalRenderer,
           qualityChecks: data.qualityChecks,
           productLocked: data.productLocked ?? data.debug?.productLocked,
+          fallbackUsed: data.debug?.fallbackUsed,
+          autoMaskGenerated: data.debug?.autoMaskGenerated,
         },
       });
     } catch (err) {
@@ -295,7 +311,6 @@ export function TryOnPanel({
     merchantId,
     handJewelryType,
     ringFinger,
-    manualMask,
   ]);
 
   /**
@@ -656,19 +671,6 @@ export function TryOnPanel({
                       className="input-field mt-2 resize-none"
                     />
                   </div>
-                  <MaskTestUploader
-                    value={manualMask}
-                    onChange={setManualMask}
-                  />
-                  {process.env.NEXT_PUBLIC_AI_PROVIDER === "openai" && (
-                    <FidelityHintBanner
-                      requireMask={
-                        process.env.NEXT_PUBLIC_REQUIRE_MASK_FOR_OPENAI ===
-                        "true"
-                      }
-                      hasMask={Boolean(manualMask)}
-                    />
-                  )}
                   <ConsentCheckbox checked={consent} onChange={setConsent} />
                 </div>
               )}

@@ -406,6 +406,13 @@ export interface GenerateOpenAIImageTryOnParams {
    * on the actual API call — only the prompt wording.
    */
   productLocked?: boolean;
+  /**
+   * True when the app produced both `compositeImage` and `maskImage`
+   * automatically (no human-curated mask). Triggers the strict
+   * `AUTO_MASKED_ACCESSORY_PROMPT` (or `getWatchTryOnPrompt()` for
+   * watches) instead of any "placement" lead. Prompt-only flag.
+   */
+  autoMaskedAccessory?: boolean;
 }
 
 export interface QualityChecks {
@@ -602,6 +609,22 @@ export async function generateOpenAIImageTryOn(
     baseImages.length = 16;
   }
 
+  // ── 4b. Hard dimension guard (composite + mask must match) ─────
+  if (alphaMask && maskAtTargetSize) {
+    const [maskDims, baseDims] = await Promise.all([
+      getDimensions(maskAtTargetSize),
+      getDimensions(squaredBase),
+    ]);
+    if (
+      maskDims.width !== baseDims.width ||
+      maskDims.height !== baseDims.height
+    ) {
+      throw new MaskDimensionError(
+        `mask=${maskDims.width}x${maskDims.height} base=${baseDims.width}x${baseDims.height}`
+      );
+    }
+  }
+
   // ── 5. Build prompt ─────────────────────────────────────────────
   const prompt =
     params.prompt ??
@@ -612,6 +635,7 @@ export async function generateOpenAIImageTryOn(
       targetFinger: params.targetFinger,
       notes: params.notes,
       productLocked: params.productLocked,
+      autoMaskedAccessory: params.autoMaskedAccessory,
     });
 
   console.info(
@@ -716,6 +740,11 @@ export interface OpenAIImageParams extends TryOnRequest {
    * (product-lock pipeline). Drives the prompt wording.
    */
   productLocked?: boolean;
+  /**
+   * True when the app auto-generated `inpaintComposite` + `inpaintMask`.
+   * Triggers the strict `AUTO_MASKED_ACCESSORY_PROMPT`.
+   */
+  autoMaskedAccessory?: boolean;
 }
 
 export async function openaiTryOn(
@@ -740,6 +769,7 @@ export async function openaiTryOn(
     targetFinger: params.ringFinger,
     notes: params.notes,
     productLocked: params.productLocked,
+    autoMaskedAccessory: params.autoMaskedAccessory,
   });
 
   return {

@@ -14,6 +14,8 @@ import {
   isProductLockEnabled,
   ProductLockError,
 } from "@/lib/tryon/productLockComposite";
+import { autoMaskFromComposite } from "@/lib/tryon/autoMaskFromComposite";
+import { checkProductFidelity } from "@/lib/tryon/productFidelityCheck";
 import { ACCEPTED_IMAGE_TYPES, MAX_FILE_SIZE } from "@/lib/utils";
 import { trackTryOnUsage } from "@/lib/usage";
 import type {
@@ -188,6 +190,32 @@ export async function POST(request: NextRequest) {
     envProvider === "openai" ||
     envRenderMode === "api-only" ||
     (process.env.DISABLE_LOCAL_RENDER ?? "").trim().toLowerCase() === "true";
+
+  // ── Auto-masked accessory pipeline flags ──────────────────────────
+  // The client never provides a mask. For accessories the route either
+  // accepts the client-generated composite + mask (preferred) or
+  // generates the mask itself from the composite. If both attempts
+  // fail, strict mode degrades to the deterministic composite — never
+  // a free-generation OpenAI call (which would let the model redraw
+  // the product / customer).
+  const autoMaskEnabled =
+    (process.env.OPENAI_AUTO_MASK ?? "true").trim().toLowerCase() !== "false";
+  const accessoryStrictMode =
+    (process.env.TRYON_ACCESSORY_STRICT_MODE ?? "true")
+      .trim()
+      .toLowerCase() !== "false";
+  const requireInternalMask =
+    (process.env.REQUIRE_INTERNAL_MASK_FOR_ACCESSORIES ?? "true")
+      .trim()
+      .toLowerCase() !== "false";
+  const disableFreeGenForAccessories =
+    (process.env.DISABLE_FREE_GENERATION_FOR_ACCESSORIES ?? "true")
+      .trim()
+      .toLowerCase() !== "false";
+  const fallbackToDeterministic =
+    (process.env.TRYON_FALLBACK_TO_DETERMINISTIC ?? "true")
+      .trim()
+      .toLowerCase() !== "false";
 
   try {
     const formData = await request.formData();
@@ -414,6 +442,58 @@ export async function POST(request: NextRequest) {
         : "auto");
     const isAccessory = ACCESSORY_CATEGORIES.includes(category);
 
+    // ── Server-side auto-mask (fallback path) ─────────────────────────
+    // When the client sent a composite but no mask (e.g. headless test,
+    // older client, MediaPipe failed), derive a mask from the diff
+    // between the composite and the user image. We only do this for
+    // accessories (clothes use a full-edit path that doesn't benefit
+    // from a contact-band mask).
+    let autoMaskGenerated = false;
+    let autoMaskFailed = false;
+    if (
+      openaiActive &&
+      isAccessory &&
+      autoMaskEnabled &&
+      inpaintComposite !== null &&
+      inpaintMask === null
+    ) {
+      try {
+        const compositeBuf = Buffer.from(await inpaintComposite.arrayBuffer());
+        const userBuf = Buffer.from(await userImage.arrayBuffer());
+        const meta = await sharp(compositeBuf).metadata();
+        const tw = meta.width ?? 1024;
+        const th = meta.height ?? 1024;
+        const auto = await autoMaskFromComposite({
+          userImage: userBuf,
+          compositeImage: compositeBuf,
+          targetWidth: tw,
+          targetHeight: th,
+        });
+        if (auto) {
+          inpaintMask = new File(
+            [new Uint8Array(auto.buffer)],
+            "auto-mask.png",
+            { type: "image/png" }
+          );
+          autoMaskGenerated = true;
+          console.info(
+            `[try-on] auto-mask generated category=${category} coverage=${auto.coverage.toFixed(3)} dims=${tw}x${th}`
+          );
+        } else {
+          autoMaskFailed = true;
+          console.warn(
+            `[try-on] auto-mask returned null (silhouette out of range)`
+          );
+        }
+      } catch (err) {
+        autoMaskFailed = true;
+        console.warn(
+          "[try-on] auto-mask generation failed",
+          err instanceof Error ? err.message : err
+        );
+      }
+    }
+
     // The client triggers AI refinement by sending a composite + mask
     // + useInpainting=true. The route honours the request as long as
     // *some* AI provider is configured (OpenAI takes priority when both
@@ -424,6 +504,11 @@ export async function POST(request: NextRequest) {
       inpaintMask !== null &&
       (hasFalKey || hasOpenAIKey) &&
       envProvider !== "mock";
+
+    // The canonical "deterministic preview" is the client composite
+    // (PNG, alpha-preserving). We fall back to the legacy JPEG
+    // `previewImage` field when the client didn't ship one.
+    const finalPreview: File | null = inpaintComposite ?? previewImage;
 
     // ── Strict mask requirement for OpenAI ────────────────────────
     // When REQUIRE_MASK_FOR_OPENAI=true and OpenAI is the active
@@ -446,6 +531,96 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // ── Strict accessory gate ─────────────────────────────────────────
+    // For accessories, the *only* sanctioned path is the auto-masked
+    // OpenAI edit (composite + mask). If either input is missing AND
+    // free generation is disabled, we degrade to the deterministic
+    // composite if we have one, otherwise we error out — we never let
+    // OpenAI hallucinate the product placement.
+    const accessoryInternalArtifactsMissing =
+      openaiActive &&
+      isAccessory &&
+      requireInternalMask &&
+      (inpaintComposite === null || inpaintMask === null);
+    if (
+      accessoryInternalArtifactsMissing &&
+      accessoryStrictMode &&
+      disableFreeGenForAccessories
+    ) {
+      if (fallbackToDeterministic && finalPreview) {
+        const resultUrl = await uploadPreviewToCdn(finalPreview, hasFalKey);
+        const durationMs = Date.now() - startedAt;
+        console.warn(
+          `[try-on] strict-accessory-no-mask category=${category} → deterministic fallback`
+        );
+        trackTryOnUsage({
+          merchantId,
+          category,
+          provider: "fast-overlay-fallback",
+          model: "canvas",
+          mock: false,
+          success: true,
+          durationMs,
+        });
+        return NextResponse.json({
+          ok: true,
+          resultUrl,
+          previewUrl: resultUrl,
+          generatedAt: Date.now(),
+          mock: false,
+          provider: "fast-overlay",
+          model: "canvas",
+          category,
+          durationMs,
+          renderMode: "fast-overlay" as RenderMode,
+          qualityStatus: "fallback-preview",
+          warnings: [
+            ...clientWarnings,
+            {
+              code: "auto_mask_failed_fallback_used",
+              message:
+                "Auto mask unavailable — deterministic composite returned. The customer never has to provide a mask.",
+            },
+          ],
+          placement: watchPlacement,
+          edgeQuality,
+          debug: {
+            imageCount: 1 + productImages.length + productUrls.length,
+            productImageCount: productImages.length + productUrls.length,
+            productWasCutout,
+            productImageSource,
+            productHasAlpha,
+            productMimeType,
+            usedOpenAI: false,
+            usedFal: false,
+            usedLocalRenderer: true,
+            maskUsed: false,
+            autoMaskGenerated: false,
+            compositeUsed: false,
+            productLockCandidate: false,
+            productLockApplied: false,
+            fallbackUsed: true,
+          },
+        });
+      }
+      return NextResponse.json(
+        {
+          ok: false,
+          provider: "openai",
+          renderMode: "api-image-edit" as RenderMode,
+          category,
+          error:
+            "Internal composite + mask are required for accessory try-on. The auto-masking pipeline could not produce them.",
+        },
+        { status: 400 }
+      );
+    }
+    void accessoryStrictMode;
+
+    // If the auto-mask attempted and failed but we still got here (free
+    // gen not disabled), surface a soft warning so dashboards know.
+    void autoMaskFailed;
+
     // In API-only mode every category MUST go through OpenAI — no
     // fast-overlay path, no canvas-as-final-result. Local renderers may
     // still produce the optional composite/mask we forward to OpenAI
@@ -456,9 +631,9 @@ export async function POST(request: NextRequest) {
       !apiOnlyMode &&
       !useInpainting &&
       inpaintMask === null &&
-      previewImage !== null &&
+      finalPreview !== null &&
       isAccessory &&
-      (requested === "fast" || requested === "auto");
+      requested === "fast";
 
     // ── Validate mask dimensions vs base image ────────────────────────
     // Per spec: "if mask is present but dimensions mismatch base image,
@@ -508,11 +683,11 @@ export async function POST(request: NextRequest) {
       `[try-on] start provider=${envProvider} category=${category} apiOnlyMode=${apiOnlyMode} hasFalKey=${hasFalKey} hasOpenAIKey=${hasOpenAIKey} openaiActive=${openaiActive} requested=${requested} useFast=${useFast} useInpainting=${useInpainting} productImages=${productImages.length} productUrls=${productUrls.length} productImageSource=${productImageSource} productHasAlpha=${productHasAlpha} productMimeType=${productMimeType}`
     );
 
-    if (useFast && previewImage) {
+    if (useFast && finalPreview) {
       // Fast deterministic path — no AI generation cost.
       // If FAL_KEY is available we upload to fal.storage so the result URL
       // is on a CDN (shareable); otherwise we return a data URL.
-      const resultUrl = await uploadPreviewToCdn(previewImage, hasFalKey);
+      const resultUrl = await uploadPreviewToCdn(finalPreview, hasFalKey);
 
       const durationMs = Date.now() - startedAt;
       const renderMode: RenderMode = "fast-overlay";
@@ -562,6 +737,11 @@ export async function POST(request: NextRequest) {
           usedFal: false,
           usedLocalRenderer: true,
           maskUsed: false,
+          autoMaskGenerated: false,
+          compositeUsed: false,
+          productLockCandidate: false,
+          productLockApplied: false,
+          fallbackUsed: false,
         },
       });
     }
@@ -605,6 +785,16 @@ export async function POST(request: NextRequest) {
       inpaintComposite !== null &&
       inpaintMask !== null;
 
+    // Accessories with a composite + mask (whether client- or auto-
+    // generated) get the strict integration-only prompt instead of the
+    // looser placement leads. Watches additionally route to the
+    // ultra-strict watch prompt.
+    const autoMaskedAccessory =
+      openaiActive &&
+      isAccessory &&
+      inpaintComposite !== null &&
+      inpaintMask !== null;
+
     const params: TryOnRequestWithLockHint = {
       category,
       userImage,
@@ -617,6 +807,7 @@ export async function POST(request: NextRequest) {
       ringFinger,
       renderModeRequest: renderModeRequest,
       productLocked: productLockCandidate,
+      autoMaskedAccessory,
       ...(forwardComposite && inpaintComposite && inpaintMask
         ? { inpaintComposite, inpaintMask }
         : inpaintMask
@@ -736,6 +927,78 @@ export async function POST(request: NextRequest) {
         });
       }
 
+      // ── Product fidelity check (post-generation) ────────────────────
+      // For accessories with a composite, compare the dominant colour
+      // and silhouette area of the product region. If the AI drifted
+      // (e.g. black watch → silver watch, or product completely
+      // displaced), mark `qualityCheckFailed` and — when allowed —
+      // return the deterministic composite as the final result.
+      let qualityCheckFailed = false;
+      let qualityCheckFallbackApplied = false;
+      if (
+        usedOpenAI &&
+        isAccessory &&
+        openaiMeta &&
+        openaiMeta.compositeAtTargetSize
+      ) {
+        try {
+          const fidelity = await checkProductFidelity({
+            aiResult: openaiMeta.resultBuffer,
+            composite: openaiMeta.compositeAtTargetSize,
+            userBase: openaiMeta.baseAtTargetSize,
+          });
+          if (!fidelity.passed) {
+            qualityCheckFailed = true;
+            console.warn(
+              `[try-on] product-fidelity-failed category=${category} colorDelta=${fidelity.colorDelta.toFixed(
+                1
+              )} silhouetteOk=${fidelity.silhouetteRatioOk} colorOk=${fidelity.colorOk}`
+            );
+            lockWarnings.push({
+              code: "product-fidelity-check-failed",
+              message: `Product fidelity check failed (color Δ=${Math.round(
+                fidelity.colorDelta
+              )}). The AI may have altered the product.`,
+            });
+            // Strict fallback: hand the customer the deterministic
+            // composite so the product remains pixel-perfect, even
+            // though the contact shadows are less refined.
+            if (
+              fallbackToDeterministic &&
+              !lockedProductLocked &&
+              openaiMeta.compositeAtTargetSize
+            ) {
+              finalResultUrl = `data:image/png;base64,${openaiMeta.compositeAtTargetSize.toString(
+                "base64"
+              )}`;
+              qualityCheckFallbackApplied = true;
+            }
+          }
+        } catch (err) {
+          console.warn(
+            "[try-on] product fidelity check threw",
+            err instanceof Error ? err.message : err
+          );
+        }
+      }
+
+      const inputDimensions = openaiMeta
+        ? {
+            width:
+              openaiMeta.size === "1024x1024"
+                ? 1024
+                : openaiMeta.size === "1024x1536"
+                  ? 1024
+                  : 1536,
+            height:
+              openaiMeta.size === "1024x1024"
+                ? 1024
+                : openaiMeta.size === "1024x1536"
+                  ? 1536
+                  : 1024,
+          }
+        : undefined;
+
       const debug = {
         ...(result.debug ?? {
           imageCount: 1 + productImages.length + productUrls.length,
@@ -749,20 +1012,30 @@ export async function POST(request: NextRequest) {
         usedFal,
         // Final image came from a hosted AI provider, never from a local
         // renderer in the success path.
-        usedLocalRenderer: false,
+        usedLocalRenderer: qualityCheckFallbackApplied,
         maskUsed: usedOpenAI ? Boolean(openaiMeta?.maskUsed) : useInpainting,
         productLocked: lockedProductLocked,
+        autoMaskGenerated,
+        compositeUsed: Boolean(openaiMeta?.compositeUsedAsBase),
+        productLockCandidate,
+        productLockApplied: lockedProductLocked,
+        fallbackUsed: qualityCheckFallbackApplied,
+        inputDimensions,
+        productAlphaDetected: Boolean(openaiMeta?.productHasAlpha),
+        qualityCheckFailed,
       };
 
-      const renderMode: RenderMode = usedOpenAI
-        ? lockedProductLocked
-          ? "api-image-edit-product-lock"
-          : "api-image-edit"
-        : result.provider === "mock"
-          ? "mock"
-          : category === "clothes" && result.model?.includes("fashn")
-            ? "specialized-vton"
-            : "premium-ai";
+      const renderMode: RenderMode = qualityCheckFallbackApplied
+        ? "fast-overlay"
+        : usedOpenAI
+          ? lockedProductLocked
+            ? "api-image-edit-product-lock"
+            : "api-image-edit"
+          : result.provider === "mock"
+            ? "mock"
+            : category === "clothes" && result.model?.includes("fashn")
+              ? "specialized-vton"
+              : "premium-ai";
 
       // ── Strict customer preservation gate ──────────────────────────
       // The spec says: if the AI changed too much outside the mask, we
@@ -924,7 +1197,7 @@ export async function POST(request: NextRequest) {
       }
 
       // ── Legacy graceful fallback (non-api-only, fal-style providers) ─
-      const fallbackPreview = previewImage ?? inpaintComposite;
+      const fallbackPreview = finalPreview;
       if (fallbackPreview) {
         console.warn(
           `[try-on] premium-failed category=${category} durationMs=${durationMs} message=${safeMessage} → returning fast preview`

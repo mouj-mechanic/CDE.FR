@@ -3,6 +3,8 @@ import type { CategoryId, TryOnRequest, TryOnResponse } from "@/types";
 /** Internal field — set by the API route when the lock pipeline is engaged. */
 export interface TryOnRequestWithLockHint extends TryOnRequest {
   productLocked?: boolean;
+  /** Set when the app auto-generated the composite + mask. */
+  autoMaskedAccessory?: boolean;
 }
 
 import { pickMockResult } from "./mockResults";
@@ -110,6 +112,7 @@ export async function generateTryOnImage(
       inpaintMask: params.inpaintMask,
       productCutoutBuffers: params.productCutoutBuffers,
       productLocked: params.productLocked,
+      autoMaskedAccessory: params.autoMaskedAccessory,
     });
   }
 
@@ -121,6 +124,7 @@ export async function generateTryOnImage(
         inpaintMask: params.inpaintMask,
         productCutoutBuffers: params.productCutoutBuffers,
         productLocked: params.productLocked,
+        autoMaskedAccessory: params.autoMaskedAccessory,
       });
     }
     if (falKey) return runFal(params, falKey, fashnKey);

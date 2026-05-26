@@ -56,9 +56,17 @@ Copy `.env.example` to `.env.local` and fill in what you need.
 | `OPENAI_IMAGE_SIZE`          | `1024x1024` (default), `1024x1536`, `1536x1024`, or `auto`                       |
 | `OPENAI_IMAGE_QUALITY`       | `low` / `medium` / `high` (default) / `auto`                                     |
 | `OPENAI_USE_MASKED_EDIT`     | `true` (default). When `false`, the API skips the alpha mask                     |
-| `REQUIRE_MASK_FOR_OPENAI`    | `false` (default). When `true`, generation without a mask returns 400            |
-| `NEXT_PUBLIC_REQUIRE_MASK_FOR_OPENAI` | Mirror the above on the client so the UI blocks early                   |
+| `REQUIRE_MASK_FOR_OPENAI`    | `false` (default). **Customers never upload masks** — keep `false` in production |
+| `NEXT_PUBLIC_REQUIRE_MASK_FOR_OPENAI` | Mirror the above on the client (should stay `false`)                      |
+| `OPENAI_AUTO_MASK`           | `true` (default). Server derives a mask from composite+user diff if needed       |
+| `REQUIRE_INTERNAL_MASK_FOR_ACCESSORIES` | `true` (default). Accessories without composite+mask never call OpenAI free-gen |
+| `TRYON_ACCESSORY_STRICT_MODE` | `true` (default). Master switch for the strict accessory pipeline               |
+| `TRYON_FALLBACK_TO_DETERMINISTIC` | `true` (default). Return the deterministic composite when fidelity checks fail |
+| `DISABLE_FREE_GENERATION_FOR_ACCESSORIES` | `true` (default). No userImage+productImage-only OpenAI call for accessories |
+| `REQUIRE_CLIENT_MASK`        | `false` (default). The client never provides a mask                              |
 | `OPENAI_PRESERVATION_THRESHOLD` | 0..1 score threshold for outside-mask preservation (default `0.92`)            |
+| `OPENAI_PRODUCT_LOCK`        | `true` (default). Re-stamp the original product PNG after the AI edit (accessories) |
+| `OPENAI_PRESERVE_CUSTOMER_STRICT` | `true` (default). Reject edits that change too much outside the mask (API-only) |
 | `WATCH_USE_MASKED_EDIT`      | Per-category mask flag (defaults to `true`)                                      |
 | `GLASSES_USE_MASKED_EDIT`    | Per-category mask flag (defaults to `true`)                                      |
 | `HEADWEAR_USE_MASKED_EDIT`   | Per-category mask flag (defaults to `true`)                                      |
@@ -77,9 +85,11 @@ Set any of `AI_TRYON_PROVIDER=openai`, `TRYON_RENDER_MODE=api-only`, or
 - The fast-overlay deterministic path is **never** returned as the final
   image — even if a client-side preview was uploaded.
 - If OpenAI fails, `/api/try-on` responds with `{ ok: false, error: "OpenAI image edit failed. No local renderer fallback was used because API-only mode is enabled.", … }` and HTTP 502.
-- `debug.usedLocalRenderer` is always `false` in success responses.
-- The mask uploader UI lets operators attach a manual `maskImage` PNG to
-  any category for testing.
+- `debug.usedLocalRenderer` is always `false` in success responses (except
+  when a deterministic composite is returned as a fidelity fallback).
+- **The customer never uploads or sees a mask.** Masks are generated
+  automatically by the browser pipeline (MediaPipe + canvas) and, if
+  needed, by the server (`lib/tryon/autoMaskFromComposite.ts`).
 
 ### Provider modes
 
@@ -87,10 +97,12 @@ Set any of `AI_TRYON_PROVIDER=openai`, `TRYON_RENDER_MODE=api-only`, or
   image (`/demo2-result.png` for watches, otherwise category-specific
   Picsum.photos seeds). Useful to demo the widget without any cost.
 - **`openai`**: routes to **OpenAI GPT Image** (`gpt-image-1` by default).
-  The user photo is the base image, the transparent product PNG is passed as
-  a second reference (multi-image edit), and the watch flow additionally
-  attaches an alpha-channel mask derived from the deterministic composite +
-  contact-band mask. Returns base64 → served as a `data:` URL.
+  For **accessories**, the first API call is always a **controlled masked
+  edit**: the client sends `compositeImage` (user photo + product placed
+  deterministically) + `maskImage` (auto-generated contact band). OpenAI
+  only refines shadows/contact inside the mask; the product PNG is then
+  re-stamped (`OPENAI_PRODUCT_LOCK`). The customer never provides a mask.
+  Returns base64 → served as a `data:` URL.
 - **`fal`**: routes to **fal.ai**.
   - **Clothes** → FASHN (`fashn/tryon/v1.6`, fallback `fal-ai/fashn/tryon`).
     If the FASHN call fails for any reason, the service automatically falls
@@ -125,12 +137,39 @@ To get **commercially-viable accessory try-on**, the app now uses a
    pixel-accurate transform — center, scale, rotation — for the product.
 3. **Canvas compositing** (`lib/tryon/canvasRender.ts`) crops the product
    alpha-aware and draws it on top of the user photo with a soft shadow.
-4. The deterministic preview is sent to `/api/try-on` with
-   `renderModeRequest=auto`. The server returns it as `renderMode:"fast-overlay"`
-   without spending an AI generation.
+4. **Auto-mask generation** (`lib/tryon/watchMask.ts` for watches,
+   `lib/tryon/canvasRender.ts` + `buildContactMask` for glasses / headwear /
+   hand-jewelry) produces a feathered B/W contact-band mask aligned 1:1 with
+   the composite. The customer never sees or uploads this mask.
+5. On submit, the client sends `compositeImage` + `maskImage` (both PNG) to
+   `/api/try-on` on the **first** premium call — not only on a separate
+   "refine" step.
+6. The server calls OpenAI masked edit with the strict integration prompt
+   (`AUTO_MASKED_ACCESSORY_PROMPT` / `getWatchTryOnPrompt()`), re-stamps the
+   original product (`product-lock`), and runs fidelity checks
+   (outside-mask preservation + dominant product colour).
 
 This eliminates the typical hallucinations of pure-AI try-on
-(distorted hands, rings across two fingers, fake fingers, etc.).
+(distorted hands, rings across two fingers, fake fingers, silver watch
+replacing a black multicolour reference, etc.).
+
+### Premium accessory pipeline (OpenAI)
+
+```
+customer photo + product image
+  → MediaPipe landmarks
+  → deterministic placement
+  → composite PNG (product on body)
+  → auto mask PNG (contact band, feathered)
+  → OpenAI masked edit (integrate only — do not redraw)
+  → product-lock re-stamp
+  → fidelity check (colour + silhouette)
+  → final result
+```
+
+If auto-mask fails in strict mode, the route returns the deterministic
+composite with `warnings: [{ code: "auto_mask_failed_fallback_used", … }]`
+instead of calling OpenAI in a free-generation mode.
 
 ### Modes
 
@@ -416,6 +455,21 @@ The legacy multi-step animated guide (`PhotoGuideSteps` + procedural SVGs
 + optional custom media under `public/guide/`) has been removed on
 purpose — one clear directive converts better than four illustrated
 steps.
+
+---
+
+## Auto-mask pipeline — manual QA checklist
+
+1. Submit **only** `userImage` + `productImage` (no `maskImage` field) for `watch`.
+2. Confirm the browser pipeline produces `compositeImage` + `maskImage` in the FormData (Network tab).
+3. Confirm there is **no** mask upload UI in `TryOnPanel` / `EmbedFlow`.
+4. With `DISABLE_FREE_GENERATION_FOR_ACCESSORIES=true` and no internal mask → response is the deterministic composite, not a free OpenAI generation (`debug.fallbackUsed=true`, warning `auto_mask_failed_fallback_used`).
+5. `compositeImage` and `maskImage` are `image/png` (not JPEG).
+6. `compositeImage` and `maskImage` share the same pixel dimensions after client resize.
+7. Product PNG alpha is preserved when the upload already had transparency.
+8. A black multicolour watch reference must not become a silver invented watch (`debug.qualityCheckFailed` or deterministic fallback).
+9. Hand anatomy outside the mask must stay preserved (`qualityChecks.outsideMaskPreserved`).
+10. Accessory success with product-lock engaged must show `debug.productLockApplied=true` and `productLocked=true`.
 
 ---
 

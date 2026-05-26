@@ -31,8 +31,6 @@ import { CategoryIcon } from "./CategoryIcon";
 import { PrivacyNote } from "./PrivacyNote";
 import { ConsentCheckbox } from "./ConsentCheckbox";
 import { PhotoQualityChecklist } from "./PhotoQualityChecklist";
-import { MaskTestUploader } from "./MaskTestUploader";
-import { FidelityHintBanner } from "./FidelityHintBanner";
 import { cn } from "@/lib/utils";
 
 interface EmbedFlowProps {
@@ -59,7 +57,6 @@ export function EmbedFlow({
   const [watchOverrideUrl, setWatchOverrideUrl] = useState<string | null>(null);
   const [refining, setRefining] = useState(false);
   const [refineError, setRefineError] = useState<string | null>(null);
-  const [manualMask, setManualMask] = useState<File | null>(null);
   const category = getCategory(categoryId) as Category;
 
   const [state, dispatch] = useReducer(tryOnReducer, {
@@ -124,16 +121,31 @@ export function EmbedFlow({
       console.warn("[tryon] user image compression failed", err);
     }
 
-    let uploadPreview: Blob | null = pipelineResult?.previewBlob ?? null;
-    if (uploadPreview) {
+    // Composite + mask: PNG, alpha-preserving. See TryOnPanel.tsx for
+    // the rationale (lossless lossless transit, identical dims, no
+    // user-facing mask UI).
+    let compositeBlob: Blob | null = pipelineResult?.previewBlob ?? null;
+    let maskBlob: Blob | null = pipelineResult?.maskBlob ?? null;
+    if (compositeBlob) {
       try {
-        uploadPreview = await compressImageBlob(uploadPreview, {
+        compositeBlob = await compressImageBlob(compositeBlob, {
           maxDim: 1280,
-          quality: 0.85,
-          mimeType: "image/jpeg",
+          quality: 0.92,
+          mimeType: "image/png",
         });
       } catch (err) {
-        console.warn("[tryon] preview compression failed", err);
+        console.warn("[tryon] composite resize failed", err);
+      }
+    }
+    if (maskBlob) {
+      try {
+        maskBlob = await compressImageBlob(maskBlob, {
+          maxDim: 1280,
+          quality: 0.92,
+          mimeType: "image/png",
+        });
+      } catch (err) {
+        console.warn("[tryon] mask resize failed", err);
       }
     }
 
@@ -144,16 +156,22 @@ export function EmbedFlow({
     formData.append("handJewelryType", handJewelryType);
     formData.append("ringFinger", ringFinger);
 
-    if (uploadPreview) {
+    if (compositeBlob) {
       formData.append(
-        "previewImage",
-        new File([uploadPreview], "trywithai-preview.jpg", {
-          type: uploadPreview.type || "image/jpeg",
+        "compositeImage",
+        new File([compositeBlob], "trywithai-composite.png", {
+          type: "image/png",
         })
       );
       formData.append(
         "warnings",
         JSON.stringify(pipelineResult?.warnings ?? [])
+      );
+    }
+    if (maskBlob) {
+      formData.append(
+        "maskImage",
+        new File([maskBlob], "trywithai-mask.png", { type: "image/png" })
       );
     }
     if (pipelineResult) {
@@ -207,11 +225,6 @@ export function EmbedFlow({
     if (productTitle) formData.append("notes", `Article : ${productTitle}`);
     if (merchantId) formData.append("merchantId", merchantId);
 
-    // Optional manual mask attached by the operator (debug / testing).
-    if (manualMask) {
-      formData.append("maskImage", manualMask);
-    }
-
     try {
       const result = await safeFetchJson<
         TryOnResponse & {
@@ -258,6 +271,8 @@ export function EmbedFlow({
           usedLocalRenderer: data.debug?.usedLocalRenderer,
           qualityChecks: data.qualityChecks,
           productLocked: data.productLocked ?? data.debug?.productLocked,
+          fallbackUsed: data.debug?.fallbackUsed,
+          autoMaskGenerated: data.debug?.autoMaskGenerated,
         },
       });
     } catch (err) {
@@ -278,7 +293,6 @@ export function EmbedFlow({
     merchantId,
     handJewelryType,
     ringFinger,
-    manualMask,
   ]);
 
   /**
@@ -610,15 +624,6 @@ export function EmbedFlow({
             onTypeChange={setHandJewelryType}
             finger={ringFinger}
             onFingerChange={setRingFinger}
-          />
-        )}
-        <MaskTestUploader value={manualMask} onChange={setManualMask} />
-        {process.env.NEXT_PUBLIC_AI_PROVIDER === "openai" && (
-          <FidelityHintBanner
-            requireMask={
-              process.env.NEXT_PUBLIC_REQUIRE_MASK_FOR_OPENAI === "true"
-            }
-            hasMask={Boolean(manualMask)}
           />
         )}
         <ConsentCheckbox checked={consent} onChange={setConsent} />

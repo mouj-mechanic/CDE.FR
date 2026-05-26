@@ -37,6 +37,7 @@ import {
   renderWatchOverlay,
   type WatchAdjustments,
 } from "./renderWatchOverlay";
+import { buildContactMask } from "./watchMask";
 
 interface ProductLoadResult {
   image: HTMLImageElement;
@@ -266,14 +267,50 @@ export async function runTryOnPipeline(
   // Decide what render to produce.
   let renderMode: RenderMode;
   let previewBlob: Blob;
+  let maskBlob: Blob | undefined;
+  let maskBlobUrl: string | undefined;
 
   if (placement && lm) {
-    previewBlob = await renderOverlay({
+    const render = await renderOverlay({
       userImage: userImg,
       productImage: productImg,
       placement,
     });
+    previewBlob = render.blob;
     renderMode = opts.mode === "premium" ? "premium-ai" : "fast-overlay";
+
+    // ── Auto-mask for OpenAI inpainting ────────────────────────────
+    // glasses, headwear, hand-jewelry → derive a feathered contact-band
+    // mask from the rendered silhouette so the customer never has to
+    // upload one. Watch has its own dedicated mask (above).
+    if (
+      opts.category === "glasses" ||
+      opts.category === "headwear" ||
+      opts.category === "hand-jewelry"
+    ) {
+      try {
+        // The silhouette is already drawn at the final position +
+        // rotation, so the mask centre + rotation are simply the canvas
+        // centre and 0. We rebuild the mask with the same builder used
+        // by the watch flow so behaviour stays consistent.
+        const mask = await buildContactMask({
+          width: render.width,
+          height: render.height,
+          centerX: render.width / 2,
+          centerY: render.height / 2,
+          rotation: 0,
+          silhouette: render.silhouette,
+          featherPx: opts.category === "headwear" ? 28 : 18,
+          // No grounded patch for face/hand accessories — the feather
+          // alone gives the AI enough room for natural shadows.
+          groundedShadowPx: 0,
+        });
+        maskBlob = mask.blob;
+        maskBlobUrl = mask.url;
+      } catch (err) {
+        console.warn("[tryon] auto-mask generation failed", err);
+      }
+    }
   } else {
     // Landmarks/placement failed → return the user photo as-is and let the
     // caller decide (e.g. fall back to AI-only generation server-side).
@@ -309,5 +346,7 @@ export async function runTryOnPipeline(
     productHasAlpha,
     productMimeType: productResult.mimeType,
     productImageSource: productResult.source,
+    maskBlob,
+    maskBlobUrl,
   };
 }

@@ -24,6 +24,19 @@ interface RenderOptions {
   withShadow?: boolean;
 }
 
+export interface RenderOverlayResult {
+  /** PNG blob of the composite (user photo + product, alpha-preserving). */
+  blob: Blob;
+  /**
+   * Off-screen canvas containing the warped/rotated product silhouette
+   * only (white on black). Same dimensions as the composite. Used to
+   * derive a contact-band mask for the AI inpainting step.
+   */
+  silhouette: HTMLCanvasElement;
+  width: number;
+  height: number;
+}
+
 /** Find the tightest alpha-aware bounding box of an image. */
 async function tightCrop(
   img: HTMLImageElement
@@ -85,7 +98,9 @@ async function tightCrop(
   return { canvas: cropped, width: cw, height: ch };
 }
 
-export async function renderOverlay(opts: RenderOptions): Promise<Blob> {
+export async function renderOverlay(
+  opts: RenderOptions
+): Promise<RenderOverlayResult> {
   const { userImage, productImage, placement } = opts;
   const withShadow = opts.withShadow ?? true;
 
@@ -135,7 +150,38 @@ export async function renderOverlay(opts: RenderOptions): Promise<Blob> {
   ctx.drawImage(prodCanvas, -drawW / 2, -drawH / 2, drawW, drawH);
   ctx.restore();
 
-  return new Promise<Blob>((resolve, reject) => {
+  // ── Build the silhouette canvas (white-on-black, same dimensions).
+  // Used by the mask builder to derive a feathered contact-band mask
+  // without re-running placement math. We draw a "white-stamped"
+  // version of the product instead of the product itself: that way
+  // shadows from the composite never bleed into the silhouette.
+  const silhouette = document.createElement("canvas");
+  silhouette.width = W;
+  silhouette.height = H;
+  const sctx = silhouette.getContext("2d");
+  if (sctx) {
+    sctx.fillStyle = "#000";
+    sctx.fillRect(0, 0, W, H);
+    // Tag the product alpha as pure white via a tmp sprite.
+    const tmp = document.createElement("canvas");
+    tmp.width = prodCanvas.width;
+    tmp.height = prodCanvas.height;
+    const tctx = tmp.getContext("2d");
+    if (tctx) {
+      tctx.drawImage(prodCanvas, 0, 0);
+      tctx.globalCompositeOperation = "source-in";
+      tctx.fillStyle = "#fff";
+      tctx.fillRect(0, 0, tmp.width, tmp.height);
+      tctx.globalCompositeOperation = "source-over";
+      sctx.save();
+      sctx.translate(placement.cx, placement.cy);
+      sctx.rotate(placement.rotation);
+      sctx.drawImage(tmp, -drawW / 2, -drawH / 2, drawW, drawH);
+      sctx.restore();
+    }
+  }
+
+  const blob = await new Promise<Blob>((resolve, reject) => {
     // PNG export — alpha-preserving. The compositing result remains opaque
     // because of the user-photo background layer, but exporting as PNG
     // guarantees no JPEG re-compression / colour shift of the product
@@ -148,6 +194,8 @@ export async function renderOverlay(opts: RenderOptions): Promise<Blob> {
       "image/png"
     );
   });
+
+  return { blob, silhouette, width: W, height: H };
 }
 
 /** Quick helper used by ResultView to display a debug placement frame. */
