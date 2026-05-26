@@ -195,12 +195,18 @@ export async function POST(request: NextRequest) {
    * is `false`, the route skips OpenAI entirely for watch/hand-jewelry
    * runs and serves the deterministic composite directly. Use this in
    * production to immediately stop broken renders from reaching the
-   * customer while we tune the mask + safety gates. Default: `true`
-   * (OpenAI contact-band blending enabled).
+   * customer while we tune the mask + safety gates.
+   *
+   *  Default flipped to `false` alongside Watch Renderer V3 — the V3
+   *  pipeline ships as a deterministic single-layer composite. OpenAI
+   *  re-enters the picture only when the operator explicitly opts in
+   *  with `WATCH_USE_OPENAI_CONTACT_BLEND=true`, which we will only do
+   *  once the V3 rendering quality is reliably superior to AI hand
+   *  reconstruction.
    */
   const watchUseOpenAIBlendRaw =
     process.env.WATCH_USE_OPENAI_CONTACT_BLEND?.trim().toLowerCase();
-  const watchUseOpenAIBlend = watchUseOpenAIBlendRaw !== "false";
+  const watchUseOpenAIBlend = watchUseOpenAIBlendRaw === "true";
 
   /**
    * Strict "API-only" mode — when on, the route never returns a locally

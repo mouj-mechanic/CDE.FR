@@ -37,6 +37,12 @@ import {
   renderWatchOverlay,
   type WatchAdjustments,
 } from "./renderWatchOverlay";
+import {
+  renderWatchOverlayV3,
+  getWatchRendererVersion,
+  DEFAULT_WATCH_ADJUSTMENTS_V3,
+  type WatchAdjustmentsV3,
+} from "./watchRendererV3";
 import { buildContactMask } from "./watchMask";
 
 interface ProductLoadResult {
@@ -186,6 +192,94 @@ export async function runTryOnPipeline(
   //    shadow + alpha refinement). The classic flat overlay is reserved for
   //    glasses / headwear / hand-jewelry.
   if (opts.category === "watch") {
+    const rendererVersion = getWatchRendererVersion();
+    // V3 is the orientation-aware single-layer renderer. It treats
+    // the whole product as one canvas and rotates it as a whole —
+    // correct for vertical-strap product photos (the dominant case
+    // in real catalogues). V2 stays available for A/B tests via
+    // WATCH_RENDERER_VERSION=v2.
+    if (rendererVersion === "v3") {
+      const adjV3: WatchAdjustmentsV3 = {
+        ...DEFAULT_WATCH_ADJUSTMENTS_V3,
+        ...(opts.watchAdjustments
+          ? {
+              offsetX: opts.watchAdjustments.offsetX,
+              offsetY: opts.watchAdjustments.offsetY,
+              scale: opts.watchAdjustments.scale,
+              rotationDeg: opts.watchAdjustments.rotation
+                ? (opts.watchAdjustments.rotation * 180) / Math.PI
+                : undefined,
+              shadowIntensity: opts.watchAdjustments.shadowIntensity,
+            }
+          : {}),
+      };
+      // Strip undefined keys so spread defaults kick in.
+      const adjV3Rec = adjV3 as unknown as Record<string, unknown>;
+      Object.keys(adjV3Rec).forEach((k) => {
+        if (adjV3Rec[k] === undefined) delete adjV3Rec[k];
+      });
+      const watchV3 = await renderWatchOverlayV3({
+        userImage: userImg,
+        productImage: productImg,
+        landmarks: lm,
+        adjustments: adjV3,
+      });
+      if (!watchV3.fromLandmarks) {
+        warnings.push({
+          code: "landmarks-missing",
+          message:
+            "Poignet non détecté automatiquement. Ajustez la montre manuellement.",
+        });
+      } else if (watchV3.confidence < 0.45) {
+        warnings.push({
+          code: "low-confidence",
+          message:
+            "Ajustement manuel recommandé pour améliorer le placement.",
+        });
+      }
+      if (watchV3.edgeQuality < 0.5) {
+        warnings.push({
+          code: "tight-crop",
+          message:
+            "Les contours du produit sont imparfaits. Le rendu peut être moins net.",
+        });
+      }
+      const watchPlacement: WatchPlacementDescriptor = {
+        x: watchV3.geometry.cx,
+        y: watchV3.geometry.cy,
+        width: watchV3.geometry.width,
+        height: watchV3.geometry.height,
+        scale: adjV3.scale,
+        rotation: watchV3.geometry.rotation,
+        curvature: 0,
+        confidence: watchV3.confidence,
+      };
+      const renderMode: RenderMode = "fast-overlay";
+      let qualityStatus = statusFromWarnings(warnings);
+      if (
+        qualityStatus === "passed" &&
+        (!watchV3.fromLandmarks || watchV3.confidence < 0.45)
+      ) {
+        qualityStatus = "needs-better-photo";
+      }
+      return {
+        previewBlob: watchV3.blob,
+        previewBlobUrl: watchV3.url,
+        placement: null,
+        landmarks: lm,
+        warnings: dedupeWarnings(warnings),
+        qualityStatus,
+        renderMode,
+        productHasAlpha,
+        productMimeType: productResult.mimeType,
+        productImageSource: productResult.source,
+        watchPlacement,
+        edgeQuality: watchV3.edgeQuality,
+        maskBlob: watchV3.maskBlob,
+        maskBlobUrl: watchV3.maskUrl,
+      };
+    }
+    // ── V2 (legacy) — kept for opt-in A/B comparison ──────────────
     const adj: WatchAdjustments = {
       ...DEFAULT_WATCH_ADJUSTMENTS,
       ...(opts.watchAdjustments ?? {}),
