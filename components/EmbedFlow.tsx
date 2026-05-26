@@ -20,7 +20,7 @@ import {
 } from "@/lib/clientImageCompression";
 import { safeFetchJson } from "@/lib/safeFetchJson";
 import { HandJewelryOptions } from "./HandJewelryOptions";
-import { PhotoGuideSteps } from "./PhotoGuideSteps";
+import { PhotoInstructionSingle } from "./PhotoInstructionSingle";
 import { ImageUploader } from "./ImageUploader";
 import { LaunchButton } from "./LaunchButton";
 import { Stage } from "./Stage";
@@ -586,9 +586,7 @@ export function EmbedFlow({
         )}
       </AnimatePresence>
 
-      <div className="glass-card p-5 sm:p-6">
-        <PhotoGuideSteps category={category} />
-      </div>
+      <PhotoInstructionSingle category={category} />
 
       <div className="glass-card space-y-4 p-5 sm:p-6">
         <h3 className="font-display text-lg font-semibold text-ink">

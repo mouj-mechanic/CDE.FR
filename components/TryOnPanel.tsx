@@ -18,7 +18,7 @@ import {
 } from "@/lib/clientImageCompression";
 import { safeFetchJson } from "@/lib/safeFetchJson";
 import { StepBar } from "./StepBar";
-import { PhotoGuideSteps } from "./PhotoGuideSteps";
+import { PhotoInstructionSingle } from "./PhotoInstructionSingle";
 import { ImageUploader } from "./ImageUploader";
 import { ProductInput } from "./ProductInput";
 import { Stage } from "./Stage";
@@ -559,7 +559,9 @@ export function TryOnPanel({
               exit={{ opacity: 0, x: -20 }}
               transition={{ duration: 0.3 }}
             >
-              {state.step === 1 && <PhotoGuideSteps category={category} />}
+              {state.step === 1 && (
+                <PhotoInstructionSingle category={category} />
+              )}
               {state.step === 2 && (
                 <div className="space-y-4">
                   <h3 className="font-display text-xl font-semibold text-ink">

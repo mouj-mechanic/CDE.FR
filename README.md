@@ -323,8 +323,7 @@ components/
 ├── TryOnPanel.tsx              # Manual wizard (photo → product → launch)
 ├── ProductInput.tsx            # URL resolver + dropzone
 ├── ImageUploader.tsx
-├── PhotoGuideSteps.tsx         # Animated step-by-step photo guide
-├── PhotoStepIllustration.tsx   # Per-step illustration with media fallback
+├── PhotoInstructionSingle.tsx  # Single-instruction photo guide (no media)
 ├── PhotoQualityChecklist.tsx   # Client-side validation
 ├── ConsentCheckbox.tsx         # Required before generation
 ├── ResultView.tsx              # Provider badge, download, share, retry
@@ -343,12 +342,11 @@ lib/
 ├── usage.ts                    # Internal usage event tracker (TODO: db)
 ├── mockResults.ts              # Picsum seeds + local overrides
 ├── detectCategory.ts           # Title → CategoryId heuristics
-├── guideMedia.ts               # Optional custom GIF/video index
 └── tryOnReducer.ts             # useReducer state for the wizard
 
 public/
 ├── embed.js                    # Shopify widget loader (vanilla JS)
-├── guide/<category>/*.png      # Optional custom step illustrations
+├── concept-trywithai.png       # Hero concept illustration (3 panels)
 └── ...
 ```
 
@@ -408,28 +406,16 @@ The widget auto-detects the product image and title from:
 
 ---
 
-## Photo guide media
+## Photo guide
 
-`PhotoGuideSteps` plays an animated step-by-step guide tailored to the body
-part being targeted. Each step has a procedurally-drawn SVG illustration by
-default, which can be overridden with a custom GIF / WebM / MP4 / PNG.
+Step 1 of the wizard shows `PhotoInstructionSingle`: one icon, the body
+target (e.g. *Poignet ou main*) and a single action-oriented sentence
+defined per category in `lib/categories.ts > photoSingleInstruction`.
 
-To override a step:
-
-1. Drop your file in `public/guide/<categoryId>/<sceneId>.<ext>`
-2. Add it to `lib/guideMedia.ts`:
-
-```ts
-const MEDIA_INDEX = {
-  headwear: {
-    frame: { src: "/guide/headwear/frame.png", kind: "image", fullCard: true },
-  },
-};
-```
-
-If the file is missing or fails to load at runtime, the component automatically
-falls back to the SVG and emits a `console.warn` in development. See
-`public/guide/README.md` for the full convention.
+The legacy multi-step animated guide (`PhotoGuideSteps` + procedural SVGs
++ optional custom media under `public/guide/`) has been removed on
+purpose — one clear directive converts better than four illustrated
+steps.
 
 ---
 

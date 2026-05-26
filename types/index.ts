@@ -50,6 +50,12 @@ export interface Category {
   photoInstructions: string[];
   /** Step-by-step animated guide. */
   photoSteps: PhotoStep[];
+  /**
+   * One clear, action-oriented sentence telling the customer exactly
+   * what to photograph. Shown in step 1 in place of the legacy
+   * multi-step animated guide.
+   */
+  photoSingleInstruction: string;
   productInputMode: ProductInputMode;
   loadingTitle: string;
   loadingDescription: string;

@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import { motion } from "framer-motion";
 import { Sparkles, Wand2, ShoppingBag } from "lucide-react";
 import { brand } from "@/lib/brand";
@@ -10,8 +11,8 @@ export function Hero() {
   };
 
   return (
-    <section className="relative overflow-hidden px-4 py-20 sm:px-6 sm:py-28 lg:px-8">
-      <div className="relative mx-auto max-w-4xl text-center">
+    <section className="relative overflow-hidden px-4 pb-12 pt-16 sm:px-6 sm:pb-16 sm:pt-20 lg:px-8">
+      <div className="relative mx-auto max-w-5xl text-center">
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
@@ -31,7 +32,7 @@ export function Hero() {
             <span className="text-gradient">{brand.tagline}</span>
           </h1>
 
-          <p className="mx-auto mt-7 max-w-2xl text-lg text-ink-muted sm:text-xl">
+          <p className="mx-auto mt-6 max-w-2xl text-lg text-ink-muted sm:text-xl">
             Ajoutez un{" "}
             <span className="font-semibold text-bordeaux">
               widget d&apos;essayage virtuel IA
@@ -39,39 +40,76 @@ export function Hero() {
             à votre boutique Shopify et aidez vos clients à acheter avec
             confiance.
           </p>
-
-          <div className="mt-10 flex flex-col items-center justify-center gap-3 sm:flex-row sm:gap-4">
-            <motion.button
-              type="button"
-              onClick={() => scrollTo("demo")}
-              className="btn-primary text-lg"
-              whileHover={{ scale: 1.03 }}
-              whileTap={{ scale: 0.97 }}
-            >
-              <Wand2 className="h-5 w-5" aria-hidden />
-              Voir la démo
-            </motion.button>
-            <motion.button
-              type="button"
-              onClick={() => scrollTo("cabines")}
-              className="btn-secondary text-lg"
-              whileHover={{ scale: 1.02 }}
-              whileTap={{ scale: 0.97 }}
-            >
-              <ShoppingBag className="h-5 w-5" aria-hidden />
-              Essayer le widget
-            </motion.button>
-          </div>
-
-          <div className="mt-10 flex flex-wrap items-center justify-center gap-3 text-xs text-ink-muted">
-            <TrustBadge color="bg-emerald-500" label="Shopify-ready" />
-            <TrustBadge color="bg-gold" label="Sans compte client" />
-            <TrustBadge color="bg-bordeaux" label="Photos non conservées" />
-            <TrustBadge color="bg-fuchsia-500" label="IA configurable" />
-          </div>
         </motion.div>
+
+        {/* Concept visual — three-panel "Dilemme → Photo → Essai Virtuel".
+            Placed right under the headline so a first-time visitor grasps
+            what TryWithAI does within 2 seconds, without having to scroll. */}
+        <ConceptVisual />
+
+        <motion.div
+          initial={{ opacity: 0, y: 12 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.35, duration: 0.5 }}
+          className="mt-10 flex flex-col items-center justify-center gap-3 sm:flex-row sm:gap-4"
+        >
+          <motion.button
+            type="button"
+            onClick={() => scrollTo("demo")}
+            className="btn-primary text-lg"
+            whileHover={{ scale: 1.03 }}
+            whileTap={{ scale: 0.97 }}
+          >
+            <Wand2 className="h-5 w-5" aria-hidden />
+            Voir la démo
+          </motion.button>
+          <motion.button
+            type="button"
+            onClick={() => scrollTo("cabines")}
+            className="btn-secondary text-lg"
+            whileHover={{ scale: 1.02 }}
+            whileTap={{ scale: 0.97 }}
+          >
+            <ShoppingBag className="h-5 w-5" aria-hidden />
+            Essayer le widget
+          </motion.button>
+        </motion.div>
+
+        <div className="mt-8 flex flex-wrap items-center justify-center gap-3 text-xs text-ink-muted">
+          <TrustBadge color="bg-emerald-500" label="Shopify-ready" />
+          <TrustBadge color="bg-gold" label="Sans compte client" />
+          <TrustBadge color="bg-bordeaux" label="Photos non conservées" />
+          <TrustBadge color="bg-fuchsia-500" label="IA configurable" />
+        </div>
       </div>
     </section>
+  );
+}
+
+function ConceptVisual() {
+  return (
+    <motion.figure
+      initial={{ opacity: 0, y: 16, scale: 0.98 }}
+      animate={{ opacity: 1, y: 0, scale: 1 }}
+      transition={{ delay: 0.2, duration: 0.55, ease: [0.22, 1, 0.36, 1] }}
+      className="relative mx-auto mt-10 w-full max-w-4xl"
+    >
+      <div className="overflow-hidden rounded-3xl border border-bordeaux/10 bg-white/60 shadow-lifted ring-1 ring-bordeaux/5 backdrop-blur-sm">
+        <Image
+          src="/concept-trywithai.png"
+          alt="Le concept TryWithAI en trois étapes : le dilemme, la photo, l'essai virtuel."
+          width={2048}
+          height={1108}
+          priority
+          sizes="(max-width: 768px) 100vw, 896px"
+          className="block h-auto w-full"
+        />
+      </div>
+      <figcaption className="mt-3 text-xs text-ink-muted sm:text-sm">
+        Le concept en 3 étapes — du doute à l&apos;essayage en quelques
+        secondes.
+      </figcaption>
+    </motion.figure>
   );
 }
 

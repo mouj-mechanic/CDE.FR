@@ -35,6 +35,8 @@ export const CATEGORIES: Category[] = [
         scene: "background",
       },
     ],
+    photoSingleInstruction:
+      "Prenez une photo de votre tête de face, du haut du crâne aux épaules, en lumière douce et sur fond uni.",
     productInputMode: "single",
     loadingTitle: "Notre chapelier prépare votre essayage…",
     loadingDescription:
@@ -76,6 +78,8 @@ export const CATEGORIES: Category[] = [
         scene: "lighting",
       },
     ],
+    photoSingleInstruction:
+      "Prenez une photo de votre visage de face, sans lunettes, regard vers l'objectif et en lumière naturelle.",
     productInputMode: "single",
     loadingTitle: "Notre opticien prépare vos lunettes…",
     loadingDescription:
@@ -117,6 +121,8 @@ export const CATEGORIES: Category[] = [
         scene: "lighting",
       },
     ],
+    photoSingleInstruction:
+      "Prenez une photo de votre poignet nu, paume vers vous, du dos de la main au milieu de l'avant-bras.",
     productInputMode: "single",
     loadingTitle: "Notre maître horloger ajuste votre montre…",
     loadingDescription:
@@ -158,6 +164,8 @@ export const CATEGORIES: Category[] = [
         scene: "remove",
       },
     ],
+    photoSingleInstruction:
+      "Prenez une photo de votre main de face, doigts légèrement écartés, sans bagues ni bracelets et sur fond uni.",
     productInputMode: "multi",
     loadingTitle: "Notre joaillier sublime votre main…",
     loadingDescription:
@@ -199,6 +207,8 @@ export const CATEGORIES: Category[] = [
         scene: "lighting",
       },
     ],
+    photoSingleInstruction:
+      "Prenez une photo en pied, posture droite, bras le long du corps, en lumière homogène et sur fond simple.",
     productInputMode: "multi",
     loadingTitle: "Notre couturier ajuste votre tenue…",
     loadingDescription:
