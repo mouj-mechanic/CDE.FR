@@ -91,6 +91,19 @@ export function TryOnPanel({
     dispatch({ type: "SET_STATUS", status: "loading" });
     dispatch({ type: "SET_ERROR", error: null });
 
+    // ── Critical UX: yield to the browser BEFORE the heavy pipeline.
+    // The next pipeline call decodes images, runs MediaPipe, refines
+    // alpha, composites canvases — all CPU-bound work that can block
+    // the UI thread for 1–2 seconds. Without an explicit yield, the
+    // browser never gets a chance to paint the loading scene before
+    // that work starts, so the customer sees nothing happening after
+    // clicking the button. Two animation frames are enough to let
+    // React commit the "loading" status and Framer-Motion start its
+    // entry animation.
+    await new Promise<void>((resolve) =>
+      requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
+    );
+
     const firstProduct = state.products[0];
     const firstProductFile =
       state.products.find((p) => p.type === "image" && p.file)?.file ?? null;

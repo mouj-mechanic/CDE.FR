@@ -373,7 +373,11 @@ export async function renderWatchOverlayV3(
   // watch (target 0.78 × wristWidth).
   const scaleX = geometry.width / refined.width;
   const targetSpanRaw = process.env.WATCH_TARGET_WRIST_RATIO?.trim();
-  const targetSpan = targetSpanRaw ? Number(targetSpanRaw) : 0.78;
+  // 0.72 → slightly smaller than the previous 0.78 default.
+  //   - Real watches occupy roughly 60–75 % of the wrist width.
+  //   - Smaller dial reads as more realistic and avoids the
+  //     "comically oversized prop" look frequently flagged in QA.
+  const targetSpan = targetSpanRaw ? Number(targetSpanRaw) : 0.72;
   const wristWidth = geometry.palmWidth * 0.85;
   let v3Scale =
     Math.min(scaleX, (wristWidth * targetSpan) / refined.width) * adj.scale;
@@ -403,15 +407,25 @@ export async function renderWatchOverlayV3(
     rotationDeg: finalRotationDeg,
   });
 
-  // 6. Drop shadow under the case.
-  const shadowOpacity = Math.max(0, Math.min(1, 0.22 * (adj.shadowIntensity / 0.6)));
-  const shadowBlur = 12;
-  const shadow = renderSimpleWatchShadow({
+  // 6. Drop shadow under the case — two-pass for a grounded feel.
+  //    - Soft ambient halo (large blur, low opacity) sits the watch
+  //      gently on the skin (perceived light bounce).
+  //    - Tight contact shadow (small blur, higher opacity) anchors
+  //      the case to the wrist exactly where it would touch.
+  const intensity = Math.max(0.1, Math.min(1.5, adj.shadowIntensity / 0.6));
+  const ambientShadow = renderSimpleWatchShadow({
     rotatedCanvas: rotated.canvas,
-    opacity: shadowOpacity,
-    blurPx: shadowBlur,
+    opacity: 0.18 * intensity,
+    blurPx: 22,
     offsetXpx: 0,
-    offsetYpx: Math.max(2, Math.round(rotated.canvas.height * 0.04)),
+    offsetYpx: Math.max(4, Math.round(rotated.canvas.height * 0.05)),
+  });
+  const contactShadow = renderSimpleWatchShadow({
+    rotatedCanvas: rotated.canvas,
+    opacity: 0.32 * intensity,
+    blurPx: 8,
+    offsetXpx: 0,
+    offsetYpx: Math.max(2, Math.round(rotated.canvas.height * 0.02)),
   });
 
   // 7. Composite onto user image.
@@ -424,7 +438,11 @@ export async function renderWatchOverlayV3(
 
   const drawX = geometry.cx + adj.offsetX - rotated.canvas.width / 2;
   const drawY = geometry.cy + adj.offsetY - rotated.canvas.height / 2;
-  ctx.drawImage(shadow, drawX, drawY);
+  // Order: ambient halo → tight contact → product. The two-pass
+  // shadow makes the watch feel like it is resting on the wrist
+  // instead of floating like a sticker.
+  ctx.drawImage(ambientShadow, drawX, drawY);
+  ctx.drawImage(contactShadow, drawX, drawY);
   ctx.drawImage(rotated.canvas, drawX, drawY);
 
   // 8. Contact-band mask (white = editable, black = preserved). The

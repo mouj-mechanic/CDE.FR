@@ -28,11 +28,11 @@ interface LoadingSceneProps {
  */
 
 const ORBITS = [
-  { delay: 0.9, duration: 2.6, radius: 90 },
-  { delay: 1.3, duration: 3.0, radius: 130 },
+  { delay: 0.05, duration: 2.6, radius: 90 },
+  { delay: 0.25, duration: 3.0, radius: 130 },
 ];
 
-const PROGRESS_DELAY_MS = 1200;
+const PROGRESS_DELAY_MS = 300;
 
 interface StageDef {
   id: string;
@@ -247,21 +247,21 @@ export function LoadingScene({ category }: LoadingSceneProps) {
         ))}
       </div>
 
-      {/* Artisan scene */}
+      {/* Artisan scene — appears IMMEDIATELY on click. No delay. */}
       <motion.div
-        initial={{ opacity: 0, scale: 0.85, y: 12 }}
+        initial={{ opacity: 0, scale: 0.9, y: 6 }}
         animate={{ opacity: 1, scale: 1, y: 0 }}
-        transition={{ delay: 0.4, duration: 0.7, ease: "easeOut" }}
+        transition={{ duration: 0.45, ease: "easeOut" }}
         className="relative mb-4 flex justify-center"
       >
         <ArtisanScene type={category.animationType} />
       </motion.div>
 
-      {/* Title */}
+      {/* Title — also immediate. */}
       <motion.h3
-        initial={{ opacity: 0, y: 8 }}
+        initial={{ opacity: 0, y: 4 }}
         animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: 0.7, duration: 0.55, ease: "easeOut" }}
+        transition={{ delay: 0.15, duration: 0.35, ease: "easeOut" }}
         className="font-display text-lg font-semibold text-ink sm:text-xl"
       >
         {category.loadingTitle}
@@ -270,7 +270,7 @@ export function LoadingScene({ category }: LoadingSceneProps) {
       <motion.p
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
-        transition={{ delay: 1.0, duration: 0.5 }}
+        transition={{ delay: 0.25, duration: 0.35 }}
         className="mt-2 text-sm text-ink-muted"
       >
         {category.loadingDescription}

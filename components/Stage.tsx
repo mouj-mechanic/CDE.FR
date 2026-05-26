@@ -7,17 +7,23 @@ interface StageProps {
   children: React.ReactNode;
 }
 
-const CURTAIN_DURATION_S = 1.3;
+// Curtain duration shortened so the loading scene becomes fully
+// visible within ~500 ms of the click. The customer needs to see
+// the progress bar and stage checklist immediately, not after a
+// theatrical reveal.
+const CURTAIN_DURATION_S = 0.55;
 
 export function Stage({ children }: StageProps) {
   return (
     <div className="relative min-h-[440px] overflow-hidden rounded-3xl bg-cream-dark/40">
-      {/* Stage content (loading scene OR result) */}
+      {/* Stage content fades in IMMEDIATELY — no waiting for the
+          curtains. The curtains animate ON TOP and slide away as
+          the content is already revealing underneath. */}
       <motion.div
         className="relative z-10 p-4 sm:p-6"
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
-        transition={{ delay: 0.3, duration: 0.5, ease: "easeOut" }}
+        transition={{ duration: 0.25, ease: "easeOut" }}
       >
         {children}
       </motion.div>
@@ -46,8 +52,8 @@ export function Stage({ children }: StageProps) {
         initial={{ opacity: 1 }}
         animate={{ opacity: 0 }}
         transition={{
-          duration: 0.5,
-          delay: CURTAIN_DURATION_S * 0.85,
+          duration: 0.3,
+          delay: CURTAIN_DURATION_S * 0.8,
           ease: "easeOut",
         }}
         aria-hidden
