@@ -106,6 +106,16 @@ export function EmbedFlow({
     } catch (err) {
       console.warn("[tryon] pipeline failed", err);
     }
+    if (process.env.NODE_ENV !== "production" && pipelineResult) {
+      console.info("[tryon][dev] pipeline=", {
+        autoMaskGenerated: Boolean(pipelineResult.maskBlob),
+        compositeGenerated: Boolean(pipelineResult.previewBlob),
+        productAlphaDetected: pipelineResult.productHasAlpha,
+        renderMode: pipelineResult.renderMode,
+        placementScale: pipelineResult.watchPlacement?.scale,
+        placementRotation: pipelineResult.watchPlacement?.rotation,
+      });
+    }
 
     // Compress images before upload so we never trip Vercel's 4.5 MB body
     // limit (which returns a non-JSON "Request Entity Too Large" error).

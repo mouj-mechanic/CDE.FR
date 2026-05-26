@@ -115,6 +115,30 @@ export function TryOnPanel({
       console.warn("[tryon] pipeline failed", err);
     }
 
+    // Dev-only diagnostics. Useful when debugging "mask spills onto
+    // fingers" / "watch too big" reports. Never exposed to the customer.
+    if (process.env.NODE_ENV !== "production" && pipelineResult) {
+      console.info(
+        "[tryon][dev] pipeline=",
+        {
+          autoMaskGenerated: Boolean(pipelineResult.maskBlob),
+          compositeGenerated: Boolean(pipelineResult.previewBlob),
+          productAlphaDetected: pipelineResult.productHasAlpha,
+          renderMode: pipelineResult.renderMode,
+          placementScale: pipelineResult.watchPlacement?.scale,
+          placementRotation: pipelineResult.watchPlacement?.rotation,
+          placementBBox: pipelineResult.watchPlacement
+            ? {
+                x: pipelineResult.watchPlacement.x,
+                y: pipelineResult.watchPlacement.y,
+                w: pipelineResult.watchPlacement.width,
+                h: pipelineResult.watchPlacement.height,
+              }
+            : null,
+        }
+      );
+    }
+
     // Shrink large images before uploading so we never trip Vercel's 4.5 MB
     // serverless body limit (which returns plain-text "Request Entity Too
     // Large", causing JSON.parse to fail on the client).

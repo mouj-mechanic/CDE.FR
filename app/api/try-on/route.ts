@@ -935,6 +935,7 @@ export async function POST(request: NextRequest) {
       // return the deterministic composite as the final result.
       let qualityCheckFailed = false;
       let qualityCheckFallbackApplied = false;
+      const failureReasons: string[] = [];
       if (
         usedOpenAI &&
         isAccessory &&
@@ -947,18 +948,42 @@ export async function POST(request: NextRequest) {
             composite: openaiMeta.compositeAtTargetSize,
             userBase: openaiMeta.baseAtTargetSize,
           });
-          if (!fidelity.passed) {
+
+          // Duplication detection: if the AI silhouette is dramatically
+          // larger than the composite silhouette (e.g. >1.8x), the
+          // model probably drew an extra product elsewhere.
+          const compositeSil = fidelity.compositeSilhouetteRatio;
+          const resultSil = fidelity.resultSilhouetteRatio;
+          const duplicationSuspected =
+            compositeSil > 0.005 && resultSil > compositeSil * 1.8;
+
+          if (!fidelity.passed || duplicationSuspected) {
             qualityCheckFailed = true;
+            if (!fidelity.colorOk) {
+              failureReasons.push(
+                `product-color-drift (Δ=${Math.round(fidelity.colorDelta)})`
+              );
+            }
+            if (!fidelity.silhouetteRatioOk) {
+              failureReasons.push("product-size-drift");
+            }
+            if (duplicationSuspected) {
+              failureReasons.push(
+                `product-duplication-suspected (composite=${compositeSil.toFixed(
+                  3
+                )} result=${resultSil.toFixed(3)})`
+              );
+            }
             console.warn(
-              `[try-on] product-fidelity-failed category=${category} colorDelta=${fidelity.colorDelta.toFixed(
-                1
-              )} silhouetteOk=${fidelity.silhouetteRatioOk} colorOk=${fidelity.colorOk}`
+              `[try-on] product-fidelity-failed category=${category} reasons=${failureReasons.join(
+                "|"
+              )}`
             );
             lockWarnings.push({
               code: "product-fidelity-check-failed",
-              message: `Product fidelity check failed (color Δ=${Math.round(
-                fidelity.colorDelta
-              )}). The AI may have altered the product.`,
+              message: `Product fidelity check failed: ${failureReasons.join(
+                ", "
+              )}.`,
             });
             // Strict fallback: hand the customer the deterministic
             // composite so the product remains pixel-perfect, even
@@ -1021,8 +1046,12 @@ export async function POST(request: NextRequest) {
         productLockApplied: lockedProductLocked,
         fallbackUsed: qualityCheckFallbackApplied,
         inputDimensions,
+        compositeDimensions: inputDimensions,
+        maskDimensions: openaiMeta?.maskUsed ? inputDimensions : undefined,
+        maskCoverage: openaiMeta?.maskCoverage,
         productAlphaDetected: Boolean(openaiMeta?.productHasAlpha),
         qualityCheckFailed,
+        ...(failureReasons.length > 0 ? { failureReasons } : {}),
       };
 
       const renderMode: RenderMode = qualityCheckFallbackApplied

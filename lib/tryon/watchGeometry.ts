@@ -107,10 +107,21 @@ export function computeWristGeometry(
   const cx = wrist.x - handDir.x * palmWidth * 0.32;
   const cy = wrist.y - handDir.y * palmWidth * 0.32;
 
-  // watchWidth = palmWidth * 1.15 (was 0.95). Most watches read too small
-  // with a strict palmWidth proxy because the strap extends well past the
-  // wrist width on either side.
-  const width = palmWidth * 1.15;
+  // ── Watch width sizing (anatomy-aware) ────────────────────────────
+  //
+  //  Anatomically: wristWidth ≈ 0.85 × palmWidth (knuckle span).
+  //  A realistic watch case is 0.85–1.0 × wristWidth. The bracelet
+  //  extends a bit further on each side but tapers, so:
+  //
+  //    watchSpan = wristWidth × 1.0  ≈ palmWidth × 0.85
+  //
+  //  We cap explicitly at palmWidth × 0.95 so the watch never reads as
+  //  oversized in the result, even after user-supplied scale tweaks
+  //  apply on top. The previous 1.15 made the result look like a
+  //  costume prop.
+  const wristWidth = palmWidth * 0.85;
+  const targetSpan = wristWidth * 1.0;
+  const width = Math.min(targetSpan, palmWidth * 0.95);
   const height = width * productAspect;
 
   // rotation aligns the watch's horizontal axis with wristAxis.

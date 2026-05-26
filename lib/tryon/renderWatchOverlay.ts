@@ -114,12 +114,23 @@ export async function renderWatchOverlay(
     : null;
   const base = auto ?? fallbackWristGeometry(userW, userH, productAspect);
 
+  // Apply user adjustments, but enforce a hard cap on the watch span.
+  //
+  //  Anatomic prior: wristWidth ≈ 0.85 × palmWidth. A realistic watch
+  //  case must never be wider than 1.25 × wristWidth, otherwise it
+  //  reads as a sticker pasted on a child's wrist.
+  //
+  //  Hard cap: width <= 1.25 × wristWidth ≈ 1.06 × palmWidth.
+  const maxAllowedWidth = base.palmWidth * 1.06;
+  const userScaled = base.width * adj.scale;
+  const cappedWidth = Math.min(userScaled, maxAllowedWidth);
+  const scaleFactor = base.width === 0 ? 1 : cappedWidth / base.width;
   const geometry: WristGeometry = {
     ...base,
     cx: base.cx + adj.offsetX,
     cy: base.cy + adj.offsetY,
-    width: base.width * adj.scale,
-    height: base.height * adj.scale,
+    width: cappedWidth,
+    height: base.height * scaleFactor,
     rotation: base.rotation + adj.rotation,
   };
 
@@ -250,6 +261,16 @@ export async function renderWatchOverlay(
 
   // 11. Build the contact-band mask using the same silhouette + geometry
   //     used for the composite. It must align pixel-for-pixel with `out`.
+  //
+  //     The mask is intentionally TIGHT around the watch:
+  //       - feather 12 px  → a small AO blending zone, but small enough
+  //         that the mask never reaches the fingers / back of the hand
+  //         (those are the visible "white outlines" the customer sees).
+  //       - groundedShadowPx 0 → no extra patch under the case. We
+  //         used to add one for shadow realism, but it routinely
+  //         bled onto the fingers when the photo was framed tightly.
+  //         Shadow realism is now driven by the prompt + composite
+  //         instead.
   const mask = await buildContactMask({
     width: userW,
     height: userH,
@@ -257,15 +278,8 @@ export async function renderWatchOverlay(
     centerY: geometry.cy,
     rotation: geometry.rotation,
     silhouette: silhouette.canvas,
-    // 20-px Gaussian feather → the white silhouette bleeds 18–24 px into
-    // the black background (i.e. onto the wrist skin). This is the AO
-    // blending zone where FLUX Fill paints realistic contact shadows.
-    // Going below ~16 px makes the result look like a 2D sticker again;
-    // above ~26 px the dial starts to lose contrast at the bezel edge.
-    featherPx: 24,
-    // Extra soft white patch under the watch (~22 % of watch height) so
-    // the contact-shadow zone reaches further onto the forearm.
-    groundedShadowPx: Math.round(geometry.height * 0.22),
+    featherPx: 12,
+    groundedShadowPx: 0,
   });
 
   // 12. Export composite PNG.

@@ -230,9 +230,11 @@ function clothesLead(): string {
 
 export const AUTO_MASKED_ACCESSORY_PROMPT = `You are performing a realistic e-commerce virtual try-on edit.
 
-The first image is the primary source of truth. It already contains the customer photo with the product placed in the intended position. The product reference image shows the exact product that must be preserved.
+The first image is the primary source of truth. It already contains the customer photo with the product placed in the intended position.
+The product reference image shows the exact product that must be preserved.
 
-Your task is not to redesign or replace the product. Your task is only to make the existing placed product look naturally worn by the customer.
+Your task is not to redesign, replace, duplicate, recolor, simplify, or invent the product.
+Your task is only to make the already placed product look naturally worn by the customer.
 
 Edit only the masked area. Improve realistic contact, shadows, occlusion, reflections, scale consistency, perspective blending, and material integration.
 
@@ -243,18 +245,22 @@ Strict preservation rules:
 - Do not beautify, smooth, regenerate, repaint or reinterpret the customer.
 - Preserve the exact product identity from the reference image.
 - Do not replace the product with a different item.
+- Do not duplicate the product.
+- Do not create a second product.
+- Do not show the product more than once anywhere in the image.
 - Do not change the product color, material, shape, logo, dial layout, pattern, texture, decorations, bracelet links, frame shape or visible details.
 - Do not invent new product elements.
 - Do not simplify the product.
 - Do not turn a black product into a silver product.
 - Do not turn a colorful product into a plain product.
-- The final image must look like a realistic photo of the same customer wearing the same product.
+- The final image must look like the original customer photo with the exact supplied product naturally worn.
 
 For watches:
 - Preserve the exact watch case shape, bezel, dial, subdials, hands, markings, logo placement, date window, bracelet links, color accents and material.
 - The watch is already positioned on the wrist.
 - Only blend the watch with the wrist using realistic shadows, contact, perspective and slight skin occlusion.
 - Do not create a different watch.
+- Do not draw a second watch on the other wrist or anywhere else.
 
 For glasses:
 - Preserve the exact frame shape, color, lens style, bridge, temples and material.
@@ -270,6 +276,13 @@ For headwear:
 - Preserve the exact hat/cap shape, color, logo, texture and brim.
 - Preserve face identity and hair except small natural occlusion in the masked contact area.
 
+Important — the mask is only a technical editing guide. It must not appear in the final image:
+- No white outlines around fingers, hands, face, or any object.
+- No black outlines or segmentation contours.
+- No broken or aliased pixels on the skin.
+- No visible mask edges.
+- The final image must look like a single coherent photograph, not a composite.
+
 Return one realistic final image only.`;
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -281,11 +294,13 @@ Return one realistic final image only.`;
 export function getWatchTryOnPrompt(): string {
   return `You are editing a realistic product try-on image.
 
-The customer photo and the watch placement are already defined in the first image. The watch reference image contains the exact watch that must appear in the final result.
+The first image already shows the customer's wrist with the watch placed in the intended position.
+The watch reference image contains the exact watch that must appear in the final result.
 
-Important:
 Do not generate a new watch.
 Do not redesign the watch.
+Do not duplicate the watch.
+Do not add a second watch.
 Do not change the watch color.
 Do not change the dial.
 Do not change the logo.
@@ -293,7 +308,7 @@ Do not change the bezel.
 Do not change the bracelet.
 Do not replace the product with a similar watch.
 
-The watch must remain visually identical to the supplied reference: same case, same bezel, same dial layout, same subdials, same hands, same markings, same color accents, same bracelet links, same metal finish, same overall design.
+The final watch must remain visually identical to the supplied reference: same case, same bezel, same dial layout, same subdials, same hands, same markings, same date window, same color accents, same bracelet links, same metal finish, same overall design. If the reference watch is a black metal chronograph with colorful rainbow dial/bezel accents and a dark bracelet, the result must keep all of those properties.
 
 Only improve:
 - natural contact between watch and wrist
@@ -313,7 +328,14 @@ Preserve completely:
 - background
 - image composition outside the masked area
 
-The final image must look like the original customer photo with the exact supplied watch naturally worn on the wrist.`;
+Important — the mask is only a technical editing guide. It must not appear in the final image:
+- No white outlines around fingers, the thumb, or the back of the hand.
+- No black outlines or segmentation contours.
+- No broken or aliased pixels on the skin.
+- No visible mask edges anywhere.
+- The final image must look like a single coherent photograph.
+
+Return one realistic final image only.`;
 }
 
 // ──────────────────────────────────────────────────────────────────────────

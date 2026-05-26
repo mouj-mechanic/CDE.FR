@@ -55,6 +55,8 @@ Copy `.env.example` to `.env.local` and fill in what you need.
 | `OPENAI_IMAGE_MODEL`         | Optional, defaults to `gpt-image-1`                                              |
 | `OPENAI_IMAGE_SIZE`          | `1024x1024` (default), `1024x1536`, `1536x1024`, or `auto`                       |
 | `OPENAI_IMAGE_QUALITY`       | `low` / `medium` / `high` (default) / `auto`                                     |
+| `OPENAI_IMAGE_OUTPUT_FORMAT` | `png` (default), `jpeg`, `webp`. PNG preserves alpha edges                       |
+| `OPENAI_INPUT_FIDELITY`      | `high` (default) / `low`. `high` keeps the customer's pose/hand untouched       |
 | `OPENAI_USE_MASKED_EDIT`     | `true` (default). When `false`, the API skips the alpha mask                     |
 | `REQUIRE_MASK_FOR_OPENAI`    | `false` (default). **Customers never upload masks** — keep `false` in production |
 | `NEXT_PUBLIC_REQUIRE_MASK_FOR_OPENAI` | Mirror the above on the client (should stay `false`)                      |
@@ -161,15 +163,52 @@ customer photo + product image
   → deterministic placement
   → composite PNG (product on body)
   → auto mask PNG (contact band, feathered)
-  → OpenAI masked edit (integrate only — do not redraw)
+  → normalizeEditInputsForOpenAI()   (dimension + coverage gate)
+  → OpenAI masked edit               (input_fidelity=high, output_format=png)
   → product-lock re-stamp
-  → fidelity check (colour + silhouette)
+  → fidelity + duplication check     (colour, silhouette ratio)
   → final result
 ```
 
 If auto-mask fails in strict mode, the route returns the deterministic
 composite with `warnings: [{ code: "auto_mask_failed_fallback_used", … }]`
 instead of calling OpenAI in a free-generation mode.
+
+### Why prompt alone is not enough
+
+We tried "send userImage + productImage + a strict prompt" first. It
+fails for accessories in three predictable ways:
+
+1. **Product redesign.** Even with `"Do not change the product"` in the
+   prompt, GPT Image will re-draw the watch from scratch. A black
+   chronograph with rainbow accents becomes a silver-and-blue watch.
+2. **Anatomy drift.** Without a mask, the model regenerates the entire
+   hand. Fingers get longer, the wrist gets thinner, the thumb pose
+   shifts.
+3. **Product duplication.** The model sometimes draws a second watch on
+   the other wrist or on the forearm because the reference image had
+   the product floating on a transparent background.
+
+The fix is structural, not textual:
+
+- **Composite first.** The first image sent to OpenAI is the
+  deterministic composite (user photo + product placed at the right
+  spot). The prompt then says "improve the integration of this
+  already-placed product".
+- **Tight mask.** A small contact-band mask (≤ 18 % of the image for
+  watches) restricts the model to the wrist/contact zone. The fingers
+  and the back of the hand are alpha-opaque → preserved exactly.
+- **Input fidelity high.** `input_fidelity=high` tells gpt-image-1 to
+  stick close to the input pixels.
+- **Product re-stamp.** The original transparent product PNG is
+  re-applied on top of the AI result so dial / bezel / colour cannot
+  drift.
+- **Fidelity + duplication gates.** If the product silhouette in the
+  result is > 1.8× the composite silhouette, we suspect duplication
+  and return the deterministic composite instead.
+
+The mask is **never** visible to the customer. It is an internal
+technical artefact. There is no mask uploader in the UI.
 
 ### Modes
 

@@ -293,6 +293,17 @@ export async function runTryOnPipeline(
         // rotation, so the mask centre + rotation are simply the canvas
         // centre and 0. We rebuild the mask with the same builder used
         // by the watch flow so behaviour stays consistent.
+        //
+        // Feather is intentionally small (8–14 px) — anything bigger
+        // bleeds onto neighbouring skin (forehead, cheeks, other
+        // fingers) and the customer sees the mask as white halos in
+        // the final image.
+        const featherPx =
+          opts.category === "headwear"
+            ? 14
+            : opts.category === "glasses"
+              ? 10
+              : 8;
         const mask = await buildContactMask({
           width: render.width,
           height: render.height,
@@ -300,7 +311,7 @@ export async function runTryOnPipeline(
           centerY: render.height / 2,
           rotation: 0,
           silhouette: render.silhouette,
-          featherPx: opts.category === "headwear" ? 28 : 18,
+          featherPx,
           // No grounded patch for face/hand accessories — the feather
           // alone gives the AI enough room for natural shadows.
           groundedShadowPx: 0,

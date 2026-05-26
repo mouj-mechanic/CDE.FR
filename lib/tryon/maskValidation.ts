@@ -27,7 +27,22 @@ import type { CategoryId, TryOnWarning } from "@/types";
  * (shadows, blending). A 25% mask would mean we are asking the AI to
  * touch a quarter of the customer image — way too much.
  */
-export const MAX_WHITE_RATIO_ACCESSORY = 0.25; // watch/glasses/headwear/hand-jewelry
+/**
+ * Per-category mask coverage caps.
+ *
+ *  Watch + hand-jewelry are extremely identity-sensitive: the mask
+ *  should cover only the watch case + a thin contact band on the
+ *  wrist, never fingers or the back of the hand. Empirically, anything
+ *  past ~18 % of the image starts to "eat" surrounding skin and the
+ *  AI starts inventing finger anatomy.
+ *
+ *  Glasses and headwear can be slightly larger because they sit on
+ *  features that are tolerant to small alterations (eyebrows, hair).
+ */
+export const MAX_WHITE_RATIO_WATCH = 0.18;
+export const MAX_WHITE_RATIO_HAND_JEWELRY = 0.18;
+export const MAX_WHITE_RATIO_GLASSES = 0.22;
+export const MAX_WHITE_RATIO_HEADWEAR = 0.3;
 export const MAX_WHITE_RATIO_CLOTHES = 0.7;
 export const MIN_WHITE_RATIO = 0.005;
 
@@ -40,9 +55,18 @@ export interface MaskValidationResult {
 }
 
 function maxWhiteRatioFor(category: CategoryId): number {
-  return category === "clothes"
-    ? MAX_WHITE_RATIO_CLOTHES
-    : MAX_WHITE_RATIO_ACCESSORY;
+  switch (category) {
+    case "watch":
+      return MAX_WHITE_RATIO_WATCH;
+    case "hand-jewelry":
+      return MAX_WHITE_RATIO_HAND_JEWELRY;
+    case "glasses":
+      return MAX_WHITE_RATIO_GLASSES;
+    case "headwear":
+      return MAX_WHITE_RATIO_HEADWEAR;
+    case "clothes":
+      return MAX_WHITE_RATIO_CLOTHES;
+  }
 }
 
 const ADVICE: Record<CategoryId, string> = {
