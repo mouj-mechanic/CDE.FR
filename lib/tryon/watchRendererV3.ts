@@ -278,16 +278,23 @@ function buildContactMaskV3(opts: {
   rotatedCanvas: HTMLCanvasElement;
   ringPx: number;
 }): HTMLCanvasElement {
+  // V3 mask is intentionally minimal — used only for downstream
+  // debugging / parity with the v2 API surface. It is NEVER sent
+  // back to the API (pipeline strips the mask from the V3 result),
+  // so the only consumer is local diagnostics.
+  //
+  //   - Black background     = preserved.
+  //   - White product alpha  = the watch silhouette only.
+  //   - NO halo, NO ring     = we never want OpenAI to see this
+  //     mask, but if it ever does, it shouldn't include any
+  //     finger / palm / background pixel.
   const mask = document.createElement("canvas");
   mask.width = opts.width;
   mask.height = opts.height;
   const mctx = mask.getContext("2d");
   if (!mctx) return mask;
-  // Black background = preserved.
   mctx.fillStyle = "#000";
   mctx.fillRect(0, 0, opts.width, opts.height);
-  // Draw the rotated product alpha at the wrist centre, then expand
-  // by `ringPx` using a blur + threshold trick.
   const tmp = document.createElement("canvas");
   tmp.width = opts.width;
   tmp.height = opts.height;
@@ -301,12 +308,7 @@ function buildContactMaskV3(opts: {
   tctx.globalCompositeOperation = "source-in";
   tctx.fillStyle = "#fff";
   tctx.fillRect(0, 0, opts.width, opts.height);
-  // Soften: blur and re-draw onto mask. The result is a white
-  // halo around the product alpha → editable band.
-  mctx.filter = `blur(${Math.max(2, opts.ringPx)}px)`;
-  mctx.globalAlpha = 0.85;
   mctx.drawImage(tmp, 0, 0);
-  mctx.filter = "none";
   return mask;
 }
 
@@ -373,7 +375,27 @@ export async function renderWatchOverlayV3(
   const targetSpanRaw = process.env.WATCH_TARGET_WRIST_RATIO?.trim();
   const targetSpan = targetSpanRaw ? Number(targetSpanRaw) : 0.78;
   const wristWidth = geometry.palmWidth * 0.85;
-  const v3Scale = Math.min(scaleX, (wristWidth * targetSpan) / refined.width) * adj.scale;
+  let v3Scale =
+    Math.min(scaleX, (wristWidth * targetSpan) / refined.width) * adj.scale;
+
+  // ── Vertical-strap height cap ───────────────────────────────────
+  //   When the product PNG is taller than it is wide (the common
+  //   case for catalogue watches shot from above), the rotated
+  //   canvas can stretch far above the wrist (over the fingers) and
+  //   far below it (into the sleeve), giving a "double watch"
+  //   impression where the bracelet looks like a second product.
+  //
+  //   We cap the rendered HEIGHT to ~2.2× the wrist width so only
+  //   a natural amount of strap remains visible on each side of the
+  //   dial — the strap fades away anatomically rather than draping
+  //   across the entire forearm.
+  if (orientation.orientation === "vertical_strap") {
+    const maxRenderH = wristWidth * 2.2;
+    const heightAtScale = refined.height * v3Scale;
+    if (heightAtScale > maxRenderH) {
+      v3Scale = (maxRenderH / refined.height) * adj.scale;
+    }
+  }
 
   const rotated = rotateProductLayer({
     productCanvas: refined.canvas,

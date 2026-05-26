@@ -262,6 +262,14 @@ export async function runTryOnPipeline(
       ) {
         qualityStatus = "needs-better-photo";
       }
+      // V3 deliberately does NOT expose a mask to the client. The
+      // V3 composite IS the final image — there is no AI refinement
+      // step. Returning `undefined` for maskBlob disables the
+      // "Refine with AI" path in the UI, which is the correct
+      // behaviour: any AI call on a watch would inevitably touch
+      // hand / nail / finger pixels and damage the result. AI can
+      // come back later via a server-side contact-shadow pass once
+      // the deterministic V3 quality is reliable.
       return {
         previewBlob: watchV3.blob,
         previewBlobUrl: watchV3.url,
@@ -275,8 +283,6 @@ export async function runTryOnPipeline(
         productImageSource: productResult.source,
         watchPlacement,
         edgeQuality: watchV3.edgeQuality,
-        maskBlob: watchV3.maskBlob,
-        maskBlobUrl: watchV3.maskUrl,
       };
     }
     // ── V2 (legacy) — kept for opt-in A/B comparison ──────────────

@@ -24,6 +24,11 @@ import {
   renderWatchOverlay,
   type WatchAdjustments,
 } from "@/lib/tryon/renderWatchOverlay";
+import {
+  renderWatchOverlayV3,
+  getWatchRendererVersion,
+  type WatchAdjustmentsV3,
+} from "@/lib/tryon/watchRendererV3";
 import type { TryOnLandmarks } from "@/lib/tryon/types";
 
 interface WatchAdjustPanelProps {
@@ -146,26 +151,66 @@ export function WatchAdjustPanel({
         if (!userImg || !productImg) return;
         setRendering(true);
         try {
-          const res = await renderWatchOverlay({
-            userImage: userImg,
-            productImage: productImg,
-            landmarks: landmarksRef.current,
-            adjustments: target,
-          });
-          setLastBlob(res.blob);
-          setLastMaskBlob(res.maskBlob);
-          if (lastUrlRef.current) URL.revokeObjectURL(lastUrlRef.current);
-          lastUrlRef.current = res.url;
-          onPreviewUrl?.(res.url);
-          if (!res.fromLandmarks) {
-            setDetection({ state: "missing" });
-          } else if (res.confidence < 0.45) {
-            setDetection({
-              state: "low-confidence",
-              confidence: res.confidence,
+          // V3 is the orientation-aware single-layer renderer that
+          // matches the server pipeline. The manual adjust panel
+          // honours WATCH_RENDERER_VERSION so the preview the user
+          // tweaks is bit-identical to what the API returns.
+          const rendererVersion = getWatchRendererVersion();
+          if (rendererVersion === "v3") {
+            const v3Adj: WatchAdjustmentsV3 = {
+              offsetX: target.offsetX,
+              offsetY: target.offsetY,
+              scale: target.scale,
+              rotationDeg: (target.rotation * 180) / Math.PI,
+              shadowIntensity: target.shadowIntensity,
+            };
+            const res = await renderWatchOverlayV3({
+              userImage: userImg,
+              productImage: productImg,
+              landmarks: landmarksRef.current,
+              adjustments: v3Adj,
             });
+            setLastBlob(res.blob);
+            // V3 does NOT expose a refine-able mask — manual AI
+            // refine is intentionally disabled because any OpenAI
+            // pass on a watch risks damaging the hand. Set null so
+            // the "Refine with AI" button stays hidden.
+            setLastMaskBlob(null as unknown as Blob);
+            if (lastUrlRef.current) URL.revokeObjectURL(lastUrlRef.current);
+            lastUrlRef.current = res.url;
+            onPreviewUrl?.(res.url);
+            if (!res.fromLandmarks) {
+              setDetection({ state: "missing" });
+            } else if (res.confidence < 0.45) {
+              setDetection({
+                state: "low-confidence",
+                confidence: res.confidence,
+              });
+            } else {
+              setDetection({ state: "detected", confidence: res.confidence });
+            }
           } else {
-            setDetection({ state: "detected", confidence: res.confidence });
+            const res = await renderWatchOverlay({
+              userImage: userImg,
+              productImage: productImg,
+              landmarks: landmarksRef.current,
+              adjustments: target,
+            });
+            setLastBlob(res.blob);
+            setLastMaskBlob(res.maskBlob);
+            if (lastUrlRef.current) URL.revokeObjectURL(lastUrlRef.current);
+            lastUrlRef.current = res.url;
+            onPreviewUrl?.(res.url);
+            if (!res.fromLandmarks) {
+              setDetection({ state: "missing" });
+            } else if (res.confidence < 0.45) {
+              setDetection({
+                state: "low-confidence",
+                confidence: res.confidence,
+              });
+            } else {
+              setDetection({ state: "detected", confidence: res.confidence });
+            }
           }
         } catch (err) {
           setError(
@@ -402,7 +447,7 @@ export function WatchAdjustPanel({
                   <Check className="h-4 w-4" aria-hidden />
                   Valider l&apos;aperçu
                 </button>
-                {onRefineWithAI && (
+                {onRefineWithAI && lastMaskBlob && (
                   <button
                     type="button"
                     onClick={handleAI}
