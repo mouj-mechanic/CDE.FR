@@ -46,34 +46,49 @@ Useful pages while developing:
 
 Copy `.env.example` to `.env.local` and fill in what you need.
 
-| Key                       | Purpose                                                                 |
-| ------------------------- | ----------------------------------------------------------------------- |
-| `AI_TRYON_PROVIDER`       | `mock` (default), `fal`, or `auto`                                      |
-| `TRYON_RENDER_MODE`       | `auto` (default), `fast`, or `premium` — see "Render pipeline" below    |
-| `FAL_KEY`                 | fal.ai API key — required for `AI_TRYON_PROVIDER=fal`                   |
-| `FASHN_API_KEY`           | Optional, reserved for a future direct FASHN integration                |
-| `AI_TRYON_API_KEY`        | Legacy generic fallback (also accepted as `FAL_KEY`)                    |
-| `NEXT_PUBLIC_AI_PROVIDER` | Mirrors the provider name on the client (used by the privacy note)      |
+| Key                       | Purpose                                                                          |
+| ------------------------- | -------------------------------------------------------------------------------- |
+| `AI_TRYON_PROVIDER`       | `mock` (default), `openai`, `fal`, or `auto`                                     |
+| `TRYON_RENDER_MODE`       | `auto` (default), `fast`, or `premium` — see "Render pipeline" below             |
+| `OPENAI_API_KEY`          | OpenAI API key — required for `AI_TRYON_PROVIDER=openai`                         |
+| `OPENAI_IMAGE_MODEL`      | Optional, defaults to `gpt-image-1`                                              |
+| `OPENAI_IMAGE_SIZE`       | `1024x1024` (default), `1024x1536`, `1536x1024`, or `auto`                       |
+| `OPENAI_IMAGE_QUALITY`    | `low` / `medium` / `high` (default) / `auto`                                     |
+| `OPENAI_USE_MASKED_EDIT`  | `true` (default). When `false`, the API skips the alpha mask                     |
+| `FAL_KEY`                 | fal.ai API key — required for `AI_TRYON_PROVIDER=fal`                            |
+| `FASHN_API_KEY`           | Optional, reserved for a future direct FASHN integration                         |
+| `AI_TRYON_API_KEY`        | Legacy generic fallback (also accepted as `FAL_KEY`)                             |
+| `NEXT_PUBLIC_AI_PROVIDER` | Mirrors the provider name on the client (used by the privacy note + UI badges)   |
 
 ### Provider modes
 
 - **`mock`** (default): no API key required. Returns a deterministic local
   image (`/demo2-result.png` for watches, otherwise category-specific
   Picsum.photos seeds). Useful to demo the widget without any cost.
+- **`openai`**: routes to **OpenAI GPT Image** (`gpt-image-1` by default).
+  The user photo is the base image, the transparent product PNG is passed as
+  a second reference (multi-image edit), and the watch flow additionally
+  attaches an alpha-channel mask derived from the deterministic composite +
+  contact-band mask. Returns base64 → served as a `data:` URL.
 - **`fal`**: routes to **fal.ai**.
   - **Clothes** → FASHN (`fashn/tryon/v1.6`, fallback `fal-ai/fashn/tryon`).
     If the FASHN call fails for any reason, the service automatically falls
     back to FLUX Kontext so the user always gets a result.
-  - **Headwear / glasses / watch / hand-jewelry** → FLUX Kontext multi-image
-    edit (`fal-ai/flux-pro/kontext/max/multi`) with category-specific
-    prompts (see `lib/providers/prompts.ts`).
-- **`auto`**: uses `fal` if `FAL_KEY` is present, otherwise `mock`. Recommended
-  for CI / preview deployments.
+  - **Watch with composite + mask** → FLUX LoRA Inpainting
+    (`fal-ai/flux-lora/inpainting`, with `flux-pro/v1/fill` and
+    `sdxl-inpainting` as fallbacks).
+  - **Headwear / glasses / hand-jewelry** → FLUX Kontext multi-image edit
+    (`fal-ai/flux-pro/kontext/max/multi`) with category-specific prompts
+    (see `lib/providers/prompts.ts`).
+- **`auto`**: uses `openai` if `OPENAI_API_KEY` is present, otherwise `fal`
+  if `FAL_KEY` is present, otherwise `mock`. Recommended for CI / preview
+  deployments.
 
-> **Strict fal mode:** when `AI_TRYON_PROVIDER=fal`, the API will **never**
-> silently fall back to mock. If `FAL_KEY` is missing, `/api/try-on` returns
-> a `500` with an explicit error and `/api/ai-status` reports
-> `mode: "fal-configured-but-missing-key"`.
+> **Strict provider mode:** when `AI_TRYON_PROVIDER=openai` or `=fal`, the
+> API will **never** silently fall back to mock. If the matching key is
+> missing, `/api/try-on` returns a `500` with an explicit error and
+> `/api/ai-status` reports `mode: "openai-configured-but-missing-key"` (or
+> `fal-configured-but-missing-key`).
 
 ---
 

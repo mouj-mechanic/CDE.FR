@@ -191,17 +191,24 @@ export function ResultView({
                 ? "Aperçu rapide"
                 : renderMode === "specialized-vton"
                   ? "Rendu spécialisé vêtements"
-                  : renderMode === "premium-ai"
-                    ? "Rendu IA premium"
-                    : mock
-                      ? "Mode démo"
-                      : "Généré avec IA"}
+                  : renderMode === "gpt-image-edit"
+                    ? "Generated with GPT Image"
+                    : renderMode === "premium-ai"
+                      ? "Rendu IA premium"
+                      : mock
+                        ? "Mode démo"
+                        : "Généré avec IA"}
               {!mock && model && renderMode !== "fast-overlay" && (
                 <span className="ml-1 font-normal normal-case opacity-70">
                   · {prettyModel(model, provider)}
                 </span>
               )}
             </span>
+            {!mock && provider === "openai" && (
+              <span className="text-[10px] uppercase tracking-wider text-ink-muted/70">
+                Provider: OpenAI · Mask-guided edit
+              </span>
+            )}
             {!mock &&
               provider === "fal" &&
               renderMode !== "fast-overlay" && (
@@ -424,7 +431,10 @@ export function ResultView({
 }
 
 function prettyModel(model: string, provider?: string): string {
+  if (model.startsWith("gpt-image")) return "GPT Image";
   if (model.includes("fashn")) return "FASHN";
+  if (model.includes("flux-pro/v1/fill")) return "FLUX.1 Fill";
+  if (model.includes("flux-lora/inpainting")) return "FLUX LoRA Inpaint";
   if (model.includes("kontext")) return "FLUX Kontext";
   if (provider) return provider;
   return model;

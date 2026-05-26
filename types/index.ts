@@ -125,12 +125,19 @@ export interface TryOnResponseDebug {
   productImageSource?: "transparent-upload" | "cutout" | "original";
   productHasAlpha?: boolean;
   productMimeType?: string;
+  /** True when the request was handled by the OpenAI provider. */
+  usedOpenAI?: boolean;
+  /** True when the request was handled by a fal.ai model. */
+  usedFal?: boolean;
+  /** Whether an OpenAI alpha mask was attached to the edit call. */
+  maskUsed?: boolean;
 }
 
 export type RenderMode =
   | "fast-overlay"
   | "premium-ai"
   | "specialized-vton"
+  | "gpt-image-edit"
   | "mock";
 
 export type QualityStatus =

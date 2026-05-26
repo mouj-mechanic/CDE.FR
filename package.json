@@ -16,9 +16,11 @@
     "framer-motion": "^11.18.2",
     "lucide-react": "^0.511.0",
     "next": "^15.3.3",
+    "openai": "^6.39.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "react-dropzone": "^14.3.8",
+    "sharp": "^0.34.5",
     "tailwind-merge": "^3.3.0"
   },
   "devDependencies": {

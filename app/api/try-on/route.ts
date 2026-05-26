@@ -10,6 +10,7 @@ import type {
   HandJewelryType,
   RenderMode,
   TryOnRequest,
+  TryOnResponse,
   TryOnWarning,
   WatchPlacementResponse,
 } from "@/types";
@@ -125,6 +126,12 @@ export async function POST(request: NextRequest) {
   const hasFalKey = Boolean(
     process.env.FAL_KEY?.trim() || process.env.AI_TRYON_API_KEY?.trim()
   );
+  const hasOpenAIKey = Boolean(process.env.OPENAI_API_KEY?.trim());
+  // OpenAI handles refinement when its key is set AND the provider is
+  // either "openai" explicitly, or "auto" (which prefers OpenAI when
+  // available — see lib/tryOnService.ts).
+  const openaiActive =
+    hasOpenAIKey && (envProvider === "openai" || envProvider === "auto");
 
   try {
     const formData = await request.formData();
@@ -351,14 +358,15 @@ export async function POST(request: NextRequest) {
         : "auto");
     const isAccessory = ACCESSORY_CATEGORIES.includes(category);
 
-    // The client triggers inpainting refinement (FLUX Fill) by sending a
-    // composite + mask + useInpainting=true. This always takes priority
-    // over the fast-overlay path.
+    // The client triggers AI refinement by sending a composite + mask
+    // + useInpainting=true. The route honours the request as long as
+    // *some* AI provider is configured (OpenAI takes priority when both
+    // are set — see lib/tryOnService.ts auto routing).
     const useInpainting =
       useInpaintingRequested &&
       inpaintComposite !== null &&
       inpaintMask !== null &&
-      hasFalKey &&
+      (hasFalKey || hasOpenAIKey) &&
       envProvider !== "mock";
 
     const useFast =
@@ -368,7 +376,7 @@ export async function POST(request: NextRequest) {
       (requested === "fast" || requested === "auto");
 
     console.info(
-      `[try-on] start provider=${envProvider} category=${category} hasFalKey=${hasFalKey} requested=${requested} useFast=${useFast} useInpainting=${useInpainting} productImages=${productImages.length} productUrls=${productUrls.length} productImageSource=${productImageSource} productHasAlpha=${productHasAlpha} productMimeType=${productMimeType}`
+      `[try-on] start provider=${envProvider} category=${category} hasFalKey=${hasFalKey} hasOpenAIKey=${hasOpenAIKey} openaiActive=${openaiActive} requested=${requested} useFast=${useFast} useInpainting=${useInpainting} productImages=${productImages.length} productUrls=${productUrls.length} productImageSource=${productImageSource} productHasAlpha=${productHasAlpha} productMimeType=${productMimeType}`
     );
 
     if (useFast && previewImage) {
@@ -454,6 +462,14 @@ export async function POST(request: NextRequest) {
       const result = await generateTryOnImage(params);
       const durationMs = Date.now() - startedAt;
 
+      const usedOpenAI = result.provider === "openai";
+      const usedFal = result.provider === "fal";
+      // The OpenAI provider attaches its own meta on the result (typed
+      // separately so the rest of the codebase doesn't have to know).
+      const openaiMeta =
+        (result as TryOnResponse & { openaiMeta?: { maskUsed?: boolean } })
+          .openaiMeta ?? null;
+
       const debug = {
         ...(result.debug ?? {
           imageCount: 1 + productImages.length + productUrls.length,
@@ -463,16 +479,18 @@ export async function POST(request: NextRequest) {
         productImageSource,
         productHasAlpha,
         productMimeType,
+        usedOpenAI,
+        usedFal,
+        maskUsed: usedOpenAI ? Boolean(openaiMeta?.maskUsed) : useInpainting,
       };
 
-      const renderMode: RenderMode =
-        result.provider === "mock"
+      const renderMode: RenderMode = usedOpenAI
+        ? "gpt-image-edit"
+        : result.provider === "mock"
           ? "mock"
           : category === "clothes" && result.model?.includes("fashn")
             ? "specialized-vton"
-            : useInpainting
-              ? "premium-ai"
-              : "premium-ai";
+            : "premium-ai";
 
       console.info(
         `[try-on] success provider=${result.provider} model=${result.model} mock=${Boolean(result.mock)} renderMode=${renderMode} durationMs=${durationMs} imageCount=${debug.imageCount} productImageCount=${debug.productImageCount}`

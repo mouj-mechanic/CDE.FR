@@ -6,6 +6,14 @@ import {
   FAL_INPAINT_PRIMARY_MODEL,
 } from "./providers/falInpaint";
 import { fashnTryOn } from "./providers/fashn";
+import {
+  openaiTryOn,
+  OPENAI_DEFAULT_MODEL,
+  type OpenAIImageMeta,
+} from "./providers/openaiImage";
+
+/** Re-exported so the API route can pull the meta safely. */
+export type { OpenAIImageMeta };
 
 /**
  * Custom error raised when the configured provider cannot be honored —
@@ -44,6 +52,7 @@ interface ProviderEnv {
   provider: string;
   falKey?: string;
   fashnKey?: string;
+  openaiKey?: string;
 }
 
 function readProviderEnv(): ProviderEnv {
@@ -52,32 +61,56 @@ function readProviderEnv(): ProviderEnv {
   const falKey =
     process.env.FAL_KEY?.trim() || process.env.AI_TRYON_API_KEY?.trim();
   const fashnKey = process.env.FASHN_API_KEY?.trim();
-  return { provider, falKey, fashnKey };
+  const openaiKey = process.env.OPENAI_API_KEY?.trim();
+  return { provider, falKey, fashnKey, openaiKey };
 }
 
 /**
- * Génère une image d'essayage virtuel en routant intelligemment selon la
- * catégorie + les providers disponibles.
+ * Génère une image d'essayage virtuel en routant selon la catégorie + les
+ * providers disponibles.
  *
- * - `AI_TRYON_PROVIDER=mock` (ou vide)  → image factice locale.
- * - `AI_TRYON_PROVIDER=fal`             → fal.ai routing :
- *     - clothes        : FASHN (si configuré ou disponible), sinon FLUX Kontext
- *     - headwear/glasses/watch/hand-jewelry : FLUX Kontext multi-image
- * - `AI_TRYON_PROVIDER=auto`            → équivalent à `fal` si FAL_KEY présent,
- *                                         sinon mode mock.
+ * - `AI_TRYON_PROVIDER=mock`   → image factice locale.
+ * - `AI_TRYON_PROVIDER=openai` → OpenAI GPT Image (gpt-image-1 par défaut).
+ *                                 Requiert OPENAI_API_KEY.
+ * - `AI_TRYON_PROVIDER=fal`    → fal.ai routing :
+ *     - clothes        : FASHN si configuré, sinon FLUX Kontext
+ *     - headwear/glasses/watch/hand-jewelry : FLUX inpaint (si masque) sinon
+ *                                             FLUX Kontext multi-image
+ * - `AI_TRYON_PROVIDER=auto`   → openai si OPENAI_API_KEY présent, sinon
+ *                                 fal si FAL_KEY présent, sinon mock.
  */
 export async function generateTryOnImage(
   params: TryOnRequest
 ): Promise<TryOnResponse> {
-  const { provider, falKey, fashnKey } = readProviderEnv();
+  const { provider, falKey, fashnKey, openaiKey } = readProviderEnv();
 
   if (provider === "mock") {
     return mockGenerate(params);
   }
 
+  if (provider === "openai") {
+    if (!openaiKey) {
+      throw new ProviderConfigError(
+        "OPENAI_API_KEY is missing. AI_TRYON_PROVIDER=openai but no OpenAI key is configured."
+      );
+    }
+    return openaiTryOn({
+      ...params,
+      inpaintComposite: params.inpaintComposite,
+      inpaintMask: params.inpaintMask,
+    });
+  }
+
   if (provider === "auto") {
-    if (!falKey) return mockGenerate(params);
-    return runFal(params, falKey, fashnKey);
+    if (openaiKey) {
+      return openaiTryOn({
+        ...params,
+        inpaintComposite: params.inpaintComposite,
+        inpaintMask: params.inpaintMask,
+      });
+    }
+    if (falKey) return runFal(params, falKey, fashnKey);
+    return mockGenerate(params);
   }
 
   if (provider === "fal") {
@@ -90,7 +123,7 @@ export async function generateTryOnImage(
   }
 
   throw new ProviderConfigError(
-    `Provider IA "${provider}" inconnu. Valeurs supportées : "mock", "auto", "fal".`
+    `Provider IA "${provider}" inconnu. Valeurs supportées : "mock", "auto", "fal", "openai".`
   );
 }
 
@@ -142,4 +175,5 @@ export const PROVIDER_MODELS = {
   fashn: ["fashn/tryon/v1.6", "fal-ai/fashn/tryon"],
   flux: FAL_KONTEXT_MODEL,
   fluxInpaint: FAL_INPAINT_PRIMARY_MODEL,
+  openai: OPENAI_DEFAULT_MODEL,
 };

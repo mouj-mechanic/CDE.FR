@@ -2,23 +2,48 @@ import { NextResponse } from "next/server";
 
 export const runtime = "nodejs";
 
+/**
+ * Diagnostic endpoint. Reports which AI provider is configured and whether
+ * the matching credential is present. Never returns the secret itself.
+ */
 export async function GET() {
   const provider = process.env.AI_TRYON_PROVIDER || "mock";
   const publicProvider = process.env.NEXT_PUBLIC_AI_PROVIDER || "not-set";
   const hasFalKey = Boolean(process.env.FAL_KEY);
+  const hasOpenAIKey = Boolean(process.env.OPENAI_API_KEY);
+  const openaiModel = process.env.OPENAI_IMAGE_MODEL || "gpt-image-1";
 
-  const mode =
-    provider === "fal" && hasFalKey
-      ? "real-ai"
-      : provider === "fal" && !hasFalKey
-        ? "fal-configured-but-missing-key"
+  let mode:
+    | "real-ai-openai"
+    | "real-ai-fal"
+    | "fal-configured-but-missing-key"
+    | "openai-configured-but-missing-key"
+    | "mock";
+
+  if (provider === "openai") {
+    mode = hasOpenAIKey ? "real-ai-openai" : "openai-configured-but-missing-key";
+  } else if (provider === "fal") {
+    mode = hasFalKey ? "real-ai-fal" : "fal-configured-but-missing-key";
+  } else if (provider === "auto") {
+    mode = hasOpenAIKey
+      ? "real-ai-openai"
+      : hasFalKey
+        ? "real-ai-fal"
         : "mock";
+  } else {
+    mode = "mock";
+  }
+
+  const ok =
+    mode === "real-ai-openai" || mode === "real-ai-fal" || mode === "mock";
 
   return NextResponse.json({
-    ok: provider === "fal" ? hasFalKey : true,
+    ok,
     provider,
     publicProvider,
     hasFalKey,
+    hasOpenAIKey,
+    openaiModel,
     mode,
   });
 }
