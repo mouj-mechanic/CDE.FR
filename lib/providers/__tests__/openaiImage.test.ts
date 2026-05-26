@@ -5,6 +5,7 @@ import {
   restoreSourceAspectRatio,
   detectBlackBars,
   computeOutsideMaskScore,
+  bwMaskToAlphaPng,
 } from "../openaiImage";
 
 const W = 256;
@@ -278,6 +279,77 @@ describe("restoreSourceAspectRatio", () => {
     // 1024 * (1024/1280) ≈ 819 (within rounding)
     expect(meta.width).toBe(819);
     expect(meta.height).toBe(1024);
+  });
+});
+
+describe("bwMaskToAlphaPng — internal BW to OpenAI alpha convention", () => {
+  it("converts internal WHITE (editable) into alpha=0 (transparent)", async () => {
+    const w = 32;
+    const h = 32;
+    const bw = await sharp({
+      create: { width: w, height: h, channels: 3, background: { r: 255, g: 255, b: 255 } },
+    })
+      .png()
+      .toBuffer();
+    const alpha = await bwMaskToAlphaPng(bw);
+    const channels = await sharp(alpha)
+      .extractChannel("alpha")
+      .raw()
+      .toBuffer({ resolveWithObject: true });
+    // Every alpha pixel should be near-zero (editable).
+    expect(channels.data[0]).toBeLessThan(10);
+    expect(channels.data[channels.data.length - 1]).toBeLessThan(10);
+  });
+
+  it("converts internal BLACK (preserved) into alpha=255 (opaque)", async () => {
+    const w = 32;
+    const h = 32;
+    const bw = await sharp({
+      create: { width: w, height: h, channels: 3, background: { r: 0, g: 0, b: 0 } },
+    })
+      .png()
+      .toBuffer();
+    const alpha = await bwMaskToAlphaPng(bw);
+    const channels = await sharp(alpha)
+      .extractChannel("alpha")
+      .raw()
+      .toBuffer({ resolveWithObject: true });
+    expect(channels.data[0]).toBeGreaterThan(245);
+  });
+
+  it("preserves dimensions exactly", async () => {
+    const w = 256;
+    const h = 384;
+    const bw = await sharp({
+      create: { width: w, height: h, channels: 3, background: { r: 128, g: 128, b: 128 } },
+    })
+      .png()
+      .toBuffer();
+    const alpha = await bwMaskToAlphaPng(bw);
+    const meta = await sharp(alpha).metadata();
+    expect(meta.width).toBe(w);
+    expect(meta.height).toBe(h);
+  });
+
+  it("RGB channels of the alpha mask are zero (no colour leak)", async () => {
+    const w = 16;
+    const h = 16;
+    const bw = await sharp({
+      create: { width: w, height: h, channels: 3, background: { r: 128, g: 128, b: 128 } },
+    })
+      .png()
+      .toBuffer();
+    const alpha = await bwMaskToAlphaPng(bw);
+    const raw = await sharp(alpha)
+      .raw()
+      .toBuffer({ resolveWithObject: true });
+    // RGBA: channels = 4. R/G/B must all be zero so the mask never
+    // colours the AI output if it ever got composited by mistake.
+    for (let i = 0; i < raw.info.width * raw.info.height; i++) {
+      expect(raw.data[i * 4]).toBe(0);
+      expect(raw.data[i * 4 + 1]).toBe(0);
+      expect(raw.data[i * 4 + 2]).toBe(0);
+    }
   });
 });
 

@@ -24,6 +24,11 @@ import {
   composeLockedAccessoryFinal,
   detectGhostProductOutsideExpectedSilhouette,
 } from "@/lib/tryon/composeLockedFinal";
+import { checkWatchMaskSafety } from "@/lib/tryon/maskSafetyCheck";
+import {
+  checkHandArtifactDamage,
+  checkVisibleMaskArtifacts,
+} from "@/lib/tryon/handArtifactCheck";
 import { ACCEPTED_IMAGE_TYPES, MAX_FILE_SIZE } from "@/lib/utils";
 import { trackTryOnUsage } from "@/lib/usage";
 import type {
@@ -518,6 +523,62 @@ export async function POST(request: NextRequest) {
         autoMaskFailed = true;
         console.warn(
           "[try-on] auto-mask generation failed",
+          err instanceof Error ? err.message : err
+        );
+      }
+    }
+
+    // ── Pre-flight mask safety check ──────────────────────────────
+    // Hard stop BEFORE OpenAI is called if the mask is inverted,
+    // covers too much of the hand, or sits in the wrong spot.
+    // Catches the classic "ring widened until it ate the fingers"
+    // failure mode that produces destroyed-hand outputs. The route
+    // then falls back to the deterministic composite instead — the
+    // customer never sees a broken result.
+    let maskSafetyReasons: string[] = [];
+    let maskSafetyStats: {
+      editableEnergyRatio: number;
+      bboxRatio: number;
+      outsideBBoxRatio: number;
+      touchesBorder: boolean;
+      inverted: boolean;
+    } | null = null;
+    if (
+      openaiActive &&
+      (category === "watch" || category === "hand-jewelry") &&
+      inpaintMask !== null
+    ) {
+      try {
+        const maskBuf = Buffer.from(await inpaintMask.arrayBuffer());
+        const safety = await checkWatchMaskSafety({
+          mask: maskBuf,
+          category,
+        });
+        maskSafetyStats = {
+          editableEnergyRatio: safety.stats.editableEnergyRatio,
+          bboxRatio: safety.stats.bbox.ratio,
+          outsideBBoxRatio: safety.stats.outsideBBoxRatio,
+          touchesBorder: safety.stats.touchesBorder,
+          inverted: safety.stats.inverted,
+        };
+        if (!safety.ok) {
+          maskSafetyReasons = safety.reasons;
+          console.warn(
+            `[try-on] mask-safety-failed category=${category} reasons=${safety.reasons.join(
+              "|"
+            )} stats=${JSON.stringify(maskSafetyStats)}`
+          );
+          // Drop the mask + composite so the route degrades to the
+          // deterministic preview path further down (or to the strict
+          // accessory gate when DISABLE_FREE_GENERATION_FOR_ACCESSORIES
+          // is on). We do NOT throw — the customer gets the safe
+          // deterministic fallback.
+          inpaintMask = null;
+          inpaintComposite = null;
+        }
+      } catch (err) {
+        console.warn(
+          "[try-on] mask safety check threw",
           err instanceof Error ? err.message : err
         );
       }
@@ -1047,20 +1108,38 @@ export async function POST(request: NextRequest) {
           // when bars were detected, so we mark the gate as passed.
           gates.noBlackBars = true;
 
-          // ── Tier 1: anti-ghost re-composition ────────────────────
-          // When the result has a ghost or a duplicate, run the
-          // three-source pixel mux: product core from the composite,
-          // contact ring from the AI, everything else from the user
-          // base. This kills ghosts and locks the product without
-          // discarding the AI integration.
+          // ── Mandatory locked composition for watches / hand-jewelry ─
+          // Wrist accessories are the highest-risk category for
+          // OpenAI hallucinations: the model can pixelate fingers,
+          // alter nails, paint mask outlines, or insert ghost watches.
+          // We therefore ALWAYS rebuild the final image via the
+          // three-source mux (product core ← deterministic composite,
+          // contact ring ← AI, everything else ← user photo) —
+          // regardless of whether the ghost / duplicate detector
+          // already flagged a problem. The mux acts as a strict
+          // safety net: even if the AI did something subtly wrong on
+          // a finger, those pixels are simply discarded.
+          //
+          // For glasses / headwear we keep the old "only on ghost or
+          // duplicate" behaviour because facial features need the AI
+          // to blend more aggressively.
+          const requiresLockedCompose =
+            category === "watch" || category === "hand-jewelry";
           const needsAntiGhost = ghost.ghostDetected || dup.duplicateDetected;
-          if (needsAntiGhost && fallbackToDeterministic) {
+          if (
+            (needsAntiGhost || requiresLockedCompose) &&
+            fallbackToDeterministic
+          ) {
             try {
               const muxed = await composeLockedAccessoryFinal({
                 userBase: openaiMeta.baseAtTargetSize,
                 deterministicComposite: openaiMeta.compositeAtTargetSize,
                 aiResult: openaiMeta.resultBuffer,
                 category,
+                // Tight contact ring for watches: 12 px wide. Anything
+                // outside the ring must come from the user base — that
+                // protects fingers, nails, thumb, background.
+                contactBandPx: requiresLockedCompose ? 12 : 16,
               });
               if (muxed.applied) {
                 finalResultUrl = `data:image/png;base64,${muxed.buffer.toString(
@@ -1068,18 +1147,96 @@ export async function POST(request: NextRequest) {
                 )}`;
                 antiGhostApplied = true;
                 lockWarnings.push({
-                  code: "anti-ghost-applied",
-                  message:
-                    "The AI drew an extra product instance — re-composed using the deterministic product core.",
+                  code: needsAntiGhost
+                    ? "anti-ghost-applied"
+                    : "locked-compose-applied",
+                  message: needsAntiGhost
+                    ? "The AI drew an extra product instance — re-composed using the deterministic product core."
+                    : "Final image rebuilt from locked composite + AI contact band. Customer pixels (fingers, nails, background) preserved 1:1.",
                 });
               }
             } catch (err) {
               console.warn(
-                "[try-on] anti-ghost compose failed",
+                "[try-on] locked compose failed",
                 err instanceof Error ? err.message : err
               );
             }
           }
+
+          // ── Post-composition hand artefact gate ────────────────────
+          // We re-decode whichever final image we currently have
+          // (post product-lock + post anti-ghost mux) and verify the
+          // customer's hand / background was preserved. If the AI
+          // somehow leaked through the mux (e.g. silhouette derivation
+          // failed and `applied=false`), this catches it.
+          let handArtifactDamaged = false;
+          let visibleMaskArtifacts = false;
+          let handArtifactDrift = 0;
+          let visibleArtifactRatio = 0;
+          if (
+            (category === "watch" || category === "hand-jewelry") &&
+            openaiMeta.compositeAtTargetSize
+          ) {
+            try {
+              // Decode the current finalResultUrl back to a Buffer.
+              const m = finalResultUrl.match(/^data:image\/png;base64,(.+)$/);
+              const finalBuf = m
+                ? Buffer.from(m[1], "base64")
+                : openaiMeta.resultBuffer;
+              const handCheck = await checkHandArtifactDamage({
+                userBase: openaiMeta.baseAtTargetSize,
+                finalImage: finalBuf,
+                allowedEditAlpha: openaiMeta.alphaMaskAtTargetSize ?? null,
+              });
+              const maskCheck = await checkVisibleMaskArtifacts({
+                userBase: openaiMeta.baseAtTargetSize,
+                finalImage: finalBuf,
+              });
+              handArtifactDamaged = handCheck.isDamaged;
+              visibleMaskArtifacts = maskCheck.visible;
+              handArtifactDrift = handCheck.drift;
+              visibleArtifactRatio = maskCheck.outlinePixelRatio;
+
+              if (handArtifactDamaged || visibleMaskArtifacts) {
+                console.warn(
+                  `[try-on] post-compose artefact gate failed category=${category} handDrift=${handArtifactDrift.toFixed(
+                    4
+                  )} outlineRatio=${visibleArtifactRatio.toFixed(
+                    4
+                  )} → deterministic fallback`
+                );
+                if (handArtifactDamaged)
+                  failureReasons.push("hand_artifacts_detected");
+                if (visibleMaskArtifacts)
+                  failureReasons.push("visible_mask_artifacts");
+                if (
+                  fallbackToDeterministic &&
+                  openaiMeta.compositeAtTargetSize
+                ) {
+                  finalResultUrl = `data:image/png;base64,${openaiMeta.compositeAtTargetSize.toString(
+                    "base64"
+                  )}`;
+                  qualityCheckFallbackApplied = true;
+                  qualityCheckFailed = true;
+                  lockWarnings.push({
+                    code: handArtifactDamaged
+                      ? "hand-artifacts-detected"
+                      : "visible-mask-artifacts",
+                    message:
+                      "Final image contained hand or mask artefacts — deterministic composite used.",
+                  });
+                }
+              }
+            } catch (err) {
+              console.warn(
+                "[try-on] post-compose artefact check threw",
+                err instanceof Error ? err.message : err
+              );
+            }
+          }
+          // Expose new gate signals for QA dashboards.
+          gates.handArtifactsClean = !handArtifactDamaged;
+          gates.maskArtifactsInvisible = !visibleMaskArtifacts;
 
           if (!fidelity.passed || dup.duplicateDetected || ghost.ghostDetected) {
             qualityCheckFailed = true;
@@ -1341,6 +1498,9 @@ export async function POST(request: NextRequest) {
         qualityCheckFailed,
         gates,
         ...(failureReasons.length > 0 ? { failureReasons } : {}),
+        ...(maskSafetyStats
+          ? { maskSafetyStats, maskSafetyReasons }
+          : {}),
         ...(customerPreservationRetried
           ? {
               customerPreservationRetried,

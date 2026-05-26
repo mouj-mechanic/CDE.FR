@@ -110,7 +110,10 @@ function pickCustomerFacingNote(
         w.code === "ghost-product-detected" ||
         w.code === "customer_preservation_fallback_used" ||
         w.code === "auto_mask_too_small_fallback_used" ||
-        w.code === "mask_validation_fallback_used"
+        w.code === "mask_validation_fallback_used" ||
+        w.code === "locked-compose-applied" ||
+        w.code === "hand-artifacts-detected" ||
+        w.code === "visible-mask-artifacts"
     );
   if (usedFallback) {
     return "Nous avons utilisé le rendu le plus fidèle pour préserver votre photo et le produit.";

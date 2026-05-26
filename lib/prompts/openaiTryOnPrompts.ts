@@ -294,66 +294,52 @@ Return one realistic final image only.`;
 export function getWatchTryOnPrompt(): string {
   return `You are editing a realistic e-commerce watch try-on image.
 
-The first image is the main source of truth. It already contains the customer photo with the exact watch placed on the wrist.
+The first image is the main source of truth. It already contains the customer's original photo with the exact watch placed on the wrist.
 
 The product reference image shows the exact watch. The final result must preserve this exact product.
 
-Your task is NOT to create, redesign, repaint, duplicate, move, replace, or simplify the watch.
+Your task is not to generate, repaint, move, duplicate, redesign, or replace the watch.
 
-Your task is ONLY to improve the natural integration around the already placed watch:
+Your task is only to improve the local integration around the already placed watch:
 - subtle contact shadows
-- realistic skin contact
-- slight occlusion at the bracelet edges
-- lighting consistency
-- local perspective blending
-- realistic bracelet contact with the wrist
+- natural skin contact
+- slight edge blending
+- small bracelet contact shadows
+- lighting consistency around the watch
+
+Strict editing boundaries:
+- Edit only the transparent/editable mask area.
+- Do not edit fingers.
+- Do not edit nails.
+- Do not edit the thumb.
+- Do not edit the back of the hand.
+- Do not edit the background.
+- Do not edit the full wrist or full hand.
+- Do not alter the customer image outside the local watch contact area.
 
 Strict product rules:
 - Show one watch only.
 - Do not create a second watch.
 - Do not create a ghost watch.
-- Do not add another dial, case, strap, bracelet, or background watch.
 - Do not change the watch color.
 - Do not change the black metal material.
 - Do not remove the colorful rainbow accents.
-- Do not replace the watch with a silver watch.
+- Do not replace the watch with another watch.
 - Do not simplify the dial.
-- Do not change the bezel markings.
-- Do not change the subdials.
-- Do not change the bracelet links.
-- Do not change the logo placement.
-- Preserve the exact product identity.
+- Do not change the bezel, bracelet links, dial layout, logo, hands, subdials, or date window.
 
-Strict placement rules:
-- Keep the watch centered on the wrist.
-- Keep the watch aligned with the wrist and forearm axis.
-- Do not move the watch onto the hand.
-- Do not move the watch too far down the forearm.
-- Do not make the watch oversized.
-- The bracelet must visually follow the wrist and wrap naturally.
-
-Strict customer preservation rules:
-- Preserve the hand.
-- Preserve the fingers.
-- Preserve the nails.
-- Preserve the skin texture.
-- Preserve the arm hair.
-- Preserve the wrist shape.
-- Preserve the background.
-- Do not change anatomy.
-- Do not smooth or repaint the customer.
-
-Mask rules:
-- The mask is only a technical editing guide.
-- Edit only the transparent/editable contact and shadow area.
-- The watch core itself must remain unchanged.
-- No visible mask.
+Strict artifact rules:
+- The mask is only a hidden technical guide.
+- The mask must never appear in the final image.
 - No white outlines.
 - No black outlines.
-- No segmentation artifacts.
-- No broken pixels.
+- No segmentation contours.
+- No alpha matte artifacts.
+- No broken skin pixels.
+- No blocky patches.
+- No duplicated hand edges.
 
-Return one realistic final image only.`;
+Return one clean realistic final image only.`;
 }
 
 // ──────────────────────────────────────────────────────────────────────────

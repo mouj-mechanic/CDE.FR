@@ -238,7 +238,7 @@ function sizeToWH(size: ResolvedSize): { w: number; h: number } {
  *
  *  Conversion: alpha = 255 - grayscale.
  */
-async function bwMaskToAlphaPng(bwMaskBuf: Buffer): Promise<Buffer> {
+export async function bwMaskToAlphaPng(bwMaskBuf: Buffer): Promise<Buffer> {
   const { data, info } = await sharp(bwMaskBuf)
     .removeAlpha()
     .raw()

@@ -235,6 +235,71 @@ If auto-mask fails in strict mode, the route returns the deterministic
 composite with `warnings: [{ code: "auto_mask_failed_fallback_used", … }]`
 instead of calling OpenAI in a free-generation mode.
 
+### Accessory safety composition (watches must never destroy the hand)
+
+For `category=watch` and `category=hand-jewelry` we never return the
+raw OpenAI output. The final pixels are assembled by
+`composeLockedAccessoryFinal` as a strict three-source mux:
+
+```
+finalImage[i] =
+  deterministic composite   if i ∈ product core silhouette
+  AI output                  if i ∈ contact band (core dilated by 12 px)
+  user photo (untouched)     everywhere else
+```
+
+This means:
+
+- fingers, nails, thumb, back of the hand, forearm and background
+  always come from the customer's original photo, byte-for-byte;
+- the watch dial, case, bezel and bracelet core always come from the
+  deterministic composite (= original product PNG);
+- the AI only owns the narrow contact ring around the watch — where
+  it can add subtle shadows, edge blending and skin contact without
+  ever inventing new fingers.
+
+Two additional gates ALWAYS run after composition:
+
+1. `checkHandArtifactDamage` — measures mean RGB drift between the
+   user photo and the final image *outside the allowed edit zone*.
+   Above the threshold (default 3.5 %), the route swaps to the
+   deterministic composite and logs `hand_artifacts_detected`.
+2. `checkVisibleMaskArtifacts` — counts pure-white or pure-black
+   pixels in the final image that sit on a mid-tone area of the
+   original photo. Above 0.4 % of the image, we treat it as a leaked
+   mask outline and fall back.
+
+In production the customer never sees a damaged hand: either the
+gates pass and the AI shadows ship, or the deterministic composite
+ships with a soft "rendu fidèle utilisé" note.
+
+### Mask must never be visible
+
+The auto-generated mask is purely internal. It is converted to
+OpenAI's alpha convention via `bwMaskToAlphaPng`:
+
+```
+internal BW pixel → alpha channel
+white (255)       → alpha 0   (editable)
+mid-grey (128)    → alpha 127 (partial)
+black (0)         → alpha 255 (preserved)
+```
+
+The RGB channels of the alpha PNG are always zero so even a buggy
+caller cannot accidentally composite the mask as colour onto the
+final image. Before calling OpenAI we also run `checkWatchMaskSafety`
+which blocks the call entirely when the mask:
+
+- is inverted (`> 50 %` of the image marked editable),
+- has a bounding box larger than 14 % of a watch image,
+- touches an image border,
+- has more than 4 % of its energy outside the expected product
+  region.
+
+When any of these trip, the route falls back to the deterministic
+composite — `lib/tryon/maskSafetyCheck.ts` for the full implementation,
+`WATCH_MASK_FORBID_*` env vars to toggle behaviour.
+
 ### Why prompt alone is not enough
 
 We tried "send userImage + productImage + a strict prompt" first. It
