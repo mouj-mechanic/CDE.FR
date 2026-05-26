@@ -6,6 +6,7 @@ import { generateTryOnImage, ProviderConfigError } from "@/lib/tryOnService";
 import {
   MaskDimensionError,
   MaskRequiredError,
+  MaskValidationError,
   OpenAIConfigError,
 } from "@/lib/providers/openaiImage";
 import { ACCEPTED_IMAGE_TYPES, MAX_FILE_SIZE } from "@/lib/utils";
@@ -96,6 +97,34 @@ async function fileToDataUrl(file: File): Promise<string> {
   const buf = Buffer.from(await file.arrayBuffer());
   // Preserve the file's MIME so transparent PNGs are not re-encoded as JPEG.
   return `data:${file.type || "image/png"};base64,${buf.toString("base64")}`;
+}
+
+/**
+ * Fetch a remote product cutout URL into a Buffer so providers can use
+ * it as a high-fidelity reference. Failures are non-blocking — we log
+ * and continue with whatever cutouts succeeded.
+ */
+async function fetchCutoutBuffers(urls: string[]): Promise<Buffer[]> {
+  if (urls.length === 0) return [];
+  const out: Buffer[] = [];
+  for (const url of urls) {
+    try {
+      const r = await fetch(url);
+      if (!r.ok) {
+        console.warn(
+          `[try-on] cutout fetch failed (${r.status}) for ${url}`
+        );
+        continue;
+      }
+      out.push(Buffer.from(await r.arrayBuffer()));
+    } catch (err) {
+      console.warn(
+        "[try-on] cutout fetch error:",
+        err instanceof Error ? err.message : err
+      );
+    }
+  }
+  return out;
 }
 
 async function uploadPreviewToCdn(
@@ -390,6 +419,27 @@ export async function POST(request: NextRequest) {
       (hasFalKey || hasOpenAIKey) &&
       envProvider !== "mock";
 
+    // ── Strict mask requirement for OpenAI ────────────────────────
+    // When REQUIRE_MASK_FOR_OPENAI=true and OpenAI is the active
+    // provider, the user MUST supply a mask. We refuse early with a
+    // 400 to make the constraint visible (fidelity is the whole point).
+    const requireMaskForOpenAI =
+      (process.env.REQUIRE_MASK_FOR_OPENAI?.trim().toLowerCase() ?? "false") ===
+      "true";
+    if (openaiActive && requireMaskForOpenAI && inpaintMask === null) {
+      return NextResponse.json(
+        {
+          ok: false,
+          provider: "openai",
+          renderMode: "api-image-edit" as RenderMode,
+          category,
+          error:
+            "A mask is required for OpenAI try-on editing to preserve customer identity and product fidelity.",
+        },
+        { status: 400 }
+      );
+    }
+
     // In API-only mode every category MUST go through OpenAI — no
     // fast-overlay path, no canvas-as-final-result. Local renderers may
     // still produce the optional composite/mask we forward to OpenAI
@@ -518,6 +568,12 @@ export async function POST(request: NextRequest) {
       : productUrls;
     const finalProductImages = productWasCutout ? [] : productImages;
 
+    // Pre-fetch transparent product cutouts so OpenAI can use them as
+    // high-fidelity references alongside the originals.
+    const productCutoutBuffers = openaiActive
+      ? await fetchCutoutBuffers(productCutoutUrls)
+      : [];
+
     // Forward the mask whenever it's present — OpenAI image edit can
     // accept a mask without a composite. The composite is only attached
     // when the client explicitly asks for inpainting refinement.
@@ -526,6 +582,7 @@ export async function POST(request: NextRequest) {
       userImage,
       productImages: finalProductImages,
       productUrls: finalProductUrls,
+      productCutoutBuffers,
       notes,
       merchantId,
       handJewelryType,
@@ -559,8 +616,11 @@ export async function POST(request: NextRequest) {
       const usedOpenAI = result.provider === "openai";
       const usedFal = result.provider === "fal";
       const openaiMeta =
-        (result as TryOnResponse & { openaiMeta?: { maskUsed?: boolean } })
-          .openaiMeta ?? null;
+        (
+          result as TryOnResponse & {
+            openaiMeta?: import("@/lib/providers/openaiImage").OpenAIImageMeta;
+          }
+        ).openaiMeta ?? null;
 
       const debug = {
         ...(result.debug ?? {
@@ -587,8 +647,19 @@ export async function POST(request: NextRequest) {
             ? "specialized-vton"
             : "premium-ai";
 
+      // Merge the provider's own warnings (mask validation, low-res
+      // product, outside-mask drift, etc.) with the client warnings.
+      const mergedWarnings: TryOnWarning[] = [
+        ...allClientWarnings,
+        ...(openaiMeta?.warnings ?? []),
+      ];
+
       console.info(
-        `[try-on] success provider=${result.provider} model=${result.model} mock=${Boolean(result.mock)} renderMode=${renderMode} maskUsed=${debug.maskUsed} usedLocalRenderer=false durationMs=${durationMs} imageCount=${debug.imageCount} productImageCount=${debug.productImageCount}`
+        `[try-on] success provider=${result.provider} model=${result.model} mock=${Boolean(result.mock)} renderMode=${renderMode} maskUsed=${debug.maskUsed} usedLocalRenderer=false durationMs=${durationMs} imageCount=${debug.imageCount} productImageCount=${debug.productImageCount} ${
+          openaiMeta
+            ? `outsideMaskScore=${openaiMeta.qualityChecks.outsideMaskChangeScore.toFixed(3)} outsideMaskPreserved=${openaiMeta.qualityChecks.outsideMaskPreserved}`
+            : ""
+        }`
       );
 
       trackTryOnUsage({
@@ -608,9 +679,13 @@ export async function POST(request: NextRequest) {
         debug,
         renderMode,
         qualityStatus: "passed",
-        warnings: allClientWarnings,
+        warnings: mergedWarnings,
         placement: watchPlacement,
         edgeQuality,
+        // OpenAI fidelity surface
+        qualityChecks: openaiMeta?.qualityChecks,
+        preserveCustomerStrict: usedOpenAI,
+        preserveProductStrict: usedOpenAI,
       });
     } catch (premiumError) {
       // ProviderConfigError must still bubble — that's a misconfiguration,
@@ -618,10 +693,12 @@ export async function POST(request: NextRequest) {
       if (premiumError instanceof ProviderConfigError) {
         throw premiumError;
       }
-      // OpenAI mask requirement / dimension errors are user-facing 400s.
+      // OpenAI mask requirement / dimension / validation errors are
+      // user-facing 400s.
       if (
         premiumError instanceof MaskRequiredError ||
-        premiumError instanceof MaskDimensionError
+        premiumError instanceof MaskDimensionError ||
+        premiumError instanceof MaskValidationError
       ) {
         return NextResponse.json(
           {

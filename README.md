@@ -57,6 +57,8 @@ Copy `.env.example` to `.env.local` and fill in what you need.
 | `OPENAI_IMAGE_QUALITY`       | `low` / `medium` / `high` (default) / `auto`                                     |
 | `OPENAI_USE_MASKED_EDIT`     | `true` (default). When `false`, the API skips the alpha mask                     |
 | `REQUIRE_MASK_FOR_OPENAI`    | `false` (default). When `true`, generation without a mask returns 400            |
+| `NEXT_PUBLIC_REQUIRE_MASK_FOR_OPENAI` | Mirror the above on the client so the UI blocks early                   |
+| `OPENAI_PRESERVATION_THRESHOLD` | 0..1 score threshold for outside-mask preservation (default `0.92`)            |
 | `WATCH_USE_MASKED_EDIT`      | Per-category mask flag (defaults to `true`)                                      |
 | `GLASSES_USE_MASKED_EDIT`    | Per-category mask flag (defaults to `true`)                                      |
 | `HEADWEAR_USE_MASKED_EDIT`   | Per-category mask flag (defaults to `true`)                                      |

@@ -102,6 +102,7 @@ export async function generateTryOnImage(
       ...params,
       inpaintComposite: params.inpaintComposite,
       inpaintMask: params.inpaintMask,
+      productCutoutBuffers: params.productCutoutBuffers,
     });
   }
 
@@ -111,6 +112,7 @@ export async function generateTryOnImage(
         ...params,
         inpaintComposite: params.inpaintComposite,
         inpaintMask: params.inpaintMask,
+        productCutoutBuffers: params.productCutoutBuffers,
       });
     }
     if (falKey) return runFal(params, falKey, fashnKey);

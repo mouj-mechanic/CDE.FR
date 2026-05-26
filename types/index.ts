@@ -99,6 +99,12 @@ export interface TryOnRequest {
   userImage: File;
   productImages: File[];
   productUrls: string[];
+  /**
+   * Optional, server-resolved transparent product cutouts (PNG with
+   * alpha). The /api/try-on route downloads cutout URLs so providers
+   * can use them as high-fidelity references without leaking URLs.
+   */
+  productCutoutBuffers?: Buffer[];
   notes?: string;
   merchantId?: string;
   /** Optional deterministic preview produced client-side. */
@@ -140,6 +146,18 @@ export interface TryOnResponseDebug {
   usedLocalRenderer?: boolean;
   /** Whether an OpenAI alpha mask was attached to the edit call. */
   maskUsed?: boolean;
+}
+
+/** Lightweight server-side fidelity checks computed after generation. */
+export interface QualityChecks {
+  /** 0..1 score, higher is more preserved (outside-mask area). */
+  outsideMaskChangeScore: number;
+  /** True when the score >= preservation threshold (default 0.92). */
+  outsideMaskPreserved: boolean;
+  /** True when the product reference is below the resolution threshold. */
+  productFidelityWarning: boolean;
+  /** Aggregate flag: anything that should make the operator double-check. */
+  customerPreservationWarning: boolean;
 }
 
 export type RenderMode =
@@ -191,6 +209,15 @@ export interface TryOnResponse {
   placement?: WatchPlacementResponse;
   /** Watch-only: alpha edge-quality score in [0..1]. */
   edgeQuality?: number;
+  /** Server-computed fidelity checks (OpenAI path). */
+  qualityChecks?: QualityChecks;
+  /**
+   * Mirror of the strict-fidelity guarantees enforced by the OpenAI
+   * prompt. Always true for the OpenAI path; surfaces in the API
+   * response so dashboards / tests can assert on them.
+   */
+  preserveCustomerStrict?: boolean;
+  preserveProductStrict?: boolean;
 }
 
 export interface ProductResolveResult {
@@ -210,6 +237,8 @@ export interface TryOnResultMeta {
   maskUsed?: boolean;
   /** Mirror of debug.usedLocalRenderer for UI consumption. */
   usedLocalRenderer?: boolean;
+  /** Quality checks computed server-side (OpenAI path). */
+  qualityChecks?: QualityChecks;
 }
 
 export interface TryOnState {

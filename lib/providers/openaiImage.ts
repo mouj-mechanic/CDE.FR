@@ -6,27 +6,36 @@ import type {
   HandJewelryType,
   TryOnRequest,
   TryOnResponse,
+  TryOnWarning,
 } from "@/types";
 import {
   buildOpenAITryOnPrompt,
   isMaskedEditEnabledFor,
 } from "@/lib/prompts/openaiTryOnPrompts";
+import { validateMaskForCategory } from "@/lib/tryon/maskValidation";
 
 /**
- * OpenAI GPT Image provider — *single source of truth* for try-on edits
+ * OpenAI GPT Image provider — single source of truth for try-on edits
  * when AI_TRYON_PROVIDER=openai.
  *
  *  Endpoint: `client.images.edit({ model, image, mask, prompt, n, size })`
  *
  *  Flow (every category):
  *    1. Validate inputs (key, product image, optional mask dimensions).
- *    2. Square-pad user/composite + product images to the target size.
- *    3. Convert the optional B/W mask → alpha PNG (transparent =
- *       editable, opaque = preserved). Match dimensions exactly.
- *    4. Build a strict, category-aware prompt (per-finger for rings,
- *       per-subtype for bracelets, etc.).
- *    5. Call gpt-image-1 image-edit and return the result as a
- *       `data:image/png;base64,…` URL.
+ *    2. Pick output size: env override OR auto-orient based on the user
+ *       photo aspect ratio (portrait / landscape / square).
+ *    3. Resize base + product references to the chosen size, keep PNG
+ *       and never lossy-compress. The product is "contain"-fit to a
+ *       transparent canvas so its full shape reaches the model.
+ *    4. Convert the optional B/W mask → alpha PNG (transparent =
+ *       editable, opaque = preserved). Match dimensions exactly. Run
+ *       `validateMaskForCategory` to enforce per-category coverage limits.
+ *    5. Build a strict, category-aware prompt composed from the shared
+ *       preservation blocks (customer + product + no-hallucination + mask).
+ *    6. Call gpt-image-1 image-edit with multi-image references and
+ *       return the result as `data:image/png;base64,…`.
+ *    7. Compute lightweight quality checks (outside-mask preservation,
+ *       product low-resolution warning).
  *
  *  Security:
  *    - Reads OPENAI_API_KEY from process.env. Never logs it.
@@ -34,15 +43,21 @@ import {
  *    - Caller is the API route; the key never reaches the browser.
  *
  *  Strictness:
- *    - Throws a typed `OpenAIConfigError` when OPENAI_API_KEY is missing.
- *    - Throws a typed `MaskRequiredError` when REQUIRE_MASK_FOR_OPENAI=true
- *      and no mask was supplied.
- *    - Throws on dimension mismatch between mask and base image.
+ *    - Throws OpenAIConfigError when OPENAI_API_KEY is missing.
+ *    - Throws MaskRequiredError when REQUIRE_MASK_FOR_OPENAI=true and no mask.
+ *    - Throws MaskDimensionError on dimension mismatch.
+ *    - Throws on any SDK / network error so the route can return an error
+ *      JSON instead of silently rendering locally.
  */
 
 export const OPENAI_DEFAULT_MODEL = "gpt-image-1";
 const OPENAI_DEFAULT_SIZE = "1024x1024";
 const OPENAI_DEFAULT_QUALITY = "high";
+
+// Minimum reasonable size for an input image. Anything smaller is
+// surfaced as a low-resolution warning.
+const MIN_USER_IMAGE_LONG_SIDE = 1024;
+const MIN_PRODUCT_IMAGE_LONG_SIDE = 512;
 
 // ──────────────────────────────────────────────────────────────────────────
 //  Errors
@@ -58,7 +73,7 @@ export class OpenAIConfigError extends Error {
 export class MaskRequiredError extends Error {
   constructor() {
     super(
-      "Mask is required for API-only OpenAI editing but no mask was provided."
+      "A mask is required for OpenAI try-on editing to preserve customer identity and product fidelity."
     );
     this.name = "MaskRequiredError";
   }
@@ -71,15 +86,26 @@ export class MaskDimensionError extends Error {
   }
 }
 
+export class MaskValidationError extends Error {
+  constructor(detail: string) {
+    super(detail);
+    this.name = "MaskValidationError";
+  }
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 //  Env
 // ──────────────────────────────────────────────────────────────────────────
 
+type OpenAISize = "1024x1024" | "1024x1536" | "1536x1024" | "auto";
+type OpenAIQuality = "low" | "medium" | "high" | "auto";
+type ResolvedSize = "1024x1024" | "1024x1536" | "1536x1024";
+
 interface OpenAIEnv {
   apiKey: string | undefined;
   model: string;
-  size: "1024x1024" | "1024x1536" | "1536x1024" | "auto";
-  quality: "low" | "medium" | "high" | "auto";
+  size: OpenAISize;
+  quality: OpenAIQuality;
   requireMask: boolean;
 }
 
@@ -88,16 +114,37 @@ function readOpenAIEnv(): OpenAIEnv {
   const model =
     process.env.OPENAI_IMAGE_MODEL?.trim() || OPENAI_DEFAULT_MODEL;
   const size =
-    (process.env.OPENAI_IMAGE_SIZE?.trim() as OpenAIEnv["size"] | undefined) ||
+    (process.env.OPENAI_IMAGE_SIZE?.trim() as OpenAISize | undefined) ||
     OPENAI_DEFAULT_SIZE;
   const quality =
     (process.env.OPENAI_IMAGE_QUALITY?.trim() as
-      | OpenAIEnv["quality"]
+      | OpenAIQuality
       | undefined) || OPENAI_DEFAULT_QUALITY;
   const requireMask =
     (process.env.REQUIRE_MASK_FOR_OPENAI?.trim().toLowerCase() ?? "false") ===
     "true";
   return { apiKey, model, size, quality, requireMask };
+}
+
+/** Pick a concrete size from the env value + the user image orientation. */
+function resolveSize(
+  envSize: OpenAISize,
+  baseDims: { width: number; height: number }
+): ResolvedSize {
+  if (envSize === "1024x1024") return "1024x1024";
+  if (envSize === "1024x1536") return "1024x1536";
+  if (envSize === "1536x1024") return "1536x1024";
+  // auto
+  const ratio = baseDims.width / Math.max(baseDims.height, 1);
+  if (ratio > 1.15) return "1536x1024"; // landscape
+  if (ratio < 0.87) return "1024x1536"; // portrait
+  return "1024x1024";
+}
+
+function sizeToWH(size: ResolvedSize): { w: number; h: number } {
+  if (size === "1024x1024") return { w: 1024, h: 1024 };
+  if (size === "1024x1536") return { w: 1024, h: 1536 };
+  return { w: 1536, h: 1024 };
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -112,7 +159,7 @@ function readOpenAIEnv(): OpenAIEnv {
  *      transparent pixels (alpha = 0)   → "AI may repaint"
  *      opaque pixels       (alpha = 255) → "AI must preserve"
  *
- *  - Our convention (and the spec for manual masks uploaded by the user):
+ *  - Our convention:
  *      white pixel (R = 255) → editable
  *      black pixel (R = 0)   → preserved
  *
@@ -143,17 +190,38 @@ async function bwMaskToAlphaPng(bwMaskBuf: Buffer): Promise<Buffer> {
 }
 
 /**
- * Square-resize for OpenAI. Uses `cover` so the body part stays centred
- * (the wrist/face/torso is typically near the centre — preferable to
- * losing pixels via `contain`).
+ * `cover` resize to the chosen rectangle. Used for the base image and
+ * the mask. Center-crop preserves the body part of interest (wrist / face
+ * / torso usually framed at the centre).
  */
-async function squareForOpenAI(
+async function fitCover(
   src: Buffer,
-  targetSize: number
+  w: number,
+  h: number
 ): Promise<Buffer> {
   return await sharp(src)
-    .resize(targetSize, targetSize, { fit: "cover", position: "center" })
-    .png()
+    .resize(w, h, { fit: "cover", position: "center", kernel: "lanczos3" })
+    .png({ compressionLevel: 6 })
+    .toBuffer();
+}
+
+/**
+ * `contain` resize for product references. Pads with transparent so the
+ * full product shape is visible to the model. PNG with alpha preserved.
+ */
+async function fitContainTransparent(
+  src: Buffer,
+  w: number,
+  h: number
+): Promise<Buffer> {
+  return await sharp(src)
+    .ensureAlpha()
+    .resize(w, h, {
+      fit: "contain",
+      background: { r: 0, g: 0, b: 0, alpha: 0 },
+      kernel: "lanczos3",
+    })
+    .png({ compressionLevel: 6 })
     .toBuffer();
 }
 
@@ -168,6 +236,70 @@ async function getDimensions(
   };
 }
 
+/**
+ * Pixel-wise comparison restricted to the *preserved* region of the mask.
+ *
+ *  - Alpha mask: opaque (alpha >= 200) = preserved.
+ *  - Both images downscaled to 256x… for speed.
+ *  - `meanDiff` is the mean absolute color difference (RGB) over preserved
+ *    pixels, normalised 0..255.
+ *  - `score` = 1 - meanDiff / 255, in [0,1]. Higher is more preserved.
+ *  - `preserved` = score >= threshold (default 0.92).
+ *
+ *  Note: gpt-image-1 is image-edit, not strict inpainting, so even with a
+ *  mask the model lightly re-renders the entire image. A score of 0.92+
+ *  is realistic for "no meaningful identity drift". Calibrate the
+ *  threshold via env if needed.
+ */
+const QUALITY_PRESERVATION_DOWNSAMPLE = 256;
+
+async function computeOutsideMaskScore(
+  base: Buffer,
+  result: Buffer,
+  alphaMask: Buffer
+): Promise<{ score: number; preserved: boolean }> {
+  const ds = QUALITY_PRESERVATION_DOWNSAMPLE;
+  const [a, b, m] = await Promise.all([
+    sharp(base)
+      .resize(ds, ds, { fit: "fill" })
+      .removeAlpha()
+      .raw()
+      .toBuffer({ resolveWithObject: true }),
+    sharp(result)
+      .resize(ds, ds, { fit: "fill" })
+      .removeAlpha()
+      .raw()
+      .toBuffer({ resolveWithObject: true }),
+    sharp(alphaMask)
+      .resize(ds, ds, { fit: "fill" })
+      .extractChannel("alpha")
+      .raw()
+      .toBuffer({ resolveWithObject: true }),
+  ]);
+
+  let totalDiff = 0;
+  let preservedPixels = 0;
+  const ach = a.info.channels;
+  const bch = b.info.channels;
+  for (let i = 0; i < ds * ds; i++) {
+    if (m.data[i] < 200) continue; // not preserved
+    preservedPixels++;
+    const dr = Math.abs(a.data[i * ach] - b.data[i * bch]);
+    const dg = Math.abs(a.data[i * ach + 1] - b.data[i * bch + 1]);
+    const db = Math.abs(a.data[i * ach + 2] - b.data[i * bch + 2]);
+    totalDiff += (dr + dg + db) / 3;
+  }
+  if (preservedPixels === 0) {
+    return { score: 1, preserved: true };
+  }
+  const meanDiff = totalDiff / preservedPixels;
+  const score = Math.max(0, 1 - meanDiff / 255);
+  const thresholdRaw = process.env.OPENAI_PRESERVATION_THRESHOLD?.trim();
+  const threshold = thresholdRaw ? Number(thresholdRaw) : 0.92;
+  const preserved = score >= (Number.isFinite(threshold) ? threshold : 0.92);
+  return { score, preserved };
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 //  OpenAI SDK call
 // ──────────────────────────────────────────────────────────────────────────
@@ -175,8 +307,8 @@ async function getDimensions(
 interface ImageEditCallOptions {
   apiKey: string;
   model: string;
-  size: OpenAIEnv["size"];
-  quality: OpenAIEnv["quality"];
+  size: ResolvedSize;
+  quality: OpenAIQuality;
   prompt: string;
   baseImages: Buffer[];
   alphaMask: Buffer | null;
@@ -243,29 +375,41 @@ async function callOpenAIImageEdit(
 //  Public API
 // ──────────────────────────────────────────────────────────────────────────
 
-/** Spec-shaped input for the canonical entrypoint. */
+export interface ProductReference {
+  /** Either a File (uploaded) or a Buffer (already fetched on the server). */
+  data: File | Buffer;
+  /** Optional label kept for logs / debug. */
+  label?: string;
+}
+
 export interface GenerateOpenAIImageTryOnParams {
-  /** Customer photo (base image). */
   userImage: File;
-  /** One or more product reference images. The first is used as the
-   *  primary product reference. */
+  /** Original product images (may be JPEG / PNG, may NOT have alpha). */
   productImages: File[];
+  /** Transparent product cutouts (PNG with alpha) when available. */
+  productCutouts?: ProductReference[];
   /** Optional B/W mask (white = editable, black = preserved). */
   maskImage?: File | null;
   /** Optional pre-rendered composite (overrides userImage as base). */
   compositeImage?: File | null;
   category: CategoryId;
-  /** Hand-jewelry subtype. */
   productSubtype?: HandJewelryType;
-  /** Target finger for rings. */
   targetFinger?: FingerId;
-  /** Optional override for the prompt (caller-built). */
   prompt?: string;
-  /** Optional overrides for env defaults. */
-  quality?: OpenAIEnv["quality"];
-  size?: OpenAIEnv["size"];
-  /** Free-form merchant notes appended to the prompt. */
+  quality?: OpenAIQuality;
+  size?: OpenAISize;
   notes?: string;
+}
+
+export interface QualityChecks {
+  /** 0..1 score, higher is more preserved. */
+  outsideMaskChangeScore: number;
+  /** True when score >= preservation threshold. */
+  outsideMaskPreserved: boolean;
+  /** True when the product image is below MIN_PRODUCT_IMAGE_LONG_SIDE. */
+  productFidelityWarning: boolean;
+  /** Aggregate flag: anything that should make the operator double-check. */
+  customerPreservationWarning: boolean;
 }
 
 export interface OpenAIImageMeta {
@@ -274,6 +418,12 @@ export interface OpenAIImageMeta {
   baseImageCount: number;
   /** Whether a deterministic composite was used as the base image. */
   compositeUsedAsBase: boolean;
+  /** Final size sent to OpenAI. */
+  size: ResolvedSize;
+  /** Lightweight similarity / fidelity checks. */
+  qualityChecks: QualityChecks;
+  /** Validation warnings raised by `maskValidation` and friends. */
+  warnings: TryOnWarning[];
 }
 
 export interface GenerateOpenAIImageTryOnResult {
@@ -286,14 +436,6 @@ export interface GenerateOpenAIImageTryOnResult {
   meta: OpenAIImageMeta;
 }
 
-/**
- * Canonical entrypoint per the spec. Strict, no fallbacks.
- *  - Throws OpenAIConfigError if OPENAI_API_KEY is missing.
- *  - Throws MaskRequiredError if REQUIRE_MASK_FOR_OPENAI=true and no mask.
- *  - Throws MaskDimensionError if the mask doesn't match the base image.
- *  - Throws on any SDK / network error so the route can return an error
- *    JSON instead of silently rendering locally.
- */
 export async function generateOpenAIImageTryOn(
   params: GenerateOpenAIImageTryOnParams
 ): Promise<GenerateOpenAIImageTryOnResult> {
@@ -304,64 +446,127 @@ export async function generateOpenAIImageTryOn(
     );
   }
 
-  const size = params.size ?? env.size;
-  const quality = params.quality ?? env.quality;
-  const targetSize =
-    size === "auto" ? 1024 : Number(size.split("x")[0]) || 1024;
+  const warnings: TryOnWarning[] = [];
 
   // ── 1. Resolve base image (composite > user photo) ─────────────────
   const compositeUsedAsBase = Boolean(params.compositeImage);
-  const primaryBuf = Buffer.from(
-    await (params.compositeImage ?? params.userImage).arrayBuffer()
-  );
+  const primaryFile = params.compositeImage ?? params.userImage;
+  const primaryBuf = Buffer.from(await primaryFile.arrayBuffer());
   const primaryDims = await getDimensions(primaryBuf);
 
-  // ── 2. Mask handling — validate dimensions BEFORE resizing ────────
+  if (
+    !compositeUsedAsBase &&
+    Math.max(primaryDims.width, primaryDims.height) <
+      MIN_USER_IMAGE_LONG_SIDE
+  ) {
+    warnings.push({
+      code: "user-image-low-res",
+      message:
+        "User photo is below 1024px on its long side. Customer fidelity may be reduced.",
+    });
+  }
+
+  // ── 2. Pick output size & resize base ─────────────────────────────
+  const requestedSize = params.size ?? env.size;
+  const resolved = resolveSize(requestedSize, primaryDims);
+  const { w: targetW, h: targetH } = sizeToWH(resolved);
+
+  // ── 3. Mask handling (validate BEFORE resizing) ───────────────────
   const useMaskedEdit = isMaskedEditEnabledFor(params.category);
   const haveRawMask = Boolean(params.maskImage);
-  const willUseMask = haveRawMask && useMaskedEdit;
 
   if (env.requireMask && !haveRawMask) {
     throw new MaskRequiredError();
   }
 
   let alphaMask: Buffer | null = null;
-  if (willUseMask && params.maskImage) {
+  let maskAtTargetSize: Buffer | null = null;
+  if (haveRawMask && useMaskedEdit && params.maskImage) {
     const rawMask = Buffer.from(await params.maskImage.arrayBuffer());
-    const maskDims = await getDimensions(rawMask);
-    if (
-      maskDims.width !== primaryDims.width ||
-      maskDims.height !== primaryDims.height
-    ) {
-      throw new MaskDimensionError(
-        `Base ${primaryDims.width}x${primaryDims.height} vs mask ${maskDims.width}x${maskDims.height}.`
-      );
-    }
-    const squaredMask = await squareForOpenAI(rawMask, targetSize);
-    alphaMask = await bwMaskToAlphaPng(squaredMask);
-  }
-
-  // ── 3. Build base image array ─────────────────────────────────────
-  const baseImages: Buffer[] = [];
-  baseImages.push(await squareForOpenAI(primaryBuf, targetSize));
-
-  // Pass the product as a second reference (gpt-image-1 multi-image
-  // edit). When a composite is already present, the composite already
-  // bakes the product in — but adding the clean product reference helps
-  // the model recover details lost during warping/blending.
-  let productHasAlpha = false;
-  if (
-    params.productImages.length > 0 &&
-    env.model.includes("gpt-image")
-  ) {
-    const productBuf = Buffer.from(
-      await params.productImages[0].arrayBuffer()
+    const validation = await validateMaskForCategory(
+      rawMask,
+      { width: primaryDims.width, height: primaryDims.height },
+      params.category
     );
-    productHasAlpha = (await getDimensions(productBuf)).hasAlpha;
-    baseImages.push(await squareForOpenAI(productBuf, targetSize));
+    if (!validation.ok) {
+      throw new MaskValidationError(validation.error ?? "Invalid mask.");
+    }
+    warnings.push(...validation.warnings);
+    const squaredMask = await fitCover(rawMask, targetW, targetH);
+    maskAtTargetSize = squaredMask;
+    alphaMask = await bwMaskToAlphaPng(squaredMask);
+  } else if (!haveRawMask) {
+    warnings.push({
+      code: "openai-no-mask",
+      message: "No mask provided. The edit may be less constrained.",
+    });
   }
 
-  // ── 4. Build prompt (or honour caller-provided override) ─────────
+  // ── 4. Build base image array ─────────────────────────────────────
+  const baseImages: Buffer[] = [];
+  const squaredBase = await fitCover(primaryBuf, targetW, targetH);
+  baseImages.push(squaredBase);
+
+  // Multi-image: when the model supports it, stack:
+  //   1. base (already pushed)
+  //   2. transparent product cutout (highest fidelity reference)
+  //   3. original product image
+  let productHasAlpha = false;
+  let productLowRes = false;
+  let firstProductBuf: Buffer | null = null;
+  if (env.model.includes("gpt-image")) {
+    // Cutouts first (transparent PNGs).
+    if (params.productCutouts && params.productCutouts.length > 0) {
+      for (const cutout of params.productCutouts) {
+        // TS can't narrow `File | Buffer` here without an explicit
+        // branch; pull the data out into a local typed first.
+        const cd = cutout.data;
+        const buf: Buffer = Buffer.isBuffer(cd)
+          ? cd
+          : Buffer.from(await (cd as File).arrayBuffer());
+        const dims = await getDimensions(buf);
+        if (dims.hasAlpha) productHasAlpha = true;
+        if (
+          Math.max(dims.width, dims.height) < MIN_PRODUCT_IMAGE_LONG_SIDE
+        ) {
+          productLowRes = true;
+        }
+        if (!firstProductBuf) firstProductBuf = buf;
+        baseImages.push(await fitContainTransparent(buf, targetW, targetH));
+      }
+    }
+    // Then originals.
+    for (const file of params.productImages) {
+      const buf = Buffer.from(await file.arrayBuffer());
+      const dims = await getDimensions(buf);
+      if (dims.hasAlpha) productHasAlpha = true;
+      if (Math.max(dims.width, dims.height) < MIN_PRODUCT_IMAGE_LONG_SIDE) {
+        productLowRes = true;
+      }
+      if (!firstProductBuf) firstProductBuf = buf;
+      baseImages.push(await fitContainTransparent(buf, targetW, targetH));
+    }
+  } else if (params.productImages[0]) {
+    const buf = Buffer.from(await params.productImages[0].arrayBuffer());
+    if (!firstProductBuf) firstProductBuf = buf;
+    baseImages.push(await fitContainTransparent(buf, targetW, targetH));
+  }
+
+  if (productLowRes) {
+    warnings.push({
+      code: "product-low-res",
+      message:
+        "Product image is low resolution. Product fidelity may be reduced.",
+    });
+  }
+
+  // gpt-image-1 caps at 16 input images; we shouldn't reach that, but
+  // guard against pathological merchant inputs.
+  if (baseImages.length > 16) {
+    baseImages.length = 16;
+  }
+
+  // ── 5. Build prompt ─────────────────────────────────────────────
   const prompt =
     params.prompt ??
     buildOpenAITryOnPrompt({
@@ -379,26 +584,60 @@ export async function generateOpenAIImageTryOn(
       `[try-on] maskUsed=${Boolean(alphaMask)}\n` +
       `[try-on] usedLocalRenderer=false\n` +
       `[try-on] model=${env.model}\n` +
-      `[try-on] productSubtype=${params.productSubtype ?? "n/a"} targetFinger=${
-        params.targetFinger ?? "n/a"
-      } size=${size} quality=${quality}`
+      `[try-on] size=${resolved} quality=${params.quality ?? env.quality} baseImages=${baseImages.length} productHasAlpha=${productHasAlpha} productLowRes=${productLowRes}`
   );
 
-  // ── 5. Call OpenAI ───────────────────────────────────────────────
+  // ── 6. Call OpenAI ───────────────────────────────────────────────
   const startedAt = Date.now();
   const { b64 } = await callOpenAIImageEdit({
     apiKey: env.apiKey,
     model: env.model,
-    size,
-    quality,
+    size: resolved,
+    quality: params.quality ?? env.quality,
     prompt,
     baseImages,
     alphaMask,
   });
   const durationMs = Date.now() - startedAt;
+  const resultBuf = Buffer.from(b64, "base64");
+
+  // ── 7. Quality checks (outside-mask preservation) ──────────────
+  let outsideMaskChangeScore = 1;
+  let outsideMaskPreserved = true;
+  if (alphaMask) {
+    try {
+      const check = await computeOutsideMaskScore(
+        squaredBase,
+        resultBuf,
+        alphaMask
+      );
+      outsideMaskChangeScore = check.score;
+      outsideMaskPreserved = check.preserved;
+    } catch (err) {
+      console.warn(
+        "[try-on] outside-mask preservation check failed:",
+        err instanceof Error ? err.message : err
+      );
+    }
+  }
+  if (alphaMask && !outsideMaskPreserved) {
+    warnings.push({
+      code: "outside-mask-changed",
+      message: "The edit changed too much outside the mask.",
+    });
+  }
+
+  const qualityChecks: QualityChecks = {
+    outsideMaskChangeScore,
+    outsideMaskPreserved,
+    productFidelityWarning: productLowRes,
+    customerPreservationWarning:
+      !outsideMaskPreserved ||
+      warnings.some((w) => w.code === "user-image-low-res"),
+  };
 
   console.info(
-    `[try-on] durationMs=${durationMs} provider=openai model=${env.model} category=${params.category}`
+    `[try-on] durationMs=${durationMs} provider=openai model=${env.model} category=${params.category} outsideMaskScore=${outsideMaskChangeScore.toFixed(3)} outsideMaskPreserved=${outsideMaskPreserved}`
   );
 
   return {
@@ -413,8 +652,14 @@ export async function generateOpenAIImageTryOn(
       productHasAlpha,
       baseImageCount: baseImages.length,
       compositeUsedAsBase,
+      size: resolved,
+      qualityChecks,
+      warnings,
     },
   };
+  // Note: `maskAtTargetSize` is intentionally unused — kept here in case
+  // downstream tooling wants to surface the resized mask for debugging.
+  void maskAtTargetSize;
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -424,14 +669,25 @@ export async function generateOpenAIImageTryOn(
 export interface OpenAIImageParams extends TryOnRequest {
   inpaintComposite?: File;
   inpaintMask?: File;
+  /** Server-fetched cutout buffers (route resolves productCutoutUrls). */
+  productCutoutBuffers?: Buffer[];
 }
 
 export async function openaiTryOn(
   params: OpenAIImageParams
 ): Promise<TryOnResponse & { openaiMeta: OpenAIImageMeta }> {
+  const cutoutRefs: ProductReference[] | undefined = params.productCutoutBuffers
+    ?.length
+    ? params.productCutoutBuffers.map((data, i) => ({
+        data,
+        label: `cutout-${i}`,
+      }))
+    : undefined;
+
   const result = await generateOpenAIImageTryOn({
     userImage: params.userImage,
     productImages: params.productImages,
+    productCutouts: cutoutRefs,
     maskImage: params.inpaintMask ?? null,
     compositeImage: params.inpaintComposite ?? null,
     category: params.category,
@@ -450,7 +706,9 @@ export async function openaiTryOn(
     category: result.category,
     debug: {
       imageCount: result.meta.baseImageCount + (result.meta.maskUsed ? 1 : 0),
-      productImageCount: params.productImages.length,
+      productImageCount:
+        params.productImages.length +
+        (params.productCutoutBuffers?.length ?? 0),
     },
     openaiMeta: result.meta,
   };

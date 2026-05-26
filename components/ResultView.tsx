@@ -16,7 +16,12 @@ import { SparkleBurst } from "./SparkleBurst";
 import { ShareMenu } from "./ShareMenu";
 import { MOCK_FALLBACK } from "@/lib/mockResults";
 import { brand } from "@/lib/brand";
-import type { QualityStatus, RenderMode, TryOnWarning } from "@/types";
+import type {
+  QualityChecks,
+  QualityStatus,
+  RenderMode,
+  TryOnWarning,
+} from "@/types";
 
 interface ResultViewProps {
   resultUrl: string;
@@ -42,6 +47,8 @@ interface ResultViewProps {
    * final result.
    */
   usedLocalRenderer?: boolean;
+  /** Server-computed fidelity checks (OpenAI path). */
+  qualityChecks?: QualityChecks;
 }
 
 const REVEAL_START_MS = 150;
@@ -63,6 +70,7 @@ export function ResultView({
   warnings,
   maskUsed,
   usedLocalRenderer,
+  qualityChecks,
 }: ResultViewProps) {
   const [phase, setPhase] = useState<Phase>("waiting");
   const [showBurst, setShowBurst] = useState(false);
@@ -244,6 +252,19 @@ export function ResultView({
             {usedLocalRenderer === true && renderMode !== "fast-overlay" && (
               <span className="text-[11px] font-medium text-amber-800">
                 Attention : rendu local utilisé
+              </span>
+            )}
+            {qualityChecks?.outsideMaskPreserved === false && (
+              <span className="text-[11px] font-medium text-amber-800">
+                Attention : modifications hors masque détectées (préservation
+                du client : {Math.round(
+                  qualityChecks.outsideMaskChangeScore * 100
+                )}%)
+              </span>
+            )}
+            {qualityChecks?.productFidelityWarning === true && (
+              <span className="text-[11px] font-medium text-amber-800">
+                Image produit basse résolution — fidélité réduite.
               </span>
             )}
           </div>

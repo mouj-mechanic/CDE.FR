@@ -32,6 +32,7 @@ import { PrivacyNote } from "./PrivacyNote";
 import { ConsentCheckbox } from "./ConsentCheckbox";
 import { PhotoQualityChecklist } from "./PhotoQualityChecklist";
 import { MaskTestUploader } from "./MaskTestUploader";
+import { FidelityHintBanner } from "./FidelityHintBanner";
 import { cn } from "@/lib/utils";
 
 interface EmbedFlowProps {
@@ -255,6 +256,7 @@ export function EmbedFlow({
           warnings: data.warnings,
           maskUsed: data.debug?.maskUsed,
           usedLocalRenderer: data.debug?.usedLocalRenderer,
+          qualityChecks: data.qualityChecks,
         },
       });
     } catch (err) {
@@ -363,6 +365,7 @@ export function EmbedFlow({
             warnings: result.data.warnings,
             maskUsed: result.data.debug?.maskUsed,
             usedLocalRenderer: result.data.debug?.usedLocalRenderer,
+            qualityChecks: result.data.qualityChecks,
           },
         });
         setWatchOverrideUrl(null);
@@ -420,6 +423,7 @@ export function EmbedFlow({
                   warnings={state.resultMeta?.warnings}
                   maskUsed={state.resultMeta?.maskUsed}
                   usedLocalRenderer={state.resultMeta?.usedLocalRenderer}
+                  qualityChecks={state.resultMeta?.qualityChecks}
                   onDownload={() => {}}
                   onRetry={() => {
                     setWatchOverrideUrl(null);
@@ -609,6 +613,14 @@ export function EmbedFlow({
           />
         )}
         <MaskTestUploader value={manualMask} onChange={setManualMask} />
+        {process.env.NEXT_PUBLIC_AI_PROVIDER === "openai" && (
+          <FidelityHintBanner
+            requireMask={
+              process.env.NEXT_PUBLIC_REQUIRE_MASK_FOR_OPENAI === "true"
+            }
+            hasMask={Boolean(manualMask)}
+          />
+        )}
         <ConsentCheckbox checked={consent} onChange={setConsent} />
       </div>
 
