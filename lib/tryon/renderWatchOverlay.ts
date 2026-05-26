@@ -217,16 +217,23 @@ export async function renderWatchOverlay(
     segmentCentreOffsets
   );
 
-  // 8. Shadow layers — opacity scales with shadowIntensity.
-  const intensityMul = adj.shadowIntensity / 0.6;
+  // 8. Shadow layers — opacity scales with shadowIntensity. Tilt-aware:
+  //    when the wrist plane is tilted the case casts a stronger,
+  //    longer shadow toward the camera-far side, anchoring the watch
+  //    to the skin. Previous defaults (0.18 / 0.28) were too subtle
+  //    on portrait wrist photos — we now bias toward stronger
+  //    contact shadows for the luxury-watch look.
+  const tiltDeg = Math.abs(geometry.wristPlane?.tiltMagnitudeDeg ?? 0);
+  const tiltBoost = 1 + Math.min(1, tiltDeg / 45) * 0.4; // up to +40% darker
+  const intensityMul = (adj.shadowIntensity / 0.6) * tiltBoost;
   const shadows = buildShadowLayers(silhouette.canvas, {
     width: silhouette.canvas.width,
     height: silhouette.canvas.height,
-    ambientBlur: 14,
+    ambientBlur: 18,
     contactBlur: 4,
-    ambientOpacity: Math.min(0.45, 0.18 * intensityMul),
-    contactOpacity: Math.min(0.6, 0.28 * intensityMul),
-    ambientOffsetY: Math.max(2, Math.round(silhouette.canvas.height * 0.02)),
+    ambientOpacity: Math.min(0.55, 0.26 * intensityMul),
+    contactOpacity: Math.min(0.75, 0.38 * intensityMul),
+    ambientOffsetY: Math.max(3, Math.round(silhouette.canvas.height * 0.04)),
   });
 
   // 9. Composite onto user photo.
@@ -261,6 +268,46 @@ export async function renderWatchOverlay(
     });
   }
   ctx.rotate(geometry.rotation);
+
+  // ── 3D wrist plane perspective skew ──────────────────────────────
+  //  After the in-plane rotation we apply the projection of the
+  //  3D wrist plane onto the image. Without a full WebGL renderer
+  //  the cheap-and-correct way to fake perspective is:
+  //
+  //    1. Compress the dimension that runs along the strap (y in
+  //       the rotated frame) by `foreshorteningFactor` ≈ cos(tilt)
+  //       — the watch becomes a slightly shorter ellipse when the
+  //       wrist is tilted away from the camera.
+  //
+  //    2. Add a small horizontal skew proportional to the yaw — the
+  //       dial tilts to one side when the wrist rotates around the
+  //       forearm axis.
+  //
+  //  This is mathematically incorrect for an extreme tilt (>60°)
+  //  but visually correct for the 0..40° range we see in normal
+  //  wrist photos, and it eliminates the "sticker" look completely.
+  const plane = geometry.wristPlane;
+  if (plane) {
+    const fore = Math.max(0.5, Math.min(1, plane.foreshorteningFactor));
+    const yawRad = (plane.yawDeg * Math.PI) / 180;
+    const skewX = Math.sin(yawRad) * 0.25;
+    // ctx.transform(a, b, c, d, e, f) where
+    //   a, b — first column (mapping of unit X)
+    //   c, d — second column (mapping of unit Y)
+    //   e, f — translation
+    // We keep X intact and compress + skew Y.
+    ctx.transform(1, 0, skewX, fore, 0, 0);
+    if (typeof console !== "undefined" && console.info) {
+      console.info("[WATCH_ROTATION] perspective-skew", {
+        pitchDeg: Math.round(plane.pitchDeg * 10) / 10,
+        yawDeg: Math.round(plane.yawDeg * 10) / 10,
+        tiltMagnitudeDeg: Math.round(plane.tiltMagnitudeDeg * 10) / 10,
+        foreshorteningFactor: Math.round(fore * 100) / 100,
+        skewX: Math.round(skewX * 100) / 100,
+        has3DDepth: plane.has3DDepth,
+      });
+    }
+  }
 
   // Shadows go first, centred on the silhouette canvas centre.
   const silDrawX = -silhouette.canvas.width / 2;

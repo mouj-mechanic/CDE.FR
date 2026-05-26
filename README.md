@@ -273,6 +273,40 @@ In production the customer never sees a damaged hand: either the
 gates pass and the AI shadows ship, or the deterministic composite
 ships with a soft "rendu fidèle utilisé" note.
 
+### 3D wrist plane + perspective skew (`lib/tryon/wristPlane.ts`)
+
+The watch used to render as a 2D sticker because the canvas pipeline
+only applied an in-plane rotation. The new wrist-plane module
+estimates the actual 3D plane of the wrist from three MediaPipe
+landmarks (`P0 = wrist`, `P1 = thumb CMC`, `P17 = pinky MCP`),
+computes the plane normal via cross product, and exposes:
+
+- `pitchDeg` — rotation around the wrist axis (dial tilt toward /
+  away from the camera).
+- `yawDeg` — rotation around the forearm axis (dial tilt left /
+  right).
+- `tiltMagnitudeDeg` — total tilt away from the camera frontal
+  plane (0 = fronto-parallel, 60+ = strongly tilted).
+- `foreshorteningFactor` — `cos(tiltMagnitude)`, clamped to
+  [0.5..1.0]. Drives the strap-axis compression in
+  `renderWatchOverlay`.
+- `has3DDepth` — true when MediaPipe supplied non-zero `z` values.
+
+In `renderWatchOverlay` we apply the perspective skew as an
+additional `ctx.transform(1, 0, skewX, foreshorteningFactor, 0, 0)`
+right after the in-plane rotation. The watch wraps around the
+wrist instead of pasting flat across it.
+
+We also moved the anatomical anchor from `0.26 × palmWidth` (mid-
+forearm) to `0.15 × palmWidth` (styloid process of the ulna). The
+target band tightened from 0.18..0.34 to 0.08..0.24. The watch now
+sits exactly where a real watch sits — on the wrist crease, not
+halfway down the arm.
+
+Drop shadows scale with the tilt magnitude (`+40 %` darker on
+strongly tilted wrists) to "anchor" the case on the skin instead of
+floating above it.
+
 ### Watch rotation model (`lib/tryon/watchRotation.ts`)
 
 A single source of truth for the rotation we apply to the watch

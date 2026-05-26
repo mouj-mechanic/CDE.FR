@@ -20,6 +20,7 @@ import {
   computeWatchRotation,
   type WatchRotationResult,
 } from "./watchRotation";
+import { computeWristPlane, type WristPlaneResult } from "./wristPlane";
 
 export interface WristGeometry {
   /** Center of the watch on the user image (pixels). */
@@ -50,6 +51,13 @@ export interface WristGeometry {
    * `computeWristGeometry` succeeded, undefined on the fallback path.
    */
   rotationDebug?: WatchRotationResult;
+  /**
+   * Lightweight 3D wrist plane estimate (pitch, yaw, foreshortening).
+   * See `lib/tryon/wristPlane.ts`. Drives the perspective skew applied
+   * in `renderWatchOverlay` so the watch wraps around the wrist
+   * instead of sitting on it like a sticker.
+   */
+  wristPlane?: WristPlaneResult;
 }
 
 /**
@@ -87,19 +95,20 @@ export interface WatchPlacementValidation {
   notes: string[];
 }
 
-// Tightened production thresholds (June 2026 polish pass).
+// Tightened production thresholds (anatomical pass, June 2026).
 //
-//   - Target band: 0.18..0.34 × palmWidth (centre 0.26). Anything
-//     above 0.34 reads as "mid-forearm watch" (sticker effect),
-//     anything below 0.18 drifts onto the back of the hand.
-//   - Lateral: 0.20 × palmWidth max — the watch stays tightly
-//     centred over the forearm axis. Lowered from 0.22.
-//   - Size: 0.72..0.98 × wristWidth, hard target 0.86. Used to be
-//     1.08× which still produced a "sticker / too big" look on
-//     standard hand photos.
-const TARGET_MIN_FORE = 0.18;
-const TARGET_MAX_FORE = 0.34;
-const TARGET_MAX_LATERAL = 0.2;
+//   - Target band: 0.08..0.24 × palmWidth (centre 0.15). The watch
+//     is now placed close to the wrist landmark itself (which sits
+//     on the styloid process of the ulna — the anatomically
+//     correct spot for a wristwatch). The old band (0.26 default,
+//     0.34 max) placed the watch mid-forearm; the new band keeps
+//     it on the wrist crease.
+//   - Lateral: 0.18 × palmWidth max — the watch stays tightly
+//     centred over the forearm axis. Lowered from 0.20.
+//   - Size: 0.72..0.98 × wristWidth, hard target 0.86. Unchanged.
+const TARGET_MIN_FORE = 0.08;
+const TARGET_MAX_FORE = 0.24;
+const TARGET_MAX_LATERAL = 0.18;
 const TARGET_MIN_SIZE = 0.72;
 const TARGET_MAX_SIZE = 0.98;
 
@@ -256,16 +265,17 @@ export function computeWristGeometry(
   // palmWidth = distance(indexMcp, pinkyMcp)
   const palmWidth = dist(indexMcp, pinkyMcp);
 
-  // watchCenter = wrist - handDir * palmWidth * 0.26
+  // watchCenter = wrist - handDir * palmWidth * 0.15
   //
-  //  Ideal forearm offset for a watch sits at ≈ 0.26 × palmWidth from
-  //  the wrist landmark toward the elbow. Anything lower drifts onto
-  //  the back of the hand; anything higher reads as a mid-forearm
-  //  watch. Tightened from 0.30 to 0.26 in the June 2026 polish pass
-  //  to fight the "watch too low on the forearm" feedback.
-  //  validateWatchPlacement enforces 0.18..0.34 as the hard range.
-  const cx = wrist.x - handDir.x * palmWidth * 0.26;
-  const cy = wrist.y - handDir.y * palmWidth * 0.26;
+  //  Anatomical anchor on the styloid process of the ulna (the bump
+  //  on the back of the wrist where a watch case naturally sits).
+  //  MediaPipe landmark 0 (wrist) sits roughly on the wrist crease
+  //  itself; subtracting 0.15 × palmWidth toward the elbow lands us
+  //  on the styloid process. Lowered from 0.26 in the anatomical
+  //  pass — the previous offset placed watches mid-forearm.
+  //  validateWatchPlacement enforces 0.08..0.24 as the hard range.
+  const cx = wrist.x - handDir.x * palmWidth * 0.15;
+  const cy = wrist.y - handDir.y * palmWidth * 0.15;
 
   // ── Watch width sizing (anatomy-aware) ────────────────────────────
   //
@@ -314,6 +324,10 @@ export function computeWristGeometry(
     Math.min(1, rotationResult.confidence * 0.7 + sizeFactor * 0.3)
   );
 
+  // 3D wrist plane (PnP-lite). Drives the perspective skew so the
+  // watch can wrap around the wrist instead of sitting flat on it.
+  const wristPlane = computeWristPlane(lm);
+
   return {
     cx,
     cy,
@@ -326,6 +340,7 @@ export function computeWristGeometry(
     confidence,
     wristAnchor: { x: wrist.x, y: wrist.y },
     rotationDebug: rotationResult,
+    wristPlane,
   };
 }
 

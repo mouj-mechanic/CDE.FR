@@ -18,11 +18,11 @@ import {
 function baseGeometry(): WristGeometry {
   // Horizontal forearm pointing right (+X). The wrist anchor sits at
   // (500, 500) of an arbitrary image. palmWidth = 200 px so the new
-  // target band sits between 40 (0.20 × 200) and 88 (0.44 × 200) px
-  // to the right of the wrist anchor.
+  // anatomical target band sits between 16 (0.08 × 200) and 48
+  // (0.24 × 200) px to the right of the wrist anchor.
   const palmWidth = 200;
   return {
-    cx: 500 + palmWidth * 0.3, // 60 px along forearm → centre of band
+    cx: 500 + palmWidth * 0.15, // 30 px along forearm → centre of band
     cy: 500,
     width: palmWidth * 0.85 * 0.92, // ≈ 0.78 × palmWidth — in range
     height: palmWidth * 0.35,
@@ -48,14 +48,14 @@ describe("validateWatchPlacement", () => {
   it("re-anchors a watch placed on the back of the hand", () => {
     const g = baseGeometry();
     // Pull the watch onto the hand (negative forearm offset → wrist
-    // crease and past it). The target band starts at +36 px (0.18 × palm).
-    g.cx = 510; // only 10px along forearm — too close to wrist
+    // crease and past it). The target band starts at +16 px (0.08 × palm).
+    g.cx = 505; // only 5px along forearm — too close to wrist
     const v = validateWatchPlacement(g);
     expect(v.centreInBand).toBe(false);
-    // The corrected centre must satisfy the band rule (36..68 px along forearm).
+    // The corrected centre must satisfy the band rule (16..48 px along forearm).
     const fx = v.corrected.cx - g.wristAnchor.x;
-    expect(fx).toBeGreaterThanOrEqual(36);
-    expect(fx).toBeLessThanOrEqual(68);
+    expect(fx).toBeGreaterThanOrEqual(16);
+    expect(fx).toBeLessThanOrEqual(48);
     expect(v.notes.join(" ")).toMatch(/back of the hand|forearm/i);
   });
 
@@ -65,14 +65,14 @@ describe("validateWatchPlacement", () => {
     const v = validateWatchPlacement(g);
     expect(v.centreInBand).toBe(false);
     const fx = v.corrected.cx - g.wristAnchor.x;
-    expect(fx).toBeLessThanOrEqual(68); // new max = palm × 0.34 = 68
+    expect(fx).toBeLessThanOrEqual(48); // new max = palm × 0.24 = 48
     expect(v.notes.join(" ")).toMatch(/down the forearm/i);
   });
 
   it("snaps a lateral drift back onto the forearm axis", () => {
     const g = baseGeometry();
-    // 50 px along forearm + 80 px sideways. Lateral cap = 40 (palm*0.20).
-    g.cx = g.wristAnchor.x + 50;
+    // 30 px along forearm + 80 px sideways. Lateral cap = 36 (palm*0.18).
+    g.cx = g.wristAnchor.x + 30;
     g.cy = g.wristAnchor.y + 80;
     const v = validateWatchPlacement(g);
     expect(v.centreInBand).toBe(false);
