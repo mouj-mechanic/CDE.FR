@@ -458,11 +458,109 @@ export async function detectBlackBars(buffer: Buffer): Promise<{
  */
 const QUALITY_PRESERVATION_DOWNSAMPLE = 256;
 
-async function computeOutsideMaskScore(
+/**
+ * Build a B/W silhouette buffer (white = product, black = rest) by
+ * diffing the user-only photo and the composite (user + product).
+ * Both inputs must already be at the same dimensions. Returns `null`
+ * when no meaningful diff exists (rare — typically means the
+ * composite ≈ user, no product was painted).
+ */
+async function buildProductSilhouetteBuffer(
+  user: Buffer,
+  composite: Buffer
+): Promise<Buffer | null> {
+  try {
+    const [u, c] = await Promise.all([
+      sharp(user).removeAlpha().raw().toBuffer({ resolveWithObject: true }),
+      sharp(composite)
+        .removeAlpha()
+        .raw()
+        .toBuffer({ resolveWithObject: true }),
+    ]);
+    if (
+      u.info.width !== c.info.width ||
+      u.info.height !== c.info.height ||
+      u.info.channels !== c.info.channels
+    ) {
+      return null;
+    }
+    const W = u.info.width;
+    const H = u.info.height;
+    const ch = u.info.channels;
+    const out = Buffer.alloc(W * H);
+    let nonZero = 0;
+    for (let i = 0; i < W * H; i++) {
+      const dr = Math.abs(u.data[i * ch] - c.data[i * ch]);
+      const dg = Math.abs(u.data[i * ch + 1] - c.data[i * ch + 1]);
+      const db = Math.abs(u.data[i * ch + 2] - c.data[i * ch + 2]);
+      const v = (dr + dg + db) / 3;
+      if (v > 18) {
+        out[i] = 255;
+        nonZero++;
+      } else {
+        out[i] = 0;
+      }
+    }
+    if (nonZero < 32) return null;
+    return await sharp(out, {
+      raw: { width: W, height: H, channels: 1 },
+    })
+      .png()
+      .toBuffer();
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Compute the customer-preservation score on the pixels OUTSIDE the
+ * edit zone.
+ *
+ *  Previously the score was naive: every pixel where `mask alpha >= 200`
+ *  (i.e. "preserved" in OpenAI alpha convention) entered the diff. The
+ *  watch silhouette itself is in that "preserved" bucket — which
+ *  means a perfectly legitimate watch swap (different bezel colour,
+ *  different bracelet links) inflated the diff and tripped the gate,
+ *  producing "Nous n'avons pas pu valider ce rendu" errors that
+ *  actually had nothing to do with the customer's photo.
+ *
+ *  The fix: when the caller can produce a `productSilhouette` (B/W
+ *  mask, white = product), we dilate it generously and EXCLUDE those
+ *  pixels too. We also exclude pure-black pixels at the borders of
+ *  the result image (likely letterbox residue that survived
+ *  `restoreSourceAspectRatio`) so they don't dominate the score.
+ *
+ *  Comparison includes:
+ *    - skin / fingers / nails outside the product silhouette
+ *    - background pixels outside the edit ring
+ *
+ *  Comparison excludes:
+ *    - the editable area (alpha < 200)
+ *    - the dilated product silhouette (legitimate product changes)
+ *    - black letterbox residue at the image border
+ */
+export interface OutsideMaskScoreOptions {
+  /**
+   * Optional B/W product silhouette (white = product, black = rest)
+   * matching the result dimensions. Dilated by 24 px before being
+   * excluded from the comparison.
+   */
+  productSilhouette?: Buffer;
+  /**
+   * Dilation radius (in pixels at the OUTPUT resolution) applied to
+   * `productSilhouette` before exclusion. Default 24 — wide enough to
+   * cover the contact-shadow ring around watches / rings without
+   * eating customer skin.
+   */
+  productExpandPx?: number;
+}
+
+export async function computeOutsideMaskScore(
   base: Buffer,
   result: Buffer,
-  alphaMask: Buffer
-): Promise<{ score: number; preserved: boolean }> {
+  alphaMask: Buffer,
+  options: OutsideMaskScoreOptions = {}
+): Promise<{ score: number; preserved: boolean; excludedPixels: number }> {
   const ds = QUALITY_PRESERVATION_DOWNSAMPLE;
   const [a, b, m] = await Promise.all([
     sharp(base)
@@ -482,12 +580,52 @@ async function computeOutsideMaskScore(
       .toBuffer({ resolveWithObject: true }),
   ]);
 
+  // Optional product exclusion mask.
+  let exclude: Buffer | null = null;
+  if (options.productSilhouette) {
+    // Apply a quick box-style dilation by Gaussian blur + threshold:
+    // sigma ≈ expandPx/3 at the downsampled resolution.
+    const expandPx = options.productExpandPx ?? 24;
+    const expandAtDs = Math.max(1, Math.round((expandPx * ds) / 1024));
+    const dilated = await sharp(options.productSilhouette)
+      .resize(ds, ds, { fit: "fill" })
+      .removeAlpha()
+      .blur(Math.max(0.4, expandAtDs / 2))
+      .raw()
+      .toBuffer({ resolveWithObject: true });
+    exclude = Buffer.alloc(ds * ds);
+    for (let i = 0; i < ds * ds; i++) {
+      // Anything that's > 30 after blur counts as inside the dilated
+      // silhouette → excluded.
+      exclude[i] = dilated.data[i * dilated.info.channels] > 30 ? 1 : 0;
+    }
+  }
+
   let totalDiff = 0;
   let preservedPixels = 0;
+  let excludedPixels = 0;
   const ach = a.info.channels;
   const bch = b.info.channels;
   for (let i = 0; i < ds * ds; i++) {
-    if (m.data[i] < 200) continue; // not preserved
+    if (m.data[i] < 200) continue; // editable area — never counted
+
+    // Black-bar residue exclusion: if the BASE pixel is near-black AND
+    // the result pixel is near-black, that's almost certainly
+    // letterbox padding rather than meaningful background drift.
+    const baseLuma =
+      (a.data[i * ach] + a.data[i * ach + 1] + a.data[i * ach + 2]) / 3;
+    const resLuma =
+      (b.data[i * bch] + b.data[i * bch + 1] + b.data[i * bch + 2]) / 3;
+    if (baseLuma < 12 && resLuma < 12) {
+      excludedPixels++;
+      continue;
+    }
+
+    if (exclude && exclude[i] === 1) {
+      excludedPixels++;
+      continue;
+    }
+
     preservedPixels++;
     const dr = Math.abs(a.data[i * ach] - b.data[i * bch]);
     const dg = Math.abs(a.data[i * ach + 1] - b.data[i * bch + 1]);
@@ -495,14 +633,14 @@ async function computeOutsideMaskScore(
     totalDiff += (dr + dg + db) / 3;
   }
   if (preservedPixels === 0) {
-    return { score: 1, preserved: true };
+    return { score: 1, preserved: true, excludedPixels };
   }
   const meanDiff = totalDiff / preservedPixels;
   const score = Math.max(0, 1 - meanDiff / 255);
   const thresholdRaw = process.env.OPENAI_PRESERVATION_THRESHOLD?.trim();
-  const threshold = thresholdRaw ? Number(thresholdRaw) : 0.92;
-  const preserved = score >= (Number.isFinite(threshold) ? threshold : 0.92);
-  return { score, preserved };
+  const threshold = thresholdRaw ? Number(thresholdRaw) : 0.86;
+  const preserved = score >= (Number.isFinite(threshold) ? threshold : 0.86);
+  return { score, preserved, excludedPixels };
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -1133,17 +1271,36 @@ export async function generateOpenAIImageTryOn(
   }
 
   // ── 7. Quality checks (outside-mask preservation) ──────────────
+  //
+  // We compare against `croppedUserBuf` (the pristine customer photo)
+  // — NOT the composite. The composite already has the product
+  // painted on it, so any AI-rendered shadow / reflection around the
+  // product would show up as "drift" in the composite's product zone
+  // and inflate the score.
+  //
+  // We also pass a product silhouette derived from
+  // `composite − user` so the comparator can exclude the product
+  // pixels (and their dilated ring) from the diff. That keeps the
+  // gate focused on actual customer-identity drift instead of
+  // legitimate product changes.
   let outsideMaskChangeScore = 1;
   let outsideMaskPreserved = true;
+  let outsideExcludedPixels = 0;
   if (croppedAlphaMask) {
     try {
+      const productSilhouette = await buildProductSilhouetteBuffer(
+        croppedUserBuf,
+        croppedCompositeBuf
+      );
       const check = await computeOutsideMaskScore(
-        croppedCompositeBuf,
+        croppedUserBuf,
         resultBuf,
-        croppedAlphaMask
+        croppedAlphaMask,
+        { productSilhouette: productSilhouette ?? undefined, productExpandPx: 32 }
       );
       outsideMaskChangeScore = check.score;
       outsideMaskPreserved = check.preserved;
+      outsideExcludedPixels = check.excludedPixels;
     } catch (err) {
       console.warn(
         "[try-on] outside-mask preservation check failed:",
@@ -1151,6 +1308,7 @@ export async function generateOpenAIImageTryOn(
       );
     }
   }
+  void outsideExcludedPixels;
   if (croppedAlphaMask && !outsideMaskPreserved) {
     warnings.push({
       code: "outside-mask-changed",

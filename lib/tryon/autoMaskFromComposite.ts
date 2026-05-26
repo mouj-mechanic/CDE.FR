@@ -443,6 +443,76 @@ interface EnsureMinParams {
 }
 
 /**
+ * Build a SAFER (tighter, more conservative) mask for the
+ * customer-preservation retry path.
+ *
+ *  When the first OpenAI pass triggers the customer-preservation
+ *  gate (i.e. the AI painted too much outside the editable zone), we
+ *  re-run OpenAI with a stricter mask that:
+ *    - aims for the bottom of the per-category TARGET band (0.5–1.5 %
+ *      editable energy for watch instead of 0.8–2.5 %);
+ *    - erodes the product core more aggressively (6 px vs 4 px) so
+ *      the product cannot be redrawn even if the model tries;
+ *    - skips the contact-shadow patch — that's the patch the model
+ *      most often overruns into surrounding skin.
+ *
+ *  Returns null when no usable silhouette exists.
+ */
+export async function createRetryMaskForCustomerPreservation(input: {
+  userImage: Buffer;
+  compositeImage: Buffer;
+  targetWidth: number;
+  targetHeight: number;
+  category: CategoryId;
+}): Promise<AutoMaskResult | null> {
+  const W = Math.max(1, Math.round(input.targetWidth));
+  const H = Math.max(1, Math.round(input.targetHeight));
+
+  const [userRaw, compRaw] = await Promise.all([
+    toRawAt(input.userImage, W, H),
+    toRawAt(input.compositeImage, W, H),
+  ]);
+
+  const { mask: silhouette, count } = diffSilhouette(
+    userRaw,
+    compRaw,
+    PIXEL_DIFF_THRESHOLD
+  );
+  const ratio = count / (W * H);
+  if (ratio < MIN_SILHOUETTE_RATIO || ratio > MAX_SILHOUETTE_RATIO) {
+    return null;
+  }
+
+  // Tight ring config — chosen to ALWAYS stay inside the OpenAI mask
+  // coverage cap (≤ 8 % for accessories) and to favour preservation
+  // over blending. Used by the customer-preservation retry path
+  // *only* — never the initial pass.
+  const rendered = await renderMaskAt({
+    silhouette,
+    width: W,
+    height: H,
+    category: input.category,
+    outerDilatePx: input.category === "watch" ? 10 : 10,
+    innerErodePx: input.category === "watch" ? 6 : 5,
+    featherPx: 8,
+    addContactShadowPatch: false,
+  });
+  return {
+    buffer: rendered.buffer,
+    coverage: rendered.coverage,
+    debug: {
+      outerDilatePx: 10,
+      innerErodePx: input.category === "watch" ? 6 : 5,
+      featherPx: 8,
+      expansionAttempts: 0,
+      brightRatio: rendered.brightRatio,
+      softRatio: rendered.softRatio,
+      addedContactShadowPatch: false,
+    },
+  };
+}
+
+/**
  * Progressively widen the ring mask until its editable-energy ratio is
  * within the per-category target band. Never goes past the hard cap.
  *

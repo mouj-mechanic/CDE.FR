@@ -79,6 +79,47 @@ Copy `.env.example` to `.env.local` and fill in what you need.
 | `AI_TRYON_API_KEY`           | Legacy generic fallback (also accepted as `FAL_KEY`)                             |
 | `NEXT_PUBLIC_AI_PROVIDER`    | Mirrors the provider name on the client (used by the privacy note + UI badges)   |
 
+### Strict errors vs production fallback
+
+Two env flags control how the route deals with failures:
+
+| Flag                          | Effect                                                                                            |
+| ----------------------------- | ------------------------------------------------------------------------------------------------- |
+| `TRYON_RENDER_MODE=api-only`  | OpenAI is the *intended* final provider. Quality-gate failures still fall back gracefully.        |
+| `TRYON_DEBUG_STRICT_ERRORS=true` | The route returns 4xx / 5xx with the underlying technical reason. Customer-facing copy is bypassed. |
+
+The previous behaviour bundled both concerns ("force OpenAI" +
+"surface raw errors") into a single API-only switch, which leaked
+sentences like *"Nous n'avons pas pu valider ce rendu. Réessayez avec
+une photo prise en lumière naturelle …"* to the customer in
+production. Now:
+
+- **Production** (`TRYON_DEBUG_STRICT_ERRORS=false`, the default):
+  - Mask validation fails → deterministic composite, `qualityStatus=fallback_mask_validation` (or `fallback_mask_too_small` / `fallback_mask_too_large` / `fallback_mask_dimensions`).
+  - Customer-preservation gate fails → one retry with a tighter mask via `createRetryMaskForCustomerPreservation`; if still failing, deterministic composite, `qualityStatus=fallback_customer_preservation`.
+  - Product-fidelity gate fails → anti-ghost re-stamp or deterministic composite, `qualityStatus=fallback_product_fidelity`.
+  - The customer ALWAYS receives `ok=true` + a usable `resultUrl`. The frontend collapses every `fallback_*` status into a single soft note: *"Nous avons utilisé le rendu le plus fidèle pour préserver votre photo et le produit."*
+- **QA / staging** (`TRYON_DEBUG_STRICT_ERRORS=true`):
+  - 502 with `[debug] customer-preservation gate failed: …`.
+  - 400 with `MaskValidationError` / `MaskDimensionError` raw messages.
+  - Useful to fail loudly on regressions in CI.
+
+### Customer-preservation comparator
+
+`computeOutsideMaskScore` now accepts an optional `productSilhouette`
+parameter (derived server-side from `composite − user`). The score
+EXCLUDES:
+
+- the editable area (alpha mask)
+- the dilated product silhouette (32 px ring by default)
+- near-black letterbox residue on either side
+
+This change prevents the gate from firing on legitimate product
+changes (different bezel, different colour, repositioned strap) that
+the previous threshold-based comparison flagged as "outside-mask
+drift". The production threshold drops from 0.92 → 0.86 because the
+metric is now a pure customer-identity drift score.
+
 ### API-only mode
 
 Set any of `AI_TRYON_PROVIDER=openai`, `TRYON_RENDER_MODE=api-only`, or

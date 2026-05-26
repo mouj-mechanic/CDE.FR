@@ -93,17 +93,24 @@ function pickCustomerFacingNote(
     }
   }
 
-  // When a fallback was used (deterministic composite or anti-ghost
-  // mux), reassure the customer with a single soft message.
+  // When a fallback was used (deterministic composite, anti-ghost
+  // mux, mask validation, customer-preservation, …), reassure the
+  // customer with a single soft message. We deliberately collapse
+  // every `fallback_*` variant into the same line so no internal
+  // jargon leaks.
   const usedFallback =
     qualityStatus === "fallback-preview" ||
+    (typeof qualityStatus === "string" && qualityStatus.startsWith("fallback_")) ||
     usedLocalRenderer === true ||
     (warnings ?? []).some(
       (w) =>
         w.code === "anti-ghost-applied" ||
         w.code === "product-fidelity-check-failed" ||
         w.code === "product-duplication-detected" ||
-        w.code === "ghost-product-detected"
+        w.code === "ghost-product-detected" ||
+        w.code === "customer_preservation_fallback_used" ||
+        w.code === "auto_mask_too_small_fallback_used" ||
+        w.code === "mask_validation_fallback_used"
     );
   if (usedFallback) {
     return "Nous avons utilisé le rendu le plus fidèle pour préserver votre photo et le produit.";
@@ -323,22 +330,25 @@ export function ResultView({
                   Provider: fal.ai
                 </span>
               )}
+            {/*
+              The "Rendu IA non validé, aperçu rapide utilisé" message
+              and the "Attention : rendu local utilisé" amber banner
+              used to live here. They leaked technical vocabulary at
+              the customer ("validation failed", "local renderer"). We
+              now collapse every fallback path into the single soft
+              `pickCustomerFacingNote` line rendered below — the badge
+              area stays clean and reassuring.
+            */}
             {renderMode === "fast-overlay" &&
-              qualityStatus !== "fallback-preview" && (
+              !(
+                qualityStatus === "fallback-preview" ||
+                (typeof qualityStatus === "string" &&
+                  qualityStatus.startsWith("fallback_"))
+              ) && (
                 <span className="text-[10px] uppercase tracking-wider text-ink-muted/70">
-                  Rendu déterministe local
+                  Rendu fidèle
                 </span>
               )}
-            {qualityStatus === "fallback-preview" && (
-              <span className="text-[11px] font-medium text-amber-800">
-                Rendu IA non validé, aperçu rapide utilisé.
-              </span>
-            )}
-            {usedLocalRenderer === true && renderMode !== "fast-overlay" && (
-              <span className="text-[11px] font-medium text-amber-800">
-                Attention : rendu local utilisé
-              </span>
-            )}
             {qualityChecks?.productFidelityWarning === true && (
               <span className="text-[11px] font-medium text-amber-800">
                 Image produit basse résolution — fidélité réduite.

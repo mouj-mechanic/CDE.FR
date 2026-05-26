@@ -14,7 +14,10 @@ import {
   isProductLockEnabled,
   ProductLockError,
 } from "@/lib/tryon/productLockComposite";
-import { autoMaskFromComposite } from "@/lib/tryon/autoMaskFromComposite";
+import {
+  autoMaskFromComposite,
+  createRetryMaskForCustomerPreservation,
+} from "@/lib/tryon/autoMaskFromComposite";
 import { checkProductFidelity } from "@/lib/tryon/productFidelityCheck";
 import { detectDuplicateProductPlacement } from "@/lib/tryon/duplicateDetection";
 import {
@@ -28,6 +31,7 @@ import type {
   FingerId,
   HandJewelryType,
   QualityChecks,
+  QualityStatus,
   RenderMode,
   TryOnResponse,
   TryOnWarning,
@@ -195,6 +199,25 @@ export async function POST(request: NextRequest) {
     envProvider === "openai" ||
     envRenderMode === "api-only" ||
     (process.env.DISABLE_LOCAL_RENDER ?? "").trim().toLowerCase() === "true";
+
+  /**
+   * Debug-only escape hatch: when on, the route returns RAW technical
+   * errors (502 / 400 with mask-coverage / preservation-score messages)
+   * instead of the customer-friendly deterministic fallback. Use ONLY
+   * in CI / staging — production must stay at `false` so end users
+   * never see "Nous n'avons pas pu valider ce rendu …".
+   *
+   *  Why this exists: the previous implementation tied "strict errors"
+   *  to `apiOnlyMode`, which production needs (to force OpenAI as the
+   *  final provider). The two concerns are now decoupled:
+   *
+   *    - `apiOnlyMode`              → "use OpenAI exclusively"
+   *    - `TRYON_DEBUG_STRICT_ERRORS` → "surface technical errors"
+   */
+  const debugStrictErrors =
+    (process.env.TRYON_DEBUG_STRICT_ERRORS ?? "false")
+      .trim()
+      .toLowerCase() === "true";
 
   // ── Auto-masked accessory pipeline flags ──────────────────────────
   // The client never provides a mask. For accessories the route either
@@ -835,20 +858,29 @@ export async function POST(request: NextRequest) {
         : [];
     const allClientWarnings = [...clientWarnings, ...noMaskWarning];
 
-    // ── Mask-too-small one-shot server-side retry ─────────────────────
-    // The first OpenAI call may fail with `MaskValidationError(code=
-    // "mask-too-small")` when the client-supplied or first auto-mask
-    // is below `MIN_EDITABLE_RATIO`. We retry ONCE with a wider
-    // server-generated ring (autoMaskFromComposite already widens
-    // progressively). If that still fails, we drop into the
-    // deterministic fallback further down — the customer NEVER sees a
-    // raw "Mask is too small" message.
+    // ── OpenAI retry loop ─────────────────────────────────────────
+    // Up to 3 attempts. Each attempt is gated by a distinct flag so
+    // every "retry reason" is consumed once at most:
+    //
+    //  1. Initial pass.
+    //  2. (catch) MaskValidationError code="mask-too-small" →
+    //     regenerate with the progressive auto-mask (wider ring).
+    //  3. (gate) Customer-preservation failed →
+    //     re-run with a SAFER mask (tighter ring, no contact patch).
+    //
+    //  If neither retry runs, the loop simply executes once. The
+    //  loop body's success path returns directly; the catch path
+    //  either returns or `continue retryLoop`s.
     let maskTooSmallRetried = false;
+    let customerPreservationRetried = false;
     let lastMaskTooSmallRetryDebug:
       | { coverage: number; outerDilatePx?: number; featherPx?: number }
       | null = null;
+    let lastCustomerPreservationRetryDebug:
+      | { coverage: number; outerDilatePx?: number; featherPx?: number }
+      | null = null;
 
-    retryLoop: for (let __attempt = 0; __attempt < 2; __attempt++) {
+    retryLoop: for (let __attempt = 0; __attempt < 3; __attempt++) {
     try {
       const result = await generateTryOnImage(params);
       const durationMs = Date.now() - startedAt;
@@ -1144,6 +1176,139 @@ export async function POST(request: NextRequest) {
         typeof outsideScore === "number" && outsideScore > 0.08
       );
 
+      // ── Strict customer preservation decision ─────────────────────
+      // Ordered BEFORE the `debug` / `renderMode` construction so the
+      // response we ship reflects every quality decision. Previously
+      // this gate sat after `renderMode` was built, which meant the
+      // debug payload disagreed with the fallback choice.
+      //
+      //  Two outcomes:
+      //    - `debugStrictErrors=true` (QA / staging) → 502 with the
+      //      technical reason.
+      //    - production → silently switch to the deterministic
+      //      composite, mark `qualityCheckFallbackApplied`. The
+      //      customer ALWAYS receives a usable image.
+      const outsideOk = openaiMeta?.qualityChecks.outsideMaskPreserved ?? true;
+      const customerStrictMode =
+        (process.env.OPENAI_PRESERVE_CUSTOMER_STRICT ?? "true")
+          .trim()
+          .toLowerCase() !== "false";
+      let customerPreservationFallbackApplied = false;
+      if (
+        usedOpenAI &&
+        customerStrictMode &&
+        !outsideOk &&
+        Boolean(openaiMeta?.maskUsed)
+      ) {
+        console.warn(
+          `[try-on] customer-preservation-failed category=${category} score=${openaiMeta?.qualityChecks.outsideMaskChangeScore.toFixed(
+            3
+          )} debugStrictErrors=${debugStrictErrors}`
+        );
+
+        if (debugStrictErrors) {
+          return NextResponse.json(
+            {
+              ok: false,
+              provider: "openai",
+              renderMode: "api-image-edit" as RenderMode,
+              category,
+              error:
+                "[debug] customer-preservation gate failed: outside-mask drift above threshold.",
+              qualityChecks: {
+                ...openaiMeta?.qualityChecks,
+                productLocked: lockedProductLocked,
+                productFidelityMode,
+                productSilhouetteRatio,
+              },
+              debug: {
+                failureReasons: [
+                  ...failureReasons,
+                  "customer-preservation-failed",
+                ],
+                outsideMaskChangeScore:
+                  openaiMeta?.qualityChecks.outsideMaskChangeScore,
+              },
+            },
+            { status: 502 }
+          );
+        }
+
+        // ── Customer-preservation retry ─────────────────────────────
+        // Re-run OpenAI ONCE with a tighter, safer mask. Only attempt
+        // when we have both the user photo and the composite (so we
+        // can rebuild the silhouette server-side).
+        if (
+          !customerPreservationRetried &&
+          inpaintComposite !== null &&
+          isAccessory
+        ) {
+          customerPreservationRetried = true;
+          try {
+            const compositeBuf = Buffer.from(
+              await inpaintComposite.arrayBuffer()
+            );
+            const userBuf = Buffer.from(await userImage.arrayBuffer());
+            const meta = await sharp(compositeBuf).metadata();
+            const tw = meta.width ?? 1024;
+            const th = meta.height ?? 1024;
+            const safer = await createRetryMaskForCustomerPreservation({
+              userImage: userBuf,
+              compositeImage: compositeBuf,
+              targetWidth: tw,
+              targetHeight: th,
+              category,
+            });
+            if (safer && safer.buffer.length > 0) {
+              const newMaskFile = new File(
+                [new Uint8Array(safer.buffer)],
+                "auto-mask-cp-retry.png",
+                { type: "image/png" }
+              );
+              params.inpaintMask = newMaskFile;
+              inpaintMask = newMaskFile;
+              lastCustomerPreservationRetryDebug = {
+                coverage: safer.coverage,
+                outerDilatePx: safer.debug?.outerDilatePx,
+                featherPx: safer.debug?.featherPx,
+              };
+              console.info(
+                `[try-on] customer-preservation retry: tighter mask coverage=${safer.coverage.toFixed(
+                  4
+                )}`
+              );
+              continue retryLoop;
+            }
+          } catch (retryErr) {
+            console.warn(
+              "[try-on] customer-preservation retry failed",
+              retryErr instanceof Error ? retryErr.message : retryErr
+            );
+          }
+        }
+
+        // Production fallback: swap to the deterministic composite
+        // (preferred — already at the OpenAI target size) or the
+        // user's original photo.
+        if (
+          fallbackToDeterministic &&
+          openaiMeta?.compositeAtTargetSize
+        ) {
+          finalResultUrl = `data:image/png;base64,${openaiMeta.compositeAtTargetSize.toString(
+            "base64"
+          )}`;
+          customerPreservationFallbackApplied = true;
+          qualityCheckFallbackApplied = true;
+          qualityCheckFailed = true;
+          failureReasons.push("customer-preservation-failed");
+          lockWarnings.push({
+            code: "customer_preservation_fallback_used",
+            message:
+              "AI result changed too much outside the allowed edit area.",
+          });
+        }
+      }
+
       const debug = {
         ...(result.debug ?? {
           imageCount: 1 + productImages.length + productUrls.length,
@@ -1155,8 +1320,8 @@ export async function POST(request: NextRequest) {
         productMimeType,
         usedOpenAI,
         usedFal,
-        // Final image came from a hosted AI provider, never from a local
-        // renderer in the success path.
+        // Reflects whichever local renderer kicked in — product
+        // fidelity fallback OR customer-preservation fallback.
         usedLocalRenderer: qualityCheckFallbackApplied,
         maskUsed: usedOpenAI ? Boolean(openaiMeta?.maskUsed) : useInpainting,
         productLocked: lockedProductLocked,
@@ -1165,6 +1330,7 @@ export async function POST(request: NextRequest) {
         productLockCandidate,
         productLockApplied: lockedProductLocked,
         fallbackUsed: qualityCheckFallbackApplied,
+        customerPreservationFallbackApplied,
         antiGhostApplied,
         blackBarsRemoved: Boolean(openaiMeta?.blackBarsRemoved),
         inputDimensions,
@@ -1175,6 +1341,13 @@ export async function POST(request: NextRequest) {
         qualityCheckFailed,
         gates,
         ...(failureReasons.length > 0 ? { failureReasons } : {}),
+        ...(customerPreservationRetried
+          ? {
+              customerPreservationRetried,
+              customerPreservationRetryDebug:
+                lastCustomerPreservationRetryDebug,
+            }
+          : {}),
       };
 
       const renderMode: RenderMode = qualityCheckFallbackApplied
@@ -1188,50 +1361,6 @@ export async function POST(request: NextRequest) {
             : category === "clothes" && result.model?.includes("fashn")
               ? "specialized-vton"
               : "premium-ai";
-
-      // ── Strict customer preservation gate ──────────────────────────
-      // The spec says: if the AI changed too much outside the mask, we
-      // must not silently accept it. In API-only mode we surface a 502
-      // with a tightening hint. Otherwise we degrade to a warning.
-      const outsideOk = openaiMeta?.qualityChecks.outsideMaskPreserved ?? true;
-      const customerStrictMode =
-        (process.env.OPENAI_PRESERVE_CUSTOMER_STRICT ?? "true")
-          .trim()
-          .toLowerCase() !== "false";
-      if (
-        usedOpenAI &&
-        customerStrictMode &&
-        !outsideOk &&
-        apiOnlyMode &&
-        Boolean(openaiMeta?.maskUsed)
-      ) {
-        console.warn(
-          `[try-on] strict-preservation-failed category=${category} score=${openaiMeta?.qualityChecks.outsideMaskChangeScore.toFixed(
-            3
-          )}`
-        );
-        return NextResponse.json(
-          {
-            ok: false,
-            provider: "openai",
-            renderMode,
-            category,
-            // Customer-facing copy: never expose the underlying mask /
-            // preservation jargon. The frontend collapses everything
-            // to a single soft "we used the most faithful rendering"
-            // line via `pickCustomerFacingNote`.
-            error:
-              "Nous n'avons pas pu valider ce rendu. Réessayez avec une photo prise en lumière naturelle pour un meilleur résultat.",
-            qualityChecks: {
-              ...openaiMeta?.qualityChecks,
-              productLocked: lockedProductLocked,
-              productFidelityMode,
-              productSilhouetteRatio,
-            },
-          },
-          { status: 502 }
-        );
-      }
 
       // Merge the provider's own warnings (mask validation, low-res
       // product, outside-mask drift, etc.) with the client warnings.
@@ -1268,19 +1397,32 @@ export async function POST(request: NextRequest) {
         durationMs,
       });
 
+      // Quality status reflects the most informative fallback signal:
+      //  customer-preservation > product-fidelity > anti-ghost > passed.
+      const finalQualityStatus = customerPreservationFallbackApplied
+        ? ("fallback_customer_preservation" as const)
+        : qualityCheckFallbackApplied
+          ? failureReasons.some((r) => r.startsWith("product-"))
+            ? ("fallback_product_fidelity" as const)
+            : ("fallback-preview" as const)
+          : ("passed" as const);
+
       return NextResponse.json({
         ok: true,
         resultUrl: finalResultUrl,
         previewUrl: result.previewUrl,
         generatedAt: result.generatedAt,
         mock: result.mock,
+        // Provider stays "openai" so analytics still credit the AI run —
+        // the renderMode + qualityStatus + debug.fallbackUsed expose
+        // the local-renderer override for QA.
         provider: result.provider,
         model: result.model,
         category: result.category ?? category,
         durationMs,
         debug,
         renderMode,
-        qualityStatus: "passed",
+        qualityStatus: finalQualityStatus,
         warnings: mergedWarnings,
         placement: watchPlacement,
         edgeQuality,
@@ -1352,17 +1494,93 @@ export async function POST(request: NextRequest) {
         // fallback below (we deliberately do NOT return a 400).
       }
 
-      // Other MaskValidationError variants stay 400 — they signal a
-      // developer-side configuration bug (mismatched dimensions,
-      // unreadable buffer). We also bubble MaskRequired / MaskDimension
-      // for the same reason.
-      const isFatalMaskError =
+      // Other MaskValidationError variants — historically these
+      // returned a 400 with the raw "Mask covers …" message. In
+      // production the customer never sees them: we fall back to the
+      // deterministic composite when one exists. Only `debugStrictErrors`
+      // brings the 400 back, for QA / staging.
+      const isMaskOtherError =
         premiumError instanceof MaskRequiredError ||
         premiumError instanceof MaskDimensionError ||
         (premiumError instanceof MaskValidationError &&
           premiumError.code !== "mask-too-small");
 
-      if (isFatalMaskError) {
+      if (isMaskOtherError) {
+        const durationMs = Date.now() - startedAt;
+        if (!debugStrictErrors && fallbackToDeterministic && finalPreview) {
+          // Map the error to a fallback `qualityStatus` so analytics
+          // can still distinguish dimension errors from coverage
+          // errors. Customers see the same soft note either way.
+          let fallbackStatus: QualityStatus = "fallback_mask_validation";
+          if (premiumError instanceof MaskDimensionError) {
+            fallbackStatus = "fallback_mask_dimensions";
+          } else if (premiumError instanceof MaskValidationError) {
+            if (premiumError.code === "mask-too-large") {
+              fallbackStatus = "fallback_mask_too_large";
+            } else if (premiumError.code === "mask-dimension") {
+              fallbackStatus = "fallback_mask_dimensions";
+            }
+          }
+          const resultUrl = await uploadPreviewToCdn(
+            finalPreview,
+            hasFalKey
+          );
+          const softWarnings = [
+            ...clientWarnings,
+            {
+              code: "mask_validation_fallback_used",
+              message:
+                "AI result rejected by mask validation. Deterministic composite used as a safe fallback.",
+            },
+          ];
+          trackTryOnUsage({
+            merchantId,
+            category,
+            provider: "fast-overlay-fallback",
+            model: "canvas",
+            mock: false,
+            success: true,
+            durationMs,
+            errorCode: premiumError.name,
+          });
+          console.warn(
+            `[try-on] ${fallbackStatus} category=${category} reason=${premiumError.message}`
+          );
+          return NextResponse.json({
+            ok: true,
+            resultUrl,
+            previewUrl: resultUrl,
+            generatedAt: Date.now(),
+            mock: false,
+            provider: "fast-overlay",
+            model: "canvas",
+            category,
+            durationMs,
+            renderMode: "fast-overlay" as RenderMode,
+            qualityStatus: fallbackStatus,
+            warnings: softWarnings,
+            placement: watchPlacement,
+            edgeQuality,
+            debug: {
+              imageCount: 1 + productImages.length + productUrls.length,
+              productImageCount: productImages.length + productUrls.length,
+              productWasCutout,
+              productImageSource,
+              productHasAlpha,
+              productMimeType,
+              usedOpenAI: false,
+              usedFal: false,
+              usedLocalRenderer: true,
+              maskUsed: false,
+              fallbackUsed: true,
+              fallbackReason: premiumError.name,
+              qualityCheckFailed: true,
+              failureReasons: ["mask-validation-failed"],
+            },
+          });
+        }
+
+        // Strict / debug mode — surface the technical 400.
         return NextResponse.json(
           {
             ok: false,
@@ -1464,10 +1682,16 @@ export async function POST(request: NextRequest) {
         );
       }
 
-      // ── API-only mode → strict error, NEVER a local render ────────
-      if (apiOnlyMode) {
+      // ── API-only mode → strict error (debug only) ─────────────────
+      // The legacy semantics were "apiOnlyMode ⇒ never fall back". In
+      // production that path leaked raw OpenAI errors to the customer
+      // and broke the "no technical error" rule. The hard 502 now only
+      // fires under `TRYON_DEBUG_STRICT_ERRORS=true` so QA can still
+      // catch regressions; production falls through to the graceful
+      // deterministic fallback below.
+      if (apiOnlyMode && debugStrictErrors) {
         console.error(
-          `[try-on] api-only-failed category=${category} durationMs=${durationMs} message=${safeMessage}`
+          `[try-on] api-only-failed-strict category=${category} durationMs=${durationMs} message=${safeMessage}`
         );
         trackTryOnUsage({
           merchantId,
@@ -1487,7 +1711,7 @@ export async function POST(request: NextRequest) {
             renderMode: "api-image-edit" as RenderMode,
             category,
             error:
-              "OpenAI image edit failed. No local renderer fallback was used because API-only mode is enabled.",
+              "[debug] OpenAI image edit failed. No local renderer fallback was used because TRYON_DEBUG_STRICT_ERRORS is enabled.",
             details: safeMessage,
           },
           { status: 502 }

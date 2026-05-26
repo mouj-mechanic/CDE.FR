@@ -1,6 +1,9 @@
 import { describe, it, expect } from "vitest";
 import sharp from "sharp";
-import { autoMaskFromComposite } from "../autoMaskFromComposite";
+import {
+  autoMaskFromComposite,
+  createRetryMaskForCustomerPreservation,
+} from "../autoMaskFromComposite";
 import {
   computeEditableEnergy,
   minEditableRatioFor,
@@ -191,6 +194,59 @@ describe("autoMaskFromComposite — watch ring mask", () => {
     const idx = 256 * raw.info.width + 256;
     const v = raw.data[idx * raw.info.channels];
     expect(v).toBeLessThan(80);
+  });
+});
+
+describe("createRetryMaskForCustomerPreservation", () => {
+  it("returns a tighter ring than the regular auto-mask", async () => {
+    const userBase = await solidGrey();
+    const composite = await withProductSquare();
+    const initial = await autoMaskFromComposite({
+      userImage: userBase,
+      compositeImage: composite,
+      targetWidth: W,
+      targetHeight: H,
+      category: "watch",
+    });
+    const safer = await createRetryMaskForCustomerPreservation({
+      userImage: userBase,
+      compositeImage: composite,
+      targetWidth: W,
+      targetHeight: H,
+      category: "watch",
+    });
+    expect(initial).not.toBeNull();
+    expect(safer).not.toBeNull();
+    // The safer mask should never exceed the cap and should be
+    // strictly smaller (or equal) to the progressively widened one.
+    expect(safer!.coverage).toBeLessThanOrEqual(0.08);
+    expect(safer!.coverage).toBeLessThanOrEqual(initial!.coverage + 0.001);
+  });
+
+  it("never includes a contact-shadow patch", async () => {
+    const userBase = await solidGrey();
+    const composite = await withProductSquare();
+    const safer = await createRetryMaskForCustomerPreservation({
+      userImage: userBase,
+      compositeImage: composite,
+      targetWidth: W,
+      targetHeight: H,
+      category: "watch",
+    });
+    expect(safer?.debug?.addedContactShadowPatch).toBe(false);
+  });
+
+  it("returns null when no usable silhouette exists", async () => {
+    const userBase = await solidGrey();
+    // Same image → diff produces no silhouette.
+    const result = await createRetryMaskForCustomerPreservation({
+      userImage: userBase,
+      compositeImage: userBase,
+      targetWidth: W,
+      targetHeight: H,
+      category: "watch",
+    });
+    expect(result).toBeNull();
   });
 });
 

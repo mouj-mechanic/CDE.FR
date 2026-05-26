@@ -4,7 +4,92 @@ import {
   resolveOutputAspectFromSource,
   restoreSourceAspectRatio,
   detectBlackBars,
+  computeOutsideMaskScore,
 } from "../openaiImage";
+
+const W = 256;
+const H = 256;
+
+async function gradient(): Promise<Buffer> {
+  // simple horizontal gradient so diffs in localised patches are clear
+  const raw = Buffer.alloc(W * H * 3);
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      const i = (y * W + x) * 3;
+      const v = Math.floor((x / W) * 255);
+      raw[i] = v;
+      raw[i + 1] = v;
+      raw[i + 2] = v;
+    }
+  }
+  return sharp(raw, { raw: { width: W, height: H, channels: 3 } })
+    .png()
+    .toBuffer();
+}
+
+async function withWhitePatch(box: {
+  x: number;
+  y: number;
+  size: number;
+}): Promise<Buffer> {
+  const base = await gradient();
+  return sharp(base)
+    .composite([
+      {
+        input: {
+          create: {
+            width: box.size,
+            height: box.size,
+            channels: 4,
+            background: { r: 255, g: 255, b: 255, alpha: 1 },
+          },
+        },
+        left: box.x,
+        top: box.y,
+      },
+    ])
+    .png()
+    .toBuffer();
+}
+
+async function fullAlpha(opaqueOuter: boolean): Promise<Buffer> {
+  // Alpha mask: 255 = preserved (the WHOLE image counted), but with
+  // a small editable hole in the centre (alpha=0) so the comparator
+  // doesn't degenerate.
+  const raw = Buffer.alloc(W * H * 4);
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      const i = (y * W + x) * 4;
+      raw[i] = 0;
+      raw[i + 1] = 0;
+      raw[i + 2] = 0;
+      const inHole =
+        x > W / 2 - 8 && x < W / 2 + 8 && y > H / 2 - 8 && y < H / 2 + 8;
+      raw[i + 3] = inHole ? 0 : opaqueOuter ? 255 : 128;
+    }
+  }
+  return sharp(raw, { raw: { width: W, height: H, channels: 4 } })
+    .png()
+    .toBuffer();
+}
+
+async function silhouetteAt(box: {
+  x: number;
+  y: number;
+  size: number;
+}): Promise<Buffer> {
+  const raw = Buffer.alloc(W * H);
+  for (let y = box.y; y < box.y + box.size; y++) {
+    for (let x = box.x; x < box.x + box.size; x++) {
+      if (x >= 0 && x < W && y >= 0 && y < H) {
+        raw[y * W + x] = 255;
+      }
+    }
+  }
+  return sharp(raw, { raw: { width: W, height: H, channels: 1 } })
+    .png()
+    .toBuffer();
+}
 
 describe("resolveOutputAspectFromSource", () => {
   it("returns 1024x1536 for a clearly portrait source", () => {
@@ -193,5 +278,74 @@ describe("restoreSourceAspectRatio", () => {
     // 1024 * (1024/1280) ≈ 819 (within rounding)
     expect(meta.width).toBe(819);
     expect(meta.height).toBe(1024);
+  });
+});
+
+describe("computeOutsideMaskScore — product silhouette + black bars exclusion", () => {
+  it("does NOT flag a customer-preservation failure when the change is inside the product silhouette", async () => {
+    const base = await gradient();
+    // Change the gradient ONLY where the product sits.
+    const result = await withWhitePatch({ x: 100, y: 100, size: 40 });
+    const alpha = await fullAlpha(true);
+    const silhouette = await silhouetteAt({ x: 100, y: 100, size: 40 });
+
+    const withSilhouette = await computeOutsideMaskScore(
+      base,
+      result,
+      alpha,
+      { productSilhouette: silhouette, productExpandPx: 32 }
+    );
+    const without = await computeOutsideMaskScore(base, result, alpha);
+
+    // With silhouette exclusion: most of the "drift" is masked out →
+    // higher score → preservation stays true.
+    expect(withSilhouette.score).toBeGreaterThan(without.score);
+    expect(withSilhouette.excludedPixels).toBeGreaterThan(0);
+  });
+
+  it("DOES flag a customer-preservation failure when fingers / background drift", async () => {
+    const base = await gradient();
+    // Change in a corner FAR from any product silhouette.
+    const result = await withWhitePatch({ x: 8, y: 8, size: 60 });
+    const alpha = await fullAlpha(true);
+    const silhouette = await silhouetteAt({ x: 100, y: 100, size: 40 });
+
+    const check = await computeOutsideMaskScore(base, result, alpha, {
+      productSilhouette: silhouette,
+      productExpandPx: 24,
+    });
+
+    // The 60×60 white patch sits in a region NOT covered by the
+    // silhouette, so it must contribute to the diff.
+    expect(check.score).toBeLessThan(0.95);
+  });
+
+  it("ignores near-black letterbox residue on both sides", async () => {
+    // Both base and result share black bars on top/bottom.
+    const baseRaw = Buffer.alloc(W * H * 3);
+    const resRaw = Buffer.alloc(W * H * 3);
+    for (let y = 0; y < H; y++) {
+      const isBar = y < 16 || y >= H - 16;
+      for (let x = 0; x < W; x++) {
+        const i = (y * W + x) * 3;
+        const v = isBar ? 0 : 200;
+        baseRaw[i] = baseRaw[i + 1] = baseRaw[i + 2] = v;
+        resRaw[i] = resRaw[i + 1] = resRaw[i + 2] = v;
+      }
+    }
+    const base = await sharp(baseRaw, {
+      raw: { width: W, height: H, channels: 3 },
+    })
+      .png()
+      .toBuffer();
+    const result = await sharp(resRaw, {
+      raw: { width: W, height: H, channels: 3 },
+    })
+      .png()
+      .toBuffer();
+    const alpha = await fullAlpha(true);
+    const check = await computeOutsideMaskScore(base, result, alpha);
+    expect(check.score).toBeGreaterThan(0.98);
+    expect(check.excludedPixels).toBeGreaterThan(0);
   });
 });

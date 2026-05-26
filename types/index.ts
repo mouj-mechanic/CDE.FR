@@ -216,7 +216,19 @@ export type QualityStatus =
   | "needs-better-photo"
   | "needs-manual-adjustment"
   | "alpha-lost"
-  | "failed";
+  | "failed"
+  // ── Fallback variants ────────────────────────────────────────────
+  // All `fallback_*` codes mean: the AI result was not validated, the
+  // route shipped the deterministic composite instead. The customer
+  // ALWAYS receives `ok=true` + `resultUrl`. The status is exposed for
+  // analytics / QA dashboards. The frontend collapses every variant
+  // into a single soft note via `pickCustomerFacingNote`.
+  | "fallback_customer_preservation"
+  | "fallback_product_fidelity"
+  | "fallback_mask_too_small"
+  | "fallback_mask_too_large"
+  | "fallback_mask_validation"
+  | "fallback_mask_dimensions";
 
 export interface TryOnWarning {
   code: string;

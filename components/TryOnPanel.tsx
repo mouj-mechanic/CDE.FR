@@ -286,7 +286,13 @@ export function TryOnPanel({
       }
 
       const data = result.data;
-      if (!result.ok) {
+      // If the API ever shipped a usable resultUrl (e.g. graceful
+      // deterministic fallback returned with `ok:false` for analytics
+      // reasons), prefer SHOWING the image over surfacing a raw error
+      // to the customer. Only block when there is truly nothing to
+      // display.
+      const hasShowableResult = Boolean(data.resultUrl);
+      if (!result.ok && !hasShowableResult) {
         if (data.debug?.productImageCount === 0) {
           throw new Error(
             "Image produit manquante : ajoutez une image produit pour générer l'essayage."
@@ -297,7 +303,13 @@ export function TryOnPanel({
             "Le mode IA réel est actif, mais la génération a échoué. Vérifiez la clé API, les crédits fal.ai ou les logs serveur."
           );
         }
-        throw new Error(data.error ?? "Erreur lors de la génération.");
+        // We never echo back internal error strings — they leak
+        // implementation details ("Mask is too small", "outside-mask
+        // preservation failed", "OpenAI image edit failed", …). The
+        // customer sees a single, actionable line.
+        throw new Error(
+          "Le rendu IA n'a pas pu être généré. Veuillez réessayer ou importer une autre photo."
+        );
       }
 
       dispatch({
@@ -418,9 +430,12 @@ export function TryOnPanel({
             result.errorMessage ?? "Réponse inattendue du serveur."
           );
         }
-        if (!result.ok) {
+        // Same rule as the primary try-on: if the API returned a
+        // usable `resultUrl` we display it (deterministic fallback)
+        // instead of surfacing a technical error.
+        if (!result.ok && !result.data.resultUrl) {
           throw new Error(
-            result.data.error ?? "La génération IA a échoué."
+            "Le rendu IA n'a pas pu être affiné. Réessayez ou changez de photo."
           );
         }
         dispatch({
