@@ -191,6 +191,18 @@ export async function POST(request: NextRequest) {
     hasOpenAIKey && (envProvider === "openai" || envProvider === "auto");
 
   /**
+   * Watch-specific kill switch. When `WATCH_USE_OPENAI_CONTACT_BLEND`
+   * is `false`, the route skips OpenAI entirely for watch/hand-jewelry
+   * runs and serves the deterministic composite directly. Use this in
+   * production to immediately stop broken renders from reaching the
+   * customer while we tune the mask + safety gates. Default: `true`
+   * (OpenAI contact-band blending enabled).
+   */
+  const watchUseOpenAIBlendRaw =
+    process.env.WATCH_USE_OPENAI_CONTACT_BLEND?.trim().toLowerCase();
+  const watchUseOpenAIBlend = watchUseOpenAIBlendRaw !== "false";
+
+  /**
    * Strict "API-only" mode — when on, the route never returns a locally
    * rendered image (fast-overlay, canvas composite, mock) as the *final*
    * result. If OpenAI fails, the response is an error JSON, not a fallback.
@@ -588,12 +600,30 @@ export async function POST(request: NextRequest) {
     // + useInpainting=true. The route honours the request as long as
     // *some* AI provider is configured (OpenAI takes priority when both
     // are set — see lib/tryOnService.ts auto routing).
+    // Watch / hand-jewelry kill-switch. When the operator disables
+    // OpenAI contact-band blending we drop AI refinement before it
+    // can run — the route then naturally serves the deterministic
+    // composite. We DO NOT throw: the customer keeps getting a
+    // perfectly fine deterministic preview, just without the IA
+    // shadows.
+    const watchKillSwitchEngaged =
+      !watchUseOpenAIBlend &&
+      (category === "watch" || category === "hand-jewelry");
+
     const useInpainting =
       useInpaintingRequested &&
       inpaintComposite !== null &&
       inpaintMask !== null &&
       (hasFalKey || hasOpenAIKey) &&
-      envProvider !== "mock";
+      envProvider !== "mock" &&
+      !watchKillSwitchEngaged;
+
+    if (watchKillSwitchEngaged) {
+      console.info(
+        `[try-on] watch killswitch ENGAGED (WATCH_USE_OPENAI_CONTACT_BLEND=false) — ` +
+          `serving deterministic composite for category=${category}`
+      );
+    }
 
     // The canonical "deterministic preview" is the client composite
     // (PNG, alpha-preserving). We fall back to the legacy JPEG
@@ -1154,13 +1184,63 @@ export async function POST(request: NextRequest) {
                     ? "The AI drew an extra product instance — re-composed using the deterministic product core."
                     : "Final image rebuilt from locked composite + AI contact band. Customer pixels (fingers, nails, background) preserved 1:1.",
                 });
+              } else if (
+                requiresLockedCompose &&
+                openaiMeta.compositeAtTargetSize
+              ) {
+                // ── HARD FALLBACK — silhouette derivation failed ────
+                // The locked compose is the ONLY guarantee that finger
+                // / nail / background pixels stay untouched. When it
+                // can't apply (rare: product not visible enough to be
+                // segmented from the user diff), we are NOT allowed
+                // to ship the AI / product-lock output for a watch —
+                // that's exactly the "destroyed hand" failure mode.
+                // Fall back to the deterministic composite instead.
+                finalResultUrl = `data:image/png;base64,${openaiMeta.compositeAtTargetSize.toString(
+                  "base64"
+                )}`;
+                qualityCheckFallbackApplied = true;
+                qualityCheckFailed = true;
+                failureReasons.push("locked_compose_unable_to_apply");
+                lockWarnings.push({
+                  code: "locked-compose-fallback",
+                  message:
+                    "Could not derive the product silhouette safely — deterministic composite used to preserve the customer's hand.",
+                });
+                console.warn(
+                  `[try-on] locked-compose-unable-to-apply category=${category} reason="${muxed.skipReason}" → deterministic fallback`
+                );
               }
             } catch (err) {
               console.warn(
                 "[try-on] locked compose failed",
                 err instanceof Error ? err.message : err
               );
+              // Same hard-fallback policy on exception for watches.
+              if (
+                requiresLockedCompose &&
+                openaiMeta.compositeAtTargetSize
+              ) {
+                finalResultUrl = `data:image/png;base64,${openaiMeta.compositeAtTargetSize.toString(
+                  "base64"
+                )}`;
+                qualityCheckFallbackApplied = true;
+                qualityCheckFailed = true;
+                failureReasons.push("locked_compose_threw");
+                lockWarnings.push({
+                  code: "locked-compose-fallback",
+                  message:
+                    "Safety compositor failed — deterministic composite used to preserve the customer's hand.",
+                });
+              }
             }
+          } else if (requiresLockedCompose && !fallbackToDeterministic) {
+            // Operators with TRYON_FALLBACK_TO_DETERMINISTIC=false still
+            // need protection on watches. Surface a debug warning so
+            // operators understand the safety net is OFF.
+            console.warn(
+              `[try-on] WARNING category=${category} runs without locked compose because TRYON_FALLBACK_TO_DETERMINISTIC=false`
+            );
           }
 
           // ── Post-composition hand artefact gate ────────────────────
@@ -1280,13 +1360,20 @@ export async function POST(request: NextRequest) {
                       )}.`,
               });
               // ── Tier 2: full deterministic fallback ─────────────
-              // Only if the anti-ghost mux didn't apply (e.g. silhouette
-              // unusable). Hands the customer the deterministic
-              // composite — product is pixel-perfect, contact shadows
-              // are less refined.
+              // Hands the customer the deterministic composite —
+              // product is pixel-perfect, contact shadows are less
+              // refined. For watch / hand-jewelry we bypass the
+              // `lockedProductLocked` guard because product-lock
+              // only protects the product silhouette, not the
+              // customer's fingers / nails / background. Anything
+              // that hits this branch already failed a fidelity /
+              // duplication / ghost gate, so the AI is suspect on
+              // the surrounding pixels too.
+              const ignoreLockGuard =
+                category === "watch" || category === "hand-jewelry";
               if (
                 fallbackToDeterministic &&
-                !lockedProductLocked &&
+                (ignoreLockGuard || !lockedProductLocked) &&
                 openaiMeta.compositeAtTargetSize
               ) {
                 finalResultUrl = `data:image/png;base64,${openaiMeta.compositeAtTargetSize.toString(

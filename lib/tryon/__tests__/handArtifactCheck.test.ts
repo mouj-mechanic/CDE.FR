@@ -97,6 +97,26 @@ describe("checkHandArtifactDamage", () => {
   });
 });
 
+describe("checkHandArtifactDamage — env threshold override", () => {
+  it("honours WATCH_HAND_ARTIFACT_THRESHOLD when set", async () => {
+    const base = await gradient();
+    const broken = await destroyedHand();
+    const original = process.env.WATCH_HAND_ARTIFACT_THRESHOLD;
+    process.env.WATCH_HAND_ARTIFACT_THRESHOLD = "0.9";
+    try {
+      const out = await checkHandArtifactDamage({
+        userBase: base,
+        finalImage: broken,
+      });
+      // With a 90 % threshold the damaged image must NOT be flagged.
+      expect(out.isDamaged).toBe(false);
+    } finally {
+      if (original === undefined) delete process.env.WATCH_HAND_ARTIFACT_THRESHOLD;
+      else process.env.WATCH_HAND_ARTIFACT_THRESHOLD = original;
+    }
+  });
+});
+
 describe("checkVisibleMaskArtifacts", () => {
   it("passes a clean image with no mask outline", async () => {
     const base = await gradient();

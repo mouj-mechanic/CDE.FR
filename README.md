@@ -273,6 +273,30 @@ In production the customer never sees a damaged hand: either the
 gates pass and the AI shadows ship, or the deterministic composite
 ships with a soft "rendu fidèle utilisé" note.
 
+### Watch safety mode (emergency killswitch)
+
+When the auto-mask pipeline misbehaves on a specific catalogue and
+customers see destroyed-hand renders, operators can flip a single
+env var to immediately stop OpenAI from touching watches:
+
+```bash
+WATCH_USE_OPENAI_CONTACT_BLEND=false
+```
+
+With the killswitch engaged, the route:
+
+- drops the OpenAI call entirely for `category=watch` and
+  `category=hand-jewelry`;
+- serves the deterministic composite (user photo + product placed
+  geometrically) as the final image;
+- still runs MediaPipe landmark detection, alpha-aware cutout, and
+  the rest of the deterministic pipeline.
+
+The customer keeps getting a clean rendered watch on their wrist —
+just without the IA-refined contact shadows. Once the auto-mask
+issues are addressed for that product, set the env var back to
+`true` (or unset it — `true` is the default).
+
 ### Mask must never be visible
 
 The auto-generated mask is purely internal. It is converted to

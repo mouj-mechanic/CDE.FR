@@ -294,52 +294,31 @@ Return one realistic final image only.`;
 export function getWatchTryOnPrompt(): string {
   return `You are editing a realistic e-commerce watch try-on image.
 
-The first image is the main source of truth. It already contains the customer's original photo with the exact watch placed on the wrist.
+The watch is already placed in the first image.
+Do not move it.
+Do not replace it.
+Do not duplicate it.
+Do not repaint it.
+Do not redesign it.
 
-The product reference image shows the exact watch. The final result must preserve this exact product.
+Edit only the tiny local contact/shadow area around the watch.
+Do not edit the hand.
+Do not edit fingers.
+Do not edit the thumb.
+Do not edit nails.
+Do not edit the background.
+Do not edit the full wrist.
+Do not edit the product core.
 
-Your task is not to generate, repaint, move, duplicate, redesign, or replace the watch.
+The final image must preserve the original customer photo and the exact watch.
+No visible mask.
+No white outlines.
+No black outlines.
+No segmentation contours.
+No blocky skin artifacts.
+No alpha matte artifacts.
 
-Your task is only to improve the local integration around the already placed watch:
-- subtle contact shadows
-- natural skin contact
-- slight edge blending
-- small bracelet contact shadows
-- lighting consistency around the watch
-
-Strict editing boundaries:
-- Edit only the transparent/editable mask area.
-- Do not edit fingers.
-- Do not edit nails.
-- Do not edit the thumb.
-- Do not edit the back of the hand.
-- Do not edit the background.
-- Do not edit the full wrist or full hand.
-- Do not alter the customer image outside the local watch contact area.
-
-Strict product rules:
-- Show one watch only.
-- Do not create a second watch.
-- Do not create a ghost watch.
-- Do not change the watch color.
-- Do not change the black metal material.
-- Do not remove the colorful rainbow accents.
-- Do not replace the watch with another watch.
-- Do not simplify the dial.
-- Do not change the bezel, bracelet links, dial layout, logo, hands, subdials, or date window.
-
-Strict artifact rules:
-- The mask is only a hidden technical guide.
-- The mask must never appear in the final image.
-- No white outlines.
-- No black outlines.
-- No segmentation contours.
-- No alpha matte artifacts.
-- No broken skin pixels.
-- No blocky patches.
-- No duplicated hand edges.
-
-Return one clean realistic final image only.`;
+Return one clean realistic image only.`;
 }
 
 // ──────────────────────────────────────────────────────────────────────────

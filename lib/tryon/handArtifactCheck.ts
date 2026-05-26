@@ -97,10 +97,15 @@ export async function checkHandArtifactDamage(
     return { drift: 0, isDamaged: false };
   }
   const mean = drift / preserved;
+  // Tightened threshold (2.5 %): we now consider any meaningful change
+  // outside the edit zone as a customer-preservation failure. Empirical
+  // measurements on the auto-mask + locked-compose pipeline show that
+  // a healthy run sits below 1 % drift, so 2.5 % is a comfortable
+  // ceiling that still catches real damage early.
   const thresholdRaw = process.env.WATCH_HAND_ARTIFACT_THRESHOLD?.trim();
-  const threshold = thresholdRaw ? Number(thresholdRaw) : 0.035;
+  const threshold = thresholdRaw ? Number(thresholdRaw) : 0.025;
   const isDamaged =
-    mean > (Number.isFinite(threshold) ? threshold : 0.035);
+    mean > (Number.isFinite(threshold) ? threshold : 0.025);
   return {
     drift: mean,
     isDamaged,
@@ -150,10 +155,13 @@ export async function checkVisibleMaskArtifacts(
     if (finalIsExtreme && baseIsMidtone) outlinePixels++;
   }
   const outlinePixelRatio = outlinePixels / (DOWNSAMPLE * DOWNSAMPLE);
+  // Lowered to 0.25 % — even a single hand-perimeter outline is enough
+  // to ruin a render. The user photo gradient gate keeps false
+  // positives away.
   const thresholdRaw = process.env.WATCH_MASK_ARTIFACT_THRESHOLD?.trim();
-  const threshold = thresholdRaw ? Number(thresholdRaw) : 0.004;
+  const threshold = thresholdRaw ? Number(thresholdRaw) : 0.0025;
   const visible =
-    outlinePixelRatio > (Number.isFinite(threshold) ? threshold : 0.004);
+    outlinePixelRatio > (Number.isFinite(threshold) ? threshold : 0.0025);
   return {
     visible,
     outlinePixelRatio,
