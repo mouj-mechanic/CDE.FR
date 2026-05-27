@@ -16,7 +16,7 @@ import type {
   TryOnHistoryEntry,
   TryOnResponse,
 } from "@/types";
-import { CATEGORIES, getCategory } from "@/lib/categories";
+import { CATEGORIES, getCategory, isValidCategoryId } from "@/lib/categories";
 import { initialTryOnState, tryOnReducer } from "@/lib/tryOnReducer";
 import { runTryOnPipeline } from "@/lib/tryon/pipeline";
 import {
@@ -31,8 +31,13 @@ import { useTryOnAssistant } from "./useTryOnAssistant";
 import { TryOnAssistantBubble } from "./TryOnAssistantBubble";
 import { AssistantLightbox } from "./AssistantLightbox";
 import { generateProductOpinion } from "@/lib/productOpinion";
-import { postAddToCart } from "@/lib/embedMessaging";
+import {
+  postAddToCart,
+  type ProductContextPayload,
+} from "@/lib/embedMessaging";
 import { nextPaint } from "@/lib/nextPaint";
+import { generateId } from "@/lib/utils";
+import { detectCategoryFromTitle } from "@/lib/detectCategory";
 import { cn } from "@/lib/utils";
 
 export interface TryOnAssistantExperienceProps {
@@ -120,9 +125,45 @@ export function TryOnAssistantExperience({
       if (!e.data || typeof e.data !== "object") return;
       const msg = e.data as {
         type?: string;
+        source?: string;
         entryId?: string;
-        payload?: { entryId?: string };
+        payload?: ProductContextPayload & { entryId?: string };
       };
+      // Merchant PDP changed — update compose context without
+      // reloading the iframe (running try-ons keep progressing).
+      if (
+        msg.source === "trywithai-host" &&
+        msg.type === "TRYWITHAI_PRODUCT_CONTEXT" &&
+        msg.payload
+      ) {
+        const p = msg.payload;
+        const nextCategory =
+          p.category && isValidCategoryId(p.category)
+            ? p.category
+            : detectCategoryFromTitle(p.productTitle ?? productTitle);
+        if (p.productImage || p.productUrl) {
+          dispatch({ type: "CLEAR_PRODUCTS" });
+          dispatch({
+            type: "ADD_PRODUCT",
+            product: {
+              id: generateId(),
+              type: "url",
+              value: p.productImage ?? p.productUrl ?? "",
+              previewUrl: p.productImage ?? undefined,
+              source: "shopify",
+              title: p.productTitle ?? productTitle ?? undefined,
+            },
+          });
+        }
+        assistant.boot({
+          category: nextCategory,
+          productTitle: p.productTitle ?? productTitle ?? undefined,
+          productUrl: p.productUrl ?? undefined,
+          productImage: p.productImage ?? undefined,
+        });
+        return;
+      }
+
       const entryIdFromPayload =
         msg.payload && typeof msg.payload === "object"
           ? msg.payload.entryId
@@ -175,7 +216,11 @@ export function TryOnAssistantExperience({
     dispatch({ type: "SET_STATUS", status: "loading" });
     dispatch({ type: "SET_ERROR", error: null });
 
-    const firstProduct = state.products[0];
+    // Snapshot inputs so a PDP change mid-flight cannot empty
+    // products[] while this job is still uploading.
+    const snapUserImage = state.userImage;
+    const snapProducts = state.products.slice();
+    const firstProduct = snapProducts[0];
     // Capture the jobId returned by start() — we'll pass it to
     // ready()/error() so that, even if the customer kicks off
     // another try-on before this one resolves, the right history
@@ -193,9 +238,9 @@ export function TryOnAssistantExperience({
     await nextPaint();
 
     const firstProductFile =
-      state.products.find((p) => p.type === "image" && p.file)?.file ?? null;
+      snapProducts.find((p) => p.type === "image" && p.file)?.file ?? null;
     const firstProductUrl =
-      state.products.find((p) => p.type === "url")?.value ?? null;
+      snapProducts.find((p) => p.type === "url")?.value ?? null;
     const firstProductCutout = firstProduct?.cutoutUrl ?? null;
 
     let pipelineResult: Awaited<ReturnType<typeof runTryOnPipeline>> | null =
@@ -203,7 +248,7 @@ export function TryOnAssistantExperience({
     try {
       pipelineResult = await runTryOnPipeline({
         category: categoryId,
-        userFile: state.userImage,
+        userFile: snapUserImage,
         productFile: firstProductFile,
         productUrl: firstProductUrl,
         productCutoutUrl: firstProductCutout,
@@ -215,9 +260,9 @@ export function TryOnAssistantExperience({
       console.warn("[tryon] pipeline failed", err);
     }
 
-    let uploadUser: File = state.userImage;
+    let uploadUser: File = snapUserImage;
     try {
-      uploadUser = await compressImageFile(state.userImage, {
+      uploadUser = await compressImageFile(snapUserImage, {
         maxDim: 1600,
         quality: 0.88,
         mimeType: "image/jpeg",
@@ -295,19 +340,19 @@ export function TryOnAssistantExperience({
       }
     }
 
-    const urls = state.products
+    const urls = snapProducts
       .filter((p) => p.type === "url")
       .map((p) => p.value);
     formData.append("productUrls", JSON.stringify(urls));
 
-    const cutoutUrls = state.products
+    const cutoutUrls = snapProducts
       .map((p) => p.cutoutUrl)
       .filter((u): u is string => Boolean(u));
     if (cutoutUrls.length > 0) {
       formData.append("productCutoutUrls", JSON.stringify(cutoutUrls));
     }
 
-    const productFiles = state.products
+    const productFiles = snapProducts
       .filter((p) => p.type === "image" && p.file)
       .map((p) => p.file as File);
     for (const file of productFiles) {
@@ -372,7 +417,7 @@ export function TryOnAssistantExperience({
 
       const opinion = generateProductOpinion({
         category: categoryId,
-        productTitle: state.products[0]?.title ?? productTitle ?? undefined,
+        productTitle: snapProducts[0]?.title ?? productTitle ?? undefined,
         warnings: data.warnings,
         qualityStatus: data.qualityStatus,
         fallbackUsed: data.debug?.fallbackUsed,
@@ -434,14 +479,12 @@ export function TryOnAssistantExperience({
     [assistant]
   );
 
-  const handleCardAgrandir = useCallback(
-    (entry: TryOnHistoryEntry) => {
-      if (!entry.resultUrl) return;
-      setLightboxEntry(entry);
-      onOpenLightbox?.(entry.resultUrl);
-    },
-    [onOpenLightbox]
-  );
+  const handleCardAgrandir = useCallback((entry: TryOnHistoryEntry) => {
+    if (!entry.resultUrl) return;
+    // In-iframe lightbox only — never window.open (popup blockers +
+    // blob: URLs show about:blank#blocked in a new tab).
+    setLightboxEntry(entry);
+  }, []);
 
   const handleTryAnother = useCallback(() => {
     dispatch({ type: "RESET_PRODUCT_KEEP_PHOTO" });

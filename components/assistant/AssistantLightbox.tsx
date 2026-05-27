@@ -2,7 +2,7 @@
 
 import { useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { X, Download as DownloadIcon } from "lucide-react";
+import { X } from "lucide-react";
 import { postLightboxClose, postLightboxOpen } from "@/lib/embedMessaging";
 
 interface AssistantLightboxProps {
@@ -83,19 +83,6 @@ export function AssistantLightbox({
             <X className="h-5 w-5" aria-hidden />
           </button>
 
-          {/* Bottom action: open in new tab as a true full-resolution
-              "download". Kept lightweight — primary action is the
-              big in-iframe view above. */}
-          <a
-            href={imageUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            onClick={(e) => e.stopPropagation()}
-            className="absolute bottom-6 left-1/2 inline-flex -translate-x-1/2 items-center gap-2 rounded-full bg-white/90 px-4 py-2 text-xs font-semibold text-ink shadow-lifted transition-transform hover:scale-105"
-          >
-            <DownloadIcon className="h-3.5 w-3.5" aria-hidden />
-            Ouvrir l’image en grand
-          </a>
         </motion.div>
       )}
     </AnimatePresence>

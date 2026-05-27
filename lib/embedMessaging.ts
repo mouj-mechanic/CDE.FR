@@ -24,11 +24,21 @@ export type EmbedMessageType =
   | "TRYWITHAI_OPEN_RESULT"
   | "TRYWITHAI_LIGHTBOX_OPEN"
   | "TRYWITHAI_LIGHTBOX_CLOSE"
+  // Parent -> iframe
+  | "TRYWITHAI_PRODUCT_CONTEXT"
   // Parent -> iframe replies
   | "TRYWITHAI_CART_ADDED"
   | "TRYWITHAI_CART_ERROR"
   | "TRYWITHAI_SHARE_DONE"
   | "TRYWITHAI_SHARE_ERROR";
+
+export interface ProductContextPayload {
+  productTitle?: string;
+  productUrl?: string;
+  productImage?: string;
+  category?: CategoryId | string;
+  variantId?: string;
+}
 
 export interface JobStartedPayload {
   jobId: string;

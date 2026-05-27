@@ -200,14 +200,28 @@ export function TryOnAssistantBubble({
             const isLatest = i === state.history.length - 1;
             // Only the entry whose jobId matches the running
             // simulator gets the live progress values.
-            const isLive = entry.status === "pending" && entry.jobId === state.jobId;
+            const isPending = entry.status === "pending";
+            const isPrimaryJob =
+              isPending && entry.jobId === state.jobId;
             return (
               <HistoryCard
                 key={entry.id}
                 entry={entry}
                 isLatest={isLatest}
-                liveProgress={isLive ? state.progress : undefined}
-                liveStage={isLive ? state.status : undefined}
+                liveProgress={
+                  isPending
+                    ? isPrimaryJob
+                      ? state.progress
+                      : entry.progress
+                    : undefined
+                }
+                liveStage={
+                  isPending
+                    ? isPrimaryJob
+                      ? state.status
+                      : entry.stageStatus
+                    : undefined
+                }
                 onAddToCart={onCardAddToCart}
                 onAgrandir={onCardAgrandir}
                 onRetry={onCardRetry}

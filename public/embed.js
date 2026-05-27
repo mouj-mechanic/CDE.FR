@@ -775,6 +775,64 @@
     overlay.classList.remove("trywithai-overlay--lightbox");
   }
 
+  /** Detached overlay kept alive across Turbo / SPA navigations. */
+  var detachedOverlay = null;
+  var lastMerchantPath = "";
+
+  function sendProductContextToIframe() {
+    var overlay = document.getElementById("trywithai-overlay");
+    if (!overlay) return;
+    var info = detectProductInfo();
+    currentProductVariantId = detectVariantId();
+    replyToIframe("TRYWITHAI_PRODUCT_CONTEXT", {
+      productImage: info.image || "",
+      productUrl: info.url || "",
+      productTitle: info.title || "",
+      category: FORCED_CATEGORY || "",
+      variantId: currentProductVariantId || "",
+    });
+  }
+
+  function onMerchantNavigation() {
+    var path =
+      window.location.pathname + window.location.search + window.location.hash;
+    if (path === lastMerchantPath) return;
+    lastMerchantPath = path;
+    var overlay = document.getElementById("trywithai-overlay");
+    if (!overlay) return;
+    // Never reload iframe.src — just tell the bubble the PDP changed.
+    sendProductContextToIframe();
+  }
+
+  function setupOverlayPersistence() {
+    lastMerchantPath =
+      window.location.pathname + window.location.search + window.location.hash;
+
+    // Turbo Drive (Hotwire) — detach before cache, reattach on load.
+    document.addEventListener("turbo:before-cache", function () {
+      var overlay = document.getElementById("trywithai-overlay");
+      if (overlay && currentJob.active) {
+        detachedOverlay = overlay;
+        overlay.remove();
+      }
+    });
+    document.addEventListener("turbo:load", function () {
+      if (detachedOverlay) {
+        document.body.appendChild(detachedOverlay);
+        detachedOverlay = null;
+        onMerchantNavigation();
+      }
+    });
+
+    // Legacy Turbolinks + Shopify section reloads.
+    document.addEventListener("turbolinks:load", onMerchantNavigation);
+    document.addEventListener("shopify:section:load", onMerchantNavigation);
+    window.addEventListener("popstate", onMerchantNavigation);
+
+    // Fallback for themes that don't emit navigation events.
+    setInterval(onMerchantNavigation, 1000);
+  }
+
   function handleAddToCart(payload) {
     // Echo back the entryId the iframe sent so the bubble can update
     // the correct history card (the customer may have multiple
@@ -934,6 +992,7 @@
   function init() {
     if (!pageMatches(PAGES)) return;
     injectStyles();
+    setupOverlayPersistence();
     setTimeout(createBubble, DELAY);
   }
 

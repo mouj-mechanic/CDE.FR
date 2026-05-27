@@ -41,6 +41,7 @@ type Action =
     }
   | {
       type: "PROGRESS";
+      jobId: string;
       status: TryOnAssistantStatus;
       progress: number;
       message?: string;
@@ -94,6 +95,32 @@ type Action =
     }
   | { type: "RESET" };
 
+/** Back-fill status/progress for payloads saved before v2 history. */
+function normalizeHistory(
+  entries: TryOnHistoryEntry[]
+): TryOnHistoryEntry[] {
+  return entries.map((e) => {
+    if (e.status) {
+      return {
+        ...e,
+        progress: typeof e.progress === "number" ? e.progress : 0,
+      };
+    }
+    if (e.resultUrl) {
+      return {
+        ...e,
+        status: "ready" as const,
+        progress: 100,
+      };
+    }
+    return {
+      ...e,
+      status: "pending" as const,
+      progress: 0,
+    };
+  });
+}
+
 function makeMessage(
   role: TryOnAssistantMessage["role"],
   text: string,
@@ -127,11 +154,15 @@ export function reducer(
 ): TryOnAssistantState {
   switch (action.type) {
     case "HYDRATE": {
-      // Restore from sessionStorage. Any history entry left in the
-      // "pending" state when the iframe was destroyed becomes
-      // "interrupted" — the fetch + simulator are gone, but the
-      // card stays visible in the feed so the customer can retry.
+      // Restore from sessionStorage. Pending entries STAY pending —
+      // we never auto-mark them "interrupted" on reload. The host
+      // keeps the iframe alive across PDP navigation when possible;
+      // if the fetch truly died the card will stay at its last
+      // progress until the customer retries.
       const stored = action.state;
+      const history = normalizeHistory(stored.history ?? []);
+      const pending = history.filter((e) => e.status === "pending");
+      const activePending = pending[pending.length - 1];
       const wasMidJob =
         stored.status === "preparing" ||
         stored.status === "analyzing_photo" ||
@@ -139,25 +170,24 @@ export function reducer(
         stored.status === "placing_product" ||
         stored.status === "generating" ||
         stored.status === "quality_check";
-      const history = (stored.history ?? []).map((e) =>
-        e.status === "pending"
-          ? {
-              ...e,
-              status: "interrupted" as const,
-              errorMessage:
-                e.errorMessage ??
-                "Simulation interrompue — vous pouvez la relancer.",
-            }
-          : e
-      );
       return {
         ...INITIAL,
         ...stored,
         active: true,
         minimized: false,
-        status: wasMidJob ? "idle" : stored.status,
-        progress: wasMidJob ? 0 : stored.progress,
         history,
+        // Keep the running job visible in the header + live card.
+        jobId: activePending?.jobId ?? stored.jobId,
+        status: activePending
+          ? (activePending.stageStatus ?? "preparing")
+          : wasMidJob
+            ? "idle"
+            : stored.status,
+        progress: activePending
+          ? activePending.progress
+          : wasMidJob
+            ? 0
+            : (stored.progress ?? 0),
       };
     }
     case "BOOT": {
@@ -175,6 +205,11 @@ export function reducer(
           action.productUrl !== state.productUrl) ||
         (Boolean(action.productImage) &&
           action.productImage !== state.productImage);
+      const pending = (state.history ?? []).filter(
+        (e) => e.status === "pending"
+      );
+      const activePending = pending[pending.length - 1];
+      const hasRunningJob = Boolean(activePending);
       return {
         ...state,
         active: true,
@@ -182,12 +217,18 @@ export function reducer(
         productTitle: action.productTitle ?? state.productTitle,
         productUrl: action.productUrl ?? state.productUrl,
         productImage: action.productImage ?? state.productImage,
-        status: productChanged ? "idle" : state.status,
-        progress: productChanged ? 0 : state.progress,
+        // When the customer browses to another PDP while a job is
+        // still running, keep header progress + jobId for that job.
+        status:
+          productChanged && !hasRunningJob ? "idle" : state.status,
+        progress:
+          productChanged && !hasRunningJob ? 0 : state.progress,
         resultUrl: productChanged ? undefined : state.resultUrl,
         shareUrl: productChanged ? undefined : state.shareUrl,
         fallbackUsed: productChanged ? undefined : state.fallbackUsed,
-        jobId: productChanged ? undefined : state.jobId,
+        jobId: hasRunningJob ? activePending!.jobId : productChanged
+          ? undefined
+          : state.jobId,
         canAddToCart: state.canAddToCart ?? true,
         cartStatus: productChanged ? "idle" : (state.cartStatus ?? "idle"),
         // History is NEVER cleared by BOOT — only by RESET/clearSession.
@@ -233,15 +274,12 @@ export function reducer(
     }
     case "PROGRESS": {
       const newProgress = Math.max(
-        state.progress,
+        0,
         Math.min(100, action.progress)
       );
-      // Sync the latest pending entry so the simulation panel inside
-      // its card reflects the same numbers (in case the bubble has
-      // moved on to a different product page above).
-      const history = state.history.map((e, i) => {
-        const isLast = i === state.history.length - 1;
-        if (isLast && e.status === "pending" && e.jobId === state.jobId) {
+      // Update the matching pending card (supports concurrent jobs).
+      const history = state.history.map((e) => {
+        if (e.status === "pending" && e.jobId === action.jobId) {
           return {
             ...e,
             progress: Math.max(e.progress, newProgress),
@@ -250,10 +288,18 @@ export function reducer(
         }
         return e;
       });
+      const touchesActiveJob =
+        state.jobId === action.jobId ||
+        history.some(
+          (e) => e.status === "pending" && e.jobId === action.jobId
+        );
       return {
         ...state,
-        status: action.status,
-        progress: newProgress,
+        status: touchesActiveJob ? action.status : state.status,
+        progress:
+          state.jobId === action.jobId
+            ? Math.max(state.progress, newProgress)
+            : state.progress,
         history,
       };
     }
@@ -442,7 +488,10 @@ export function loadFromSession(): TryOnAssistantState | null {
     if (!parsed || typeof parsed !== "object" || !Array.isArray(parsed.messages)) {
       return null;
     }
-    return parsed;
+    return {
+      ...parsed,
+      history: normalizeHistory(parsed.history ?? []),
+    };
   } catch {
     return null;
   }
@@ -474,9 +523,47 @@ export function clearSessionStorage() {
 
 export function useTryOnAssistant() {
   const [state, dispatch] = useReducer(reducer, INITIAL);
-  const simulatorRef = useRef<SimulatedProgressHandle | null>(null);
+  const simulatorsRef = useRef<Map<string, SimulatedProgressHandle>>(
+    new Map()
+  );
   const jobIdRef = useRef<string | undefined>(undefined);
   const hydratedRef = useRef(false);
+
+  const stopSimulatorForJob = useCallback((jobId: string) => {
+    const sim = simulatorsRef.current.get(jobId);
+    if (sim) {
+      sim.stop();
+      simulatorsRef.current.delete(jobId);
+    }
+  }, []);
+
+  const stopAllSimulators = useCallback(() => {
+    simulatorsRef.current.forEach((sim) => sim.stop());
+    simulatorsRef.current.clear();
+  }, []);
+
+  const startSimulatorForJob = useCallback(
+    (jobId: string, category: CategoryId) => {
+      stopSimulatorForJob(jobId);
+      jobIdRef.current = jobId;
+      const sim = startSimulatedProgress(category, (evt) => {
+        dispatch({
+          type: "PROGRESS",
+          jobId,
+          status: evt.status,
+          progress: evt.progress,
+        });
+        postJobProgress({
+          jobId,
+          status: evt.status,
+          progress: evt.progress,
+          message: evt.message,
+        });
+      });
+      simulatorsRef.current.set(jobId, sim);
+    },
+    [stopSimulatorForJob]
+  );
 
   // Hydrate from sessionStorage on the very first mount. Runs before
   // any boot() / start() the consumer might fire in their own
@@ -487,8 +574,17 @@ export function useTryOnAssistant() {
     const stored = loadFromSession();
     if (stored) {
       dispatch({ type: "HYDRATE", state: stored });
+      const pending = (stored.history ?? []).filter(
+        (e) => e.status === "pending"
+      );
+      for (const entry of pending) {
+        startSimulatorForJob(entry.jobId, entry.category);
+      }
+      if (pending.length > 0) {
+        jobIdRef.current = pending[pending.length - 1]!.jobId;
+      }
     }
-  }, []);
+  }, [startSimulatorForJob]);
 
   // Persist state to sessionStorage whenever it changes (after
   // hydration). Skipped during SSR (no window).
@@ -497,15 +593,8 @@ export function useTryOnAssistant() {
     saveToSession(state);
   }, [state]);
 
-  const stopSimulator = useCallback(() => {
-    if (simulatorRef.current) {
-      simulatorRef.current.stop();
-      simulatorRef.current = null;
-    }
-  }, []);
-
-  // Stop the simulator on unmount so we don't leak rAF loops.
-  useEffect(() => stopSimulator, [stopSimulator]);
+  // Stop all simulators on unmount so we don't leak rAF loops.
+  useEffect(() => stopAllSimulators, [stopAllSimulators]);
 
   const boot = useCallback((args: StartArgs) => {
     dispatch({
@@ -539,23 +628,10 @@ export function useTryOnAssistant() {
         productImage: args.productImage,
         message: introMessage,
       });
-      stopSimulator();
-      simulatorRef.current = startSimulatedProgress(args.category, (evt) => {
-        dispatch({
-          type: "PROGRESS",
-          status: evt.status,
-          progress: evt.progress,
-        });
-        postJobProgress({
-          jobId,
-          status: evt.status,
-          progress: evt.progress,
-          message: evt.message,
-        });
-      });
+      startSimulatorForJob(jobId, args.category);
       return jobId;
     },
-    [stopSimulator]
+    [startSimulatorForJob]
   );
 
   const ready = useCallback(
@@ -563,11 +639,8 @@ export function useTryOnAssistant() {
       // Only stop the simulator when this READY corresponds to the
       // currently-tracked job. Otherwise an out-of-order resolve
       // would silently kill the simulation of a fresher attempt.
-      const currentJob = jobIdRef.current;
-      if (!args.jobId || args.jobId === currentJob) {
-        stopSimulator();
-      }
-      const jobId = args.jobId ?? currentJob ?? generateJobId();
+      const jobId = args.jobId ?? jobIdRef.current ?? generateJobId();
+      stopSimulatorForJob(jobId);
       dispatch({
         type: "READY",
         jobId,
@@ -587,20 +660,17 @@ export function useTryOnAssistant() {
         fallbackUsed: args.fallbackUsed,
       });
     },
-    [stopSimulator, state.category, state.productTitle]
+    [stopSimulatorForJob, state.category, state.productTitle]
   );
 
   const error = useCallback(
     (message: string, jobId?: string) => {
-      const currentJob = jobIdRef.current;
-      if (!jobId || jobId === currentJob) {
-        stopSimulator();
-      }
-      const resolvedJobId = jobId ?? currentJob ?? generateJobId();
+      const resolvedJobId = jobId ?? jobIdRef.current ?? generateJobId();
+      stopSimulatorForJob(resolvedJobId);
       dispatch({ type: "ERROR", jobId: resolvedJobId, message });
       postJobError({ jobId: resolvedJobId, message });
     },
-    [stopSimulator]
+    [stopSimulatorForJob]
   );
 
   const minimize = useCallback(() => {
@@ -647,10 +717,10 @@ export function useTryOnAssistant() {
   );
 
   const reset = useCallback(() => {
-    stopSimulator();
+    stopAllSimulators();
     jobIdRef.current = undefined;
     dispatch({ type: "RESET" });
-  }, [stopSimulator]);
+  }, [stopAllSimulators]);
 
   /**
    * Soft reset for the "Try another model" action. Clears the
@@ -658,10 +728,10 @@ export function useTryOnAssistant() {
    * history visible so the customer experiences a continuous chat.
    */
   const newTry = useCallback(() => {
-    stopSimulator();
+    stopAllSimulators();
     jobIdRef.current = undefined;
     dispatch({ type: "NEW_TRY" });
-  }, [stopSimulator]);
+  }, [stopAllSimulators]);
 
   /**
    * Hard reset: wipes the bubble state AND the persisted history
@@ -669,11 +739,11 @@ export function useTryOnAssistant() {
    * the bubble (X button) — next visit starts a fresh conversation.
    */
   const clearSession = useCallback(() => {
-    stopSimulator();
+    stopAllSimulators();
     jobIdRef.current = undefined;
     clearSessionStorage();
     dispatch({ type: "RESET" });
-  }, [stopSimulator]);
+  }, [stopAllSimulators]);
 
   return {
     state,

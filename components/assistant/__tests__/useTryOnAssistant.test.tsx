@@ -328,6 +328,7 @@ describe("assistant reducer — try-on history across PDPs", () => {
     );
     state = reducer(state, {
       type: "PROGRESS",
+      jobId: "j1",
       status: "generating",
       progress: 47,
     });
@@ -364,7 +365,7 @@ describe("assistant reducer — try-on history across PDPs", () => {
     expect(state.history[1].status).toBe("pending");
   });
 
-  it("HYDRATE flips stale pending entries to interrupted", () => {
+  it("HYDRATE keeps pending entries pending (no auto-interrupt)", () => {
     const stale: TryOnAssistantState = {
       ...INITIAL,
       active: true,
@@ -384,8 +385,45 @@ describe("assistant reducer — try-on history across PDPs", () => {
 
     const next = reducer(INITIAL, { type: "HYDRATE", state: stale });
     expect(next.history).toHaveLength(1);
-    expect(next.history[0].status).toBe("interrupted");
-    expect(next.history[0].errorMessage).toBeDefined();
+    expect(next.history[0].status).toBe("pending");
+    expect(next.history[0].progress).toBe(32);
+    expect(next.jobId).toBe("j1");
+  });
+
+  it("BOOT on a new PDP preserves a running pending job", () => {
+    const seeded: TryOnAssistantState = {
+      ...INITIAL,
+      active: true,
+      status: "generating",
+      progress: 55,
+      jobId: "j1",
+      productImage: "https://shop.com/A.jpg",
+      history: [
+        {
+          id: "e1",
+          jobId: "j1",
+          category: "watch",
+          status: "pending",
+          progress: 55,
+          stageStatus: "generating",
+          productImage: "https://shop.com/A.jpg",
+          cartStatus: "idle",
+          createdAt: 1,
+        },
+      ],
+    };
+
+    const next = reducer(seeded, {
+      type: "BOOT",
+      category: "watch",
+      productImage: "https://shop.com/B.jpg",
+      productUrl: "https://shop.com/B",
+    });
+
+    expect(next.history[0].status).toBe("pending");
+    expect(next.jobId).toBe("j1");
+    expect(next.progress).toBe(55);
+    expect(next.productImage).toBe("https://shop.com/B.jpg");
   });
 
   it("clearSession wipes the history along with the rest of the state", () => {
