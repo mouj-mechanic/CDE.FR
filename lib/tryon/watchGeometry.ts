@@ -272,19 +272,23 @@ export function computeWristGeometry(
 
   // watchCenter = wrist - handDir * palmWidth * BIAS
   //
-  //  Anatomical anchor along the forearm axis from the wrist crease
-  //  toward the elbow. Real watches sit AT the wrist joint, so the
-  //  case CENTRE lies only ~0.03-0.08 × palmWidth past the crease.
-  //  Configurable via WATCH_WRIST_ANCHOR_BIAS so we can dial it in
-  //  per dataset without redeploying. Defaults to 0.05 — a
-  //  significant reduction from the previous 0.15 default which
-  //  reliably parked the watch mid-forearm on portrait wrist shots.
-  //  Client-side bundle reads NEXT_PUBLIC_ mirror.
+  //  Anatomical anchor along the forearm axis from the MediaPipe
+  //  wrist landmark (which sits roughly on the crease). Real watches
+  //  sit AT the wrist joint with the case centre on the styloid bump
+  //  — slightly toward the HAND side of the crease.
+  //
+  //  Positive  -> moves watch DOWN the forearm (toward elbow).
+  //  Negative  -> moves watch UP onto the back of the hand.
+  //  Default   -> -0.06 (case centre on styloid bump for catalogue
+  //               wrist shots — see reference photos).
+  //
+  //  Operator can dial the value live via env without redeploying;
+  //  client bundle reads the NEXT_PUBLIC_ mirror.
   const anchorBiasRaw =
     process.env.NEXT_PUBLIC_WATCH_WRIST_ANCHOR_BIAS?.trim() ??
     process.env.WATCH_WRIST_ANCHOR_BIAS?.trim();
   const parsedBias = anchorBiasRaw ? Number(anchorBiasRaw) : NaN;
-  const anchorBias = Number.isFinite(parsedBias) ? parsedBias : 0.05;
+  const anchorBias = Number.isFinite(parsedBias) ? parsedBias : -0.06;
   const cx = wrist.x - handDir.x * palmWidth * anchorBias;
   const cy = wrist.y - handDir.y * palmWidth * anchorBias;
   if (typeof console !== "undefined" && console.info) {
