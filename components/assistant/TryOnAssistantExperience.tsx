@@ -176,7 +176,11 @@ export function TryOnAssistantExperience({
     dispatch({ type: "SET_ERROR", error: null });
 
     const firstProduct = state.products[0];
-    assistant.start({
+    // Capture the jobId returned by start() — we'll pass it to
+    // ready()/error() so that, even if the customer kicks off
+    // another try-on before this one resolves, the right history
+    // card is finalised.
+    const currentJobId = assistant.start({
       category: categoryId,
       productTitle: firstProduct?.title ?? productTitle ?? undefined,
       productUrl:
@@ -374,6 +378,7 @@ export function TryOnAssistantExperience({
         fallbackUsed: data.debug?.fallbackUsed,
       });
       assistant.ready({
+        jobId: currentJobId,
         resultUrl: data.resultUrl,
         opinion,
         fallbackUsed: data.debug?.fallbackUsed,
@@ -386,7 +391,7 @@ export function TryOnAssistantExperience({
           : "Une erreur est survenue. Veuillez réessayer.";
       dispatch({ type: "SET_ERROR", error: msg });
       dispatch({ type: "SET_STATUS", status: "error" });
-      assistant.error(msg);
+      assistant.error(msg, currentJobId);
     }
   }, [
     state,
@@ -429,18 +434,35 @@ export function TryOnAssistantExperience({
     [assistant]
   );
 
-  const handleCardAgrandir = useCallback((entry: TryOnHistoryEntry) => {
-    setLightboxEntry(entry);
-    // Also call the host hook (no-op in bubble-mode) for backwards
-    // compatibility with consumers that expect a window.open.
-    onOpenLightbox?.(entry.resultUrl);
-  }, [onOpenLightbox]);
+  const handleCardAgrandir = useCallback(
+    (entry: TryOnHistoryEntry) => {
+      if (!entry.resultUrl) return;
+      setLightboxEntry(entry);
+      onOpenLightbox?.(entry.resultUrl);
+    },
+    [onOpenLightbox]
+  );
 
   const handleTryAnother = useCallback(() => {
     dispatch({ type: "RESET_PRODUCT_KEEP_PHOTO" });
     setConsent(true);
     assistant.newTry();
   }, [assistant]);
+
+  /**
+   * Retry handler for error / interrupted cards. We simply call
+   * submit() again — the customer's photo is already in `state` so
+   * the launch goes through immediately.
+   */
+  const handleCardRetry = useCallback(
+    (_entry: TryOnHistoryEntry) => {
+      void submit();
+    },
+    // submit is defined below as a useCallback — keep deps loose to
+    // avoid a hook-ordering issue.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    []
+  );
 
   // ── Compose view (rendered inside the bubble while status=idle) ──
   const composeNode = useMemo(
@@ -597,6 +619,7 @@ export function TryOnAssistantExperience({
         onTryAnother={handleTryAnother}
         onCardAddToCart={handleCardAddToCart}
         onCardAgrandir={handleCardAgrandir}
+        onCardRetry={handleCardRetry}
         onClose={handleClose}
       />
       <AssistantLightbox

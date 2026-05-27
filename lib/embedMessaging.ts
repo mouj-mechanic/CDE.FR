@@ -22,6 +22,8 @@ export type EmbedMessageType =
   | "TRYWITHAI_ADD_TO_CART"
   | "TRYWITHAI_SHARE"
   | "TRYWITHAI_OPEN_RESULT"
+  | "TRYWITHAI_LIGHTBOX_OPEN"
+  | "TRYWITHAI_LIGHTBOX_CLOSE"
   // Parent -> iframe replies
   | "TRYWITHAI_CART_ADDED"
   | "TRYWITHAI_CART_ERROR"
@@ -124,6 +126,20 @@ export function postAddToCart(payload: AddToCartPayload) {
 
 export function postShare(payload: SharePayload) {
   postToParent("TRYWITHAI_SHARE", payload);
+}
+
+/**
+ * Ask the host to grow the iframe to the full viewport so the
+ * lightbox actually covers the merchant page. In normal (bubble)
+ * mode the iframe is pinned bottom-right at ~440px wide, which is
+ * way too small for a meaningful "Agrandir" experience.
+ */
+export function postLightboxOpen() {
+  postToParent("TRYWITHAI_LIGHTBOX_OPEN");
+}
+
+export function postLightboxClose() {
+  postToParent("TRYWITHAI_LIGHTBOX_CLOSE");
 }
 
 /** Generate a stable-ish job id (no crypto dependency to keep the bundle small). */

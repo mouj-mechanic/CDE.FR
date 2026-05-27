@@ -372,10 +372,18 @@ export interface TryOnAssistantMessage {
 }
 
 /**
- * A single completed try-on. The bubble keeps an array of these so
- * the customer can scroll up and see every article they tried during
- * the visit — each card has its own share / add-to-cart / agrandir
- * controls.
+ * State of a single try-on attempt. An entry stays in the history
+ * feed in every state — the customer can scroll up and see in-flight
+ * simulations, finished ones and even interrupted ones, each with
+ * the right UI inside its card.
+ */
+export type TryOnEntryStatus = "pending" | "ready" | "error" | "interrupted";
+
+/**
+ * A single try-on attempt. The bubble keeps an array of these so the
+ * customer can scroll up and see every article they tried during the
+ * visit — each card has its own share / add-to-cart / agrandir
+ * controls, and renders the right UI for its current `status`.
  */
 export interface TryOnHistoryEntry {
   id: string;
@@ -384,10 +392,21 @@ export interface TryOnHistoryEntry {
   productTitle?: string;
   productUrl?: string;
   productImage?: string;
-  resultUrl: string;
+  /** Lifecycle status of this attempt. */
+  status: TryOnEntryStatus;
+  /** Progress 0..100 — populated while pending, frozen at the last value otherwise. */
+  progress: number;
+  /** Optional pipeline sub-stage, used by the simulation panel for the label. */
+  stageStatus?: TryOnAssistantStatus;
+  /** Populated when status === "ready". */
+  resultUrl?: string;
   shareUrl?: string;
-  opinion: string;
+  /** Customer-facing one-liner, only when status === "ready". */
+  opinion?: string;
+  /** When the renderer fell back to a deterministic composite. */
   fallbackUsed?: boolean;
+  /** Customer-facing error message for status === "error" / "interrupted". */
+  errorMessage?: string;
   cartStatus: "idle" | "adding" | "added" | "error";
   createdAt: number;
 }

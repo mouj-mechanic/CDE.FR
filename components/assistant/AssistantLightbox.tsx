@@ -3,6 +3,7 @@
 import { useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { X, Download as DownloadIcon } from "lucide-react";
+import { postLightboxClose, postLightboxOpen } from "@/lib/embedMessaging";
 
 interface AssistantLightboxProps {
   imageUrl: string | null;
@@ -23,11 +24,19 @@ export function AssistantLightbox({
 }: AssistantLightboxProps) {
   useEffect(() => {
     if (!imageUrl) return;
+    // Ask the host to grow the iframe to fullscreen so the overlay
+    // actually covers the merchant page (the bubble iframe is only
+    // ~440px wide otherwise — the customer would barely see the
+    // "Agrandir" effect).
+    postLightboxOpen();
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
     };
     window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      postLightboxClose();
+    };
   }, [imageUrl, onClose]);
 
   return (

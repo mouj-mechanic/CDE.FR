@@ -6,6 +6,7 @@ import type {
   TryOnAssistantMessage,
   TryOnAssistantState,
   TryOnAssistantStatus,
+  TryOnHistoryEntry,
 } from "@/types";
 import {
   generateJobId,
@@ -52,6 +53,8 @@ type Action =
   | { type: "RESTORE" }
   | {
       type: "READY";
+      /** When provided, finalises the matching pending entry only. */
+      jobId?: string;
       resultUrl: string;
       opinion: string;
       shareUrl?: string;
@@ -59,6 +62,8 @@ type Action =
     }
   | {
       type: "ERROR";
+      /** When provided, finalises the matching pending entry only. */
+      jobId?: string;
       message: string;
     }
   | {
@@ -122,11 +127,10 @@ export function reducer(
 ): TryOnAssistantState {
   switch (action.type) {
     case "HYDRATE": {
-      // Restore from sessionStorage. If the persisted state was
-      // mid-job (preparing / applying / finalizing), reset that part
-      // — server jobs can't be reattached across iframe reloads, so
-      // the safest UX is to bring the customer back to the compose
-      // view while keeping the entire chat history visible.
+      // Restore from sessionStorage. Any history entry left in the
+      // "pending" state when the iframe was destroyed becomes
+      // "interrupted" — the fetch + simulator are gone, but the
+      // card stays visible in the feed so the customer can retry.
       const stored = action.state;
       const wasMidJob =
         stored.status === "preparing" ||
@@ -135,6 +139,17 @@ export function reducer(
         stored.status === "placing_product" ||
         stored.status === "generating" ||
         stored.status === "quality_check";
+      const history = (stored.history ?? []).map((e) =>
+        e.status === "pending"
+          ? {
+              ...e,
+              status: "interrupted" as const,
+              errorMessage:
+                e.errorMessage ??
+                "Simulation interrompue — vous pouvez la relancer.",
+            }
+          : e
+      );
       return {
         ...INITIAL,
         ...stored,
@@ -142,8 +157,7 @@ export function reducer(
         minimized: false,
         status: wasMidJob ? "idle" : stored.status,
         progress: wasMidJob ? 0 : stored.progress,
-        // Fallback if older payloads predate the history field.
-        history: stored.history ?? [],
+        history,
       };
     }
     case "BOOT": {
@@ -181,12 +195,23 @@ export function reducer(
       };
     }
     case "START": {
-      const intro = makeMessage("assistant", action.message, "progress");
-      const shoppingTip = makeMessage(
-        "assistant",
-        "Vous pouvez réduire cette bulle et continuer vos achats — je vous préviens ici dès que c’est prêt.",
-        "info"
-      );
+      // Push a new PENDING entry into the history feed. The
+      // simulation panel renders INSIDE this entry's card, so when
+      // the customer navigates to a different PDP the in-flight
+      // attempt stays visible above the new compose form.
+      const pendingEntry: TryOnHistoryEntry = {
+        id: `entry_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+        jobId: action.jobId,
+        category: action.category,
+        productTitle: action.productTitle ?? state.productTitle,
+        productUrl: action.productUrl ?? state.productUrl,
+        productImage: action.productImage ?? state.productImage,
+        status: "pending",
+        progress: 0,
+        stageStatus: "preparing",
+        cartStatus: "idle",
+        createdAt: Date.now(),
+      };
       return {
         ...state,
         active: true,
@@ -203,16 +228,35 @@ export function reducer(
         resultUrl: undefined,
         shareUrl: undefined,
         fallbackUsed: undefined,
-        // Append START messages to the existing thread — never wipe.
-        messages: [...state.messages, intro, shoppingTip],
+        history: [...state.history, pendingEntry],
       };
     }
-    case "PROGRESS":
+    case "PROGRESS": {
+      const newProgress = Math.max(
+        state.progress,
+        Math.min(100, action.progress)
+      );
+      // Sync the latest pending entry so the simulation panel inside
+      // its card reflects the same numbers (in case the bubble has
+      // moved on to a different product page above).
+      const history = state.history.map((e, i) => {
+        const isLast = i === state.history.length - 1;
+        if (isLast && e.status === "pending" && e.jobId === state.jobId) {
+          return {
+            ...e,
+            progress: Math.max(e.progress, newProgress),
+            stageStatus: action.status,
+          };
+        }
+        return e;
+      });
       return {
         ...state,
         status: action.status,
-        progress: Math.max(state.progress, Math.min(100, action.progress)),
+        progress: newProgress,
+        history,
       };
+    }
     case "MESSAGE":
       return { ...state, messages: [...state.messages, action.message] };
     case "MINIMIZE":
@@ -220,23 +264,48 @@ export function reducer(
     case "RESTORE":
       return { ...state, minimized: false };
     case "READY": {
-      // Snapshot the just-finished try-on into the history feed so
-      // the customer can scroll up later and see every article they
-      // tried. The card carries its own opinion + share/cart state.
-      const entry: NonNullable<TryOnAssistantState["history"]>[number] = {
-        id: `entry_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-        jobId: state.jobId ?? `job_${Date.now()}`,
-        category: state.category ?? "watch",
-        productTitle: state.productTitle,
-        productUrl: state.productUrl,
-        productImage: state.productImage,
-        resultUrl: action.resultUrl,
-        shareUrl: action.shareUrl,
-        opinion: action.opinion,
-        fallbackUsed: action.fallbackUsed,
-        cartStatus: "idle",
-        createdAt: Date.now(),
-      };
+      // Finalise the PENDING entry that this READY corresponds to
+      // (matched by jobId). If none exists — e.g. legacy state — push
+      // a brand-new entry instead so we never drop the result.
+      const targetJobId = action.jobId ?? state.jobId;
+      let didUpdate = false;
+      const history = state.history.map((e) => {
+        if (
+          !didUpdate &&
+          e.status === "pending" &&
+          (targetJobId == null || e.jobId === targetJobId)
+        ) {
+          didUpdate = true;
+          return {
+            ...e,
+            status: "ready" as const,
+            progress: 100,
+            resultUrl: action.resultUrl,
+            shareUrl: action.shareUrl,
+            opinion: action.opinion,
+            fallbackUsed: action.fallbackUsed,
+          };
+        }
+        return e;
+      });
+      if (!didUpdate) {
+        history.push({
+          id: `entry_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+          jobId: targetJobId ?? `job_${Date.now()}`,
+          category: state.category ?? "watch",
+          productTitle: state.productTitle,
+          productUrl: state.productUrl,
+          productImage: state.productImage,
+          status: "ready",
+          progress: 100,
+          resultUrl: action.resultUrl,
+          shareUrl: action.shareUrl,
+          opinion: action.opinion,
+          fallbackUsed: action.fallbackUsed,
+          cartStatus: "idle",
+          createdAt: Date.now(),
+        });
+      }
       return {
         ...state,
         status: action.fallbackUsed ? "fallback_ready" : "ready",
@@ -244,21 +313,34 @@ export function reducer(
         resultUrl: action.resultUrl,
         shareUrl: action.shareUrl,
         fallbackUsed: action.fallbackUsed,
-        history: [...state.history, entry],
-        // No more "Votre simulation est prête ✨" + opinion chat
-        // bubbles — the card itself surfaces those.
+        history,
       };
     }
     case "ERROR": {
-      const errorMessage = makeMessage(
-        "assistant",
-        "Je n’ai pas pu finaliser ce rendu. Vous pouvez réessayer avec une photo plus nette ou essayer un autre modèle.",
-        "error"
-      );
+      // Finalise the matching pending entry as failed.
+      const targetJobId = action.jobId ?? state.jobId;
+      const friendly =
+        "Je n’ai pas pu finaliser ce rendu. Vous pouvez réessayer avec une photo plus nette ou essayer un autre modèle.";
+      let didUpdate = false;
+      const history = state.history.map((e) => {
+        if (
+          !didUpdate &&
+          e.status === "pending" &&
+          (targetJobId == null || e.jobId === targetJobId)
+        ) {
+          didUpdate = true;
+          return {
+            ...e,
+            status: "error" as const,
+            errorMessage: action.message ?? friendly,
+          };
+        }
+        return e;
+      });
       return {
         ...state,
         status: "error",
-        messages: [...state.messages, errorMessage],
+        history,
       };
     }
     case "CART_STATUS": {
@@ -330,6 +412,12 @@ export interface StartArgs {
 }
 
 export interface ReadyArgs {
+  /**
+   * Job identifier returned by `start()`. When set, only the
+   * matching pending entry is finalised — important when several
+   * try-ons run concurrently across PDPs.
+   */
+  jobId?: string;
   resultUrl: string;
   opinion: string;
   shareUrl?: string;
@@ -472,10 +560,17 @@ export function useTryOnAssistant() {
 
   const ready = useCallback(
     (args: ReadyArgs) => {
-      stopSimulator();
-      const jobId = jobIdRef.current ?? generateJobId();
+      // Only stop the simulator when this READY corresponds to the
+      // currently-tracked job. Otherwise an out-of-order resolve
+      // would silently kill the simulation of a fresher attempt.
+      const currentJob = jobIdRef.current;
+      if (!args.jobId || args.jobId === currentJob) {
+        stopSimulator();
+      }
+      const jobId = args.jobId ?? currentJob ?? generateJobId();
       dispatch({
         type: "READY",
+        jobId,
         resultUrl: args.resultUrl,
         opinion: args.opinion,
         shareUrl: args.shareUrl,
@@ -496,11 +591,14 @@ export function useTryOnAssistant() {
   );
 
   const error = useCallback(
-    (message: string) => {
-      stopSimulator();
-      const jobId = jobIdRef.current ?? generateJobId();
-      dispatch({ type: "ERROR", message });
-      postJobError({ jobId, message });
+    (message: string, jobId?: string) => {
+      const currentJob = jobIdRef.current;
+      if (!jobId || jobId === currentJob) {
+        stopSimulator();
+      }
+      const resolvedJobId = jobId ?? currentJob ?? generateJobId();
+      dispatch({ type: "ERROR", jobId: resolvedJobId, message });
+      postJobError({ jobId: resolvedJobId, message });
     },
     [stopSimulator]
   );

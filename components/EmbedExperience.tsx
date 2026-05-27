@@ -70,12 +70,11 @@ export function EmbedExperience() {
         }
       : undefined;
 
-  const handleOpenLightbox = useCallback((resultUrl: string) => {
-    // Open the rendered image in a new tab so the customer can pinch-
-    // zoom / right-click save without losing the bubble state.
-    if (typeof window !== "undefined") {
-      window.open(resultUrl, "_blank", "noopener,noreferrer");
-    }
+  // The bubble now ships with its own in-iframe lightbox (see
+  // AssistantLightbox). The host doesn't need to spawn a popup.
+  // We keep the hook so future host integrations can subscribe.
+  const handleOpenLightbox = useCallback((_resultUrl: string) => {
+    // intentionally no-op — lightbox is handled inside the iframe.
   }, []);
 
   return (

@@ -87,7 +87,7 @@ describe("assistant reducer — conversation history is preserved", () => {
     expect(next.status).toBe("ready");
   });
 
-  it("START appends to the conversation instead of replacing it", () => {
+  it("START pushes a pending history entry and preserves prior chat messages", () => {
     const seeded: TryOnAssistantState = {
       ...INITIAL,
       active: true,
@@ -101,9 +101,14 @@ describe("assistant reducer — conversation history is preserved", () => {
       message: "Je prépare votre simulation IA…",
     });
 
-    expect(next.messages.length).toBeGreaterThan(1);
+    // No new chat bubbles (the sim panel lives inside the entry now).
+    expect(next.messages.length).toBe(1);
     expect(next.messages[0].text).toBe("earlier turn");
     expect(next.status).toBe("preparing");
+    // …but a pending entry has been pushed onto the history feed.
+    expect(next.history).toHaveLength(1);
+    expect(next.history[0].status).toBe("pending");
+    expect(next.history[0].jobId).toBe("job_1");
   });
 
   it("NEW_TRY clears the result and adds a separator without wiping history", () => {
@@ -204,6 +209,8 @@ describe("assistant reducer — try-on history across PDPs", () => {
           category: "watch",
           productTitle: "Watch A",
           productImage: "https://shop.com/A.jpg",
+          status: "ready",
+          progress: 100,
           resultUrl: "https://cdn.example.com/A.png",
           opinion: "A is great",
           cartStatus: "idle",
@@ -278,6 +285,8 @@ describe("assistant reducer — try-on history across PDPs", () => {
           id: "e1",
           jobId: "j1",
           category: "watch",
+          status: "ready",
+          progress: 100,
           resultUrl: "r1",
           opinion: "o1",
           cartStatus: "idle",
@@ -287,6 +296,8 @@ describe("assistant reducer — try-on history across PDPs", () => {
           id: "e2",
           jobId: "j2",
           category: "glasses",
+          status: "ready",
+          progress: 100,
           resultUrl: "r2",
           opinion: "o2",
           cartStatus: "idle",
@@ -305,6 +316,78 @@ describe("assistant reducer — try-on history across PDPs", () => {
     expect(next.history[1].cartStatus).toBe("idle");
   });
 
+  it("PROGRESS keeps the matching pending entry in sync", () => {
+    let state = reducer(
+      { ...INITIAL, active: true, category: "watch" },
+      {
+        type: "START",
+        jobId: "j1",
+        category: "watch",
+        message: "go",
+      }
+    );
+    state = reducer(state, {
+      type: "PROGRESS",
+      status: "generating",
+      progress: 47,
+    });
+    expect(state.history[0].progress).toBe(47);
+    expect(state.history[0].stageStatus).toBe("generating");
+  });
+
+  it("READY finalises the matching pending entry by jobId", () => {
+    let state = reducer(
+      { ...INITIAL, active: true, category: "watch" },
+      { type: "START", jobId: "j1", category: "watch", message: "go" }
+    );
+    // Start a second concurrent attempt — both pending.
+    state = reducer(state, {
+      type: "START",
+      jobId: "j2",
+      category: "glasses",
+      message: "go2",
+    });
+
+    expect(state.history).toHaveLength(2);
+
+    // Fetch for j1 resolves AFTER the simulator switched to j2.
+    state = reducer(state, {
+      type: "READY",
+      jobId: "j1",
+      resultUrl: "r1",
+      opinion: "o1",
+    });
+
+    expect(state.history[0].status).toBe("ready");
+    expect(state.history[0].resultUrl).toBe("r1");
+    // j2 is untouched, still pending.
+    expect(state.history[1].status).toBe("pending");
+  });
+
+  it("HYDRATE flips stale pending entries to interrupted", () => {
+    const stale: TryOnAssistantState = {
+      ...INITIAL,
+      active: true,
+      history: [
+        {
+          id: "e1",
+          jobId: "j1",
+          category: "watch",
+          status: "pending",
+          progress: 32,
+          stageStatus: "generating",
+          cartStatus: "idle",
+          createdAt: 1,
+        },
+      ],
+    };
+
+    const next = reducer(INITIAL, { type: "HYDRATE", state: stale });
+    expect(next.history).toHaveLength(1);
+    expect(next.history[0].status).toBe("interrupted");
+    expect(next.history[0].errorMessage).toBeDefined();
+  });
+
   it("clearSession wipes the history along with the rest of the state", () => {
     const seeded: TryOnAssistantState = {
       ...INITIAL,
@@ -314,6 +397,8 @@ describe("assistant reducer — try-on history across PDPs", () => {
           id: "e1",
           jobId: "j1",
           category: "watch",
+          status: "ready",
+          progress: 100,
           resultUrl: "r1",
           opinion: "o1",
           cartStatus: "idle",

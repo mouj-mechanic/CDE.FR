@@ -403,6 +403,11 @@
       ".trywithai-overlay{position:fixed;bottom:0;right:0;width:100%;height:100%;z-index:2147483647;background:transparent;pointer-events:none;animation:twa-fadein .3s ease-out;transition:opacity .25s,visibility .25s}",
       "@media (min-width:641px){.trywithai-overlay{width:440px;height:90vh;max-height:760px;bottom:0;right:0;padding:0}}",
       ".trywithai-overlay--minimized{opacity:0;visibility:hidden;pointer-events:none}",
+      // Fullscreen lightbox mode: the iframe grows to cover the entire
+      // merchant viewport so the in-iframe Agrandir overlay is actually
+      // large enough to be useful.
+      ".trywithai-overlay--lightbox{width:100% !important;height:100% !important;bottom:0 !important;right:0 !important;max-height:none !important}",
+      "@media (min-width:641px){.trywithai-overlay--lightbox{width:100% !important;height:100% !important;max-height:none !important}}",
       ".trywithai-jobbubble{position:fixed;bottom:24px;right:24px;z-index:2147483646;display:flex;align-items:center;gap:10px;padding:12px 16px;border:none;border-radius:999px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;font-size:13px;font-weight:600;color:#fff;cursor:pointer;animation:twa-rise .55s cubic-bezier(.22,1,.36,1) both;box-shadow:0 10px 30px rgba(124,58,237,.36),0 0 0 2px rgba(255,255,255,.5) inset;transition:transform .25s,box-shadow .25s}",
       ".trywithai-jobbubble:hover{transform:translateY(-2px) scale(1.03)}",
       ".trywithai-jobbubble .twa-job-icon{width:10px;height:10px;border-radius:50%;background:#fff;animation:twa-dot-pulse 1.4s ease-in-out infinite}",
@@ -747,9 +752,27 @@
       case "TRYWITHAI_OPEN_RESULT":
         restoreModal();
         return;
+      case "TRYWITHAI_LIGHTBOX_OPEN":
+        expandIframeFullscreen();
+        return;
+      case "TRYWITHAI_LIGHTBOX_CLOSE":
+        shrinkIframeBubble();
+        return;
       default:
         return;
     }
+  }
+
+  function expandIframeFullscreen() {
+    var overlay = document.getElementById("trywithai-overlay");
+    if (!overlay) return;
+    overlay.classList.add("trywithai-overlay--lightbox");
+  }
+
+  function shrinkIframeBubble() {
+    var overlay = document.getElementById("trywithai-overlay");
+    if (!overlay) return;
+    overlay.classList.remove("trywithai-overlay--lightbox");
   }
 
   function handleAddToCart(payload) {
