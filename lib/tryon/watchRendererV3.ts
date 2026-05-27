@@ -114,6 +114,23 @@ export interface WatchRenderResultV3 {
 }
 
 // ──────────────────────────────────────────────────────────────────────
+//  Env helpers — Next.js inlines `process.env.NEXT_PUBLIC_*` at build
+//  time via STATIC textual replacement. `process.env[dynamicKey]` is
+//  always undefined client-side. We must therefore access each public
+//  name literally and let the caller pass the resolved tuple.
+// ──────────────────────────────────────────────────────────────────────
+
+function pickEnvForRotation(
+  values: Array<string | undefined>
+): string | undefined {
+  for (const v of values) {
+    const t = v?.trim();
+    if (t) return t;
+  }
+  return undefined;
+}
+
+// ──────────────────────────────────────────────────────────────────────
 //  Orientation detection
 // ──────────────────────────────────────────────────────────────────────
 
@@ -342,32 +359,69 @@ export async function renderWatchOverlayV3(
     : null;
   const geometry = auto ?? fallbackWristGeometry(userW, userH, productAspect);
 
-  // 4. Rotation — the WHOLE point of V3. We override the productStrap
-  //    axis from the orientation detector so a vertical-strap product
-  //    rotates around 90° while a horizontal-strap product rotates
-  //    around 0°.
+  // 4. Rotation — the WHOLE point of V3.
+  //
+  //  PATCH (WATCH_FORCE_AXIS_OFFSET_DEG): the customer reported a
+  //  consistent 90° axis error on every render. We expose a direct
+  //  override that ADDS a fixed offset to the geometric base
+  //  rotation. The operator sets `WATCH_FORCE_AXIS_OFFSET_DEG=90`
+  //  (or -90) in `.env.local` until we identify which sign of the
+  //  90° correction matches the product PNG axis convention.
+  //
+  //  The patch SHORT-CIRCUITS the anatomical correction + clamp +
+  //  force-min pipeline because the previous chain produced the
+  //  wrong axis on the test photo even though every individual
+  //  step looked correct in isolation. Once the right offset is
+  //  identified, this becomes the source of truth.
   const rotationResult = computeWatchRotation({
     landmarks: input.landmarks,
     imageWidth: userW,
     imageHeight: userH,
     productMeta: { strapAxisDeg: orientation.productStrapAxisDeg },
   });
-  let finalRotationDeg = rotationResult.rotationDeg + adj.rotationDeg;
 
-  // Safety: when the forearm is clearly diagonal but the engine
-  // estimate is near 0°, force a visible rotation. The check inside
-  // computeWatchRotation already runs this when the env flag is on;
-  // we re-apply it here in case the user added a manual offset that
-  // pulled it back near 0°.
-  // Use the function's continuous-amplification defaults (3° dead
-  // zone, target 35°). Hard-coding 15° here would re-introduce the
-  // "vertical-strap on a slightly tilted forearm" sticker effect.
-  const forced = forceMinimumRotationForDiagonalForearm({
-    forearmAxisDeg: rotationResult.forearmAxisDeg,
-    currentRotationDeg: finalRotationDeg,
-  });
-  if (forced.forced) finalRotationDeg = forced.rotationDeg;
-  finalRotationDeg = normalizeAngle180(finalRotationDeg);
+  const forcedAxisOffsetDegRaw = pickEnvForRotation([
+    process.env.NEXT_PUBLIC_WATCH_FORCE_AXIS_OFFSET_DEG,
+    process.env.WATCH_FORCE_AXIS_OFFSET_DEG,
+  ]);
+  const forcedAxisOffsetDeg = forcedAxisOffsetDegRaw
+    ? Number(forcedAxisOffsetDegRaw)
+    : 0;
+
+  let finalRotationDeg: number;
+  let forcedMinimumApplied = false;
+  if (Number.isFinite(forcedAxisOffsetDeg) && forcedAxisOffsetDeg !== 0) {
+    // PATCH path — direct override.
+    finalRotationDeg = normalizeAngle180(
+      rotationResult.baseRotationDeg + forcedAxisOffsetDeg + adj.rotationDeg
+    );
+  } else {
+    // Legacy path (anatomical correction + force-min amplifier).
+    finalRotationDeg = rotationResult.rotationDeg + adj.rotationDeg;
+    const forced = forceMinimumRotationForDiagonalForearm({
+      forearmAxisDeg: rotationResult.forearmAxisDeg,
+      currentRotationDeg: finalRotationDeg,
+    });
+    if (forced.forced) {
+      finalRotationDeg = forced.rotationDeg;
+      forcedMinimumApplied = true;
+    }
+    finalRotationDeg = normalizeAngle180(finalRotationDeg);
+  }
+
+  // Mandatory rotation patch log — exposed in dev console so the
+  // operator can correlate the offset value with the rendered result.
+  if (typeof console !== "undefined" && console.info) {
+    console.info("[WATCH_ROTATION_PATCH]", {
+      forearmAxisDeg: rotationResult.forearmAxisDeg,
+      productStrapAxisDeg: rotationResult.productStrapAxisDeg,
+      baseRotationDeg: rotationResult.baseRotationDeg,
+      forcedAxisOffsetDeg,
+      finalRotationDeg,
+      // Filled in below after rotateProductLayer reports back.
+      appliedRotationDeg: null as number | null,
+    });
+  }
 
   // 5. Apply rotation to the WHOLE product layer (no segmentation).
   // Scale derived from anatomical geometry — V3 favours a smaller
@@ -407,6 +461,24 @@ export async function renderWatchOverlayV3(
     scale: v3Scale,
     rotationDeg: finalRotationDeg,
   });
+
+  // ── Blocking assertion: the rotation MUST have been applied. ─────
+  // `rotateProductLayer` returns `appliedRotationDeg` as the literal
+  // value it passed to `ctx.rotate()`. If it disagrees with the
+  // requested `finalRotationDeg` by more than 2°, somewhere down the
+  // chain a non-rotated copy of the product slipped in — we refuse
+  // to ship that result and fail loudly so the operator notices.
+  const appliedRotationDeg = rotated.appliedRotationDeg;
+  if (Math.abs(appliedRotationDeg - finalRotationDeg) > 2) {
+    throw new Error("watch_rotation_not_applied");
+  }
+  if (typeof console !== "undefined" && console.info) {
+    console.info("[WATCH_ROTATION_PATCH] applied", {
+      finalRotationDeg,
+      appliedRotationDeg,
+      delta: appliedRotationDeg - finalRotationDeg,
+    });
+  }
 
   // 6. Drop shadow under the case — two-pass for a grounded feel.
   //    - Soft ambient halo (large blur, low opacity) sits the watch
@@ -474,7 +546,8 @@ export async function renderWatchOverlayV3(
       forearmAxisDeg: Math.round(rotationResult.forearmAxisDeg * 10) / 10,
       finalRotationDeg: Math.round(finalRotationDeg * 10) / 10,
       appliedRotationDeg: Math.round(rotated.appliedRotationDeg * 10) / 10,
-      forcedMinimumApplied: forced.forced,
+      forcedMinimumApplied,
+      forcedAxisOffsetDeg,
       axisDiffDeg: Math.round(rotationQuality.diffDeg * 10) / 10,
       qualityReason: rotationQuality.reason,
       v3Scale: Math.round(v3Scale * 1000) / 1000,
