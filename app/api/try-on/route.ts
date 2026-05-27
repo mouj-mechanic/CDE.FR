@@ -501,10 +501,23 @@ export async function POST(request: NextRequest) {
     // from a contact-band mask).
     let autoMaskGenerated = false;
     let autoMaskFailed = false;
+    // ── Watch V3 kill switch short-circuit ────────────────────────
+    // When the operator disabled OpenAI contact blending for
+    // watches/hand-jewelry (WATCH_USE_OPENAI_CONTACT_BLEND=false),
+    // the V3 composite IS the final output. Generating an auto-mask
+    // is wasted work and worse: a failing mask-safety check below
+    // would NULL OUT the composite too (anti-OpenAI-misfire guard),
+    // leaving `finalPreview === null` and triggering the strict-
+    // accessory 400 ("Internal composite + mask are required…").
+    // Skip both auto-mask and mask-safety entirely on this path.
+    const skipAutoMaskForWatchKillSwitch =
+      !watchUseOpenAIBlend &&
+      (category === "watch" || category === "hand-jewelry");
     if (
       openaiActive &&
       isAccessory &&
       autoMaskEnabled &&
+      !skipAutoMaskForWatchKillSwitch &&
       inpaintComposite !== null &&
       inpaintMask === null
     ) {
@@ -668,10 +681,16 @@ export async function POST(request: NextRequest) {
       isAccessory &&
       requireInternalMask &&
       (inpaintComposite === null || inpaintMask === null);
+    // The watch V3 kill switch path INTENTIONALLY ships no mask —
+    // the deterministic composite IS the final output. Exempting it
+    // from the strict gate lets the route serve the V3 result via
+    // the normal "no AI used" return path further down (instead of
+    // mislabelling it as a fallback in the JSON response).
     if (
       accessoryInternalArtifactsMissing &&
       accessoryStrictMode &&
-      disableFreeGenForAccessories
+      disableFreeGenForAccessories &&
+      !skipAutoMaskForWatchKillSwitch
     ) {
       if (fallbackToDeterministic && finalPreview) {
         const resultUrl = await uploadPreviewToCdn(finalPreview, hasFalKey);
@@ -746,6 +765,71 @@ export async function POST(request: NextRequest) {
     // If the auto-mask attempted and failed but we still got here (free
     // gen not disabled), surface a soft warning so dashboards know.
     void autoMaskFailed;
+
+    // ── Watch V3 kill switch — short-circuit return ──────────────────
+    // When the operator disabled OpenAI contact-band blending for
+    // watches/hand-jewelry, the V3 composite IS the final output.
+    // We MUST short-circuit BEFORE any AI provider call to avoid
+    //   - wasted spend on a result we'd discard anyway, and
+    //   - "Internal composite + mask are required" 400s that come
+    //     from downstream paths assuming an AI step.
+    if (
+      skipAutoMaskForWatchKillSwitch &&
+      finalPreview !== null
+    ) {
+      const resultUrl = await uploadPreviewToCdn(finalPreview, hasFalKey);
+      const durationMs = Date.now() - startedAt;
+      const qualityStatus = clientWarnings.some(
+        (w) => w.code === "landmarks-missing"
+      )
+        ? "needs-better-photo"
+        : "passed";
+      trackTryOnUsage({
+        merchantId,
+        category,
+        provider: "fast-overlay",
+        model: "canvas-v3",
+        mock: false,
+        success: true,
+        durationMs,
+      });
+      console.info(
+        `[try-on] watch-v3-killswitch direct-return category=${category} durationMs=${durationMs}`
+      );
+      return NextResponse.json({
+        ok: true,
+        resultUrl,
+        previewUrl: resultUrl,
+        generatedAt: Date.now(),
+        mock: false,
+        provider: "fast-overlay",
+        model: "canvas-v3",
+        category,
+        durationMs,
+        renderMode: "fast-overlay" as RenderMode,
+        qualityStatus,
+        warnings: clientWarnings,
+        placement: watchPlacement,
+        edgeQuality,
+        debug: {
+          imageCount: 1 + productImages.length + productUrls.length,
+          productImageCount: productImages.length + productUrls.length,
+          productWasCutout,
+          productImageSource,
+          productHasAlpha,
+          productMimeType,
+          usedOpenAI: false,
+          usedFal: false,
+          usedLocalRenderer: true,
+          maskUsed: false,
+          autoMaskGenerated: false,
+          compositeUsed: true,
+          productLockCandidate: false,
+          productLockApplied: false,
+          watchKillSwitchEngaged: true,
+        },
+      });
+    }
 
     // In API-only mode every category MUST go through OpenAI — no
     // fast-overlay path, no canvas-as-final-result. Local renderers may
