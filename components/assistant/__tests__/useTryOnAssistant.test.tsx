@@ -365,7 +365,7 @@ describe("assistant reducer — try-on history across PDPs", () => {
     expect(state.history[1].status).toBe("pending");
   });
 
-  it("HYDRATE keeps pending entries pending (no auto-interrupt)", () => {
+  it("HYDRATE marks orphaned pending entries as interrupted (no phantom 92%)", () => {
     const stale: TryOnAssistantState = {
       ...INITIAL,
       active: true,
@@ -385,12 +385,18 @@ describe("assistant reducer — try-on history across PDPs", () => {
 
     const next = reducer(INITIAL, { type: "HYDRATE", state: stale });
     expect(next.history).toHaveLength(1);
-    expect(next.history[0].status).toBe("pending");
+    expect(next.history[0].status).toBe("interrupted");
+    // Last-known progress is preserved on the card so the customer
+    // sees where the prior simulation was.
     expect(next.history[0].progress).toBe(32);
-    expect(next.jobId).toBe("j1");
+    expect(next.history[0].errorMessage).toBeDefined();
+    expect(next.jobId).toBeUndefined();
   });
 
-  it("BOOT on a new PDP preserves a running pending job", () => {
+  it("BOOT on a new PDP preserves a running pending job (no reload path)", () => {
+    // This simulates the postMessage-based PDP change where the
+    // iframe is NOT reloaded — the simulator stays alive, so the
+    // pending entry must NOT be marked interrupted by BOOT.
     const seeded: TryOnAssistantState = {
       ...INITIAL,
       active: true,

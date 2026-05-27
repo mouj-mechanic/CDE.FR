@@ -154,15 +154,13 @@ export function reducer(
 ): TryOnAssistantState {
   switch (action.type) {
     case "HYDRATE": {
-      // Restore from sessionStorage. Pending entries STAY pending —
-      // we never auto-mark them "interrupted" on reload. The host
-      // keeps the iframe alive across PDP navigation when possible;
-      // if the fetch truly died the card will stay at its last
-      // progress until the customer retries.
+      // Restore from sessionStorage. Any pending entry persisted
+      // before a full iframe reload is now ORPHANED — the original
+      // `/api/try-on` fetch is gone with the previous frame. We
+      // flip those entries to "interrupted" (last-known progress
+      // kept) so the card renders a clean "Reprendre" CTA instead
+      // of a phantom progress bar stuck at 92%.
       const stored = action.state;
-      const history = normalizeHistory(stored.history ?? []);
-      const pending = history.filter((e) => e.status === "pending");
-      const activePending = pending[pending.length - 1];
       const wasMidJob =
         stored.status === "preparing" ||
         stored.status === "analyzing_photo" ||
@@ -170,24 +168,27 @@ export function reducer(
         stored.status === "placing_product" ||
         stored.status === "generating" ||
         stored.status === "quality_check";
+      const history = normalizeHistory(stored.history ?? []).map((e) =>
+        e.status === "pending"
+          ? {
+              ...e,
+              status: "interrupted" as const,
+              errorMessage:
+                e.errorMessage ??
+                "Simulation arrêtée — vous pouvez la relancer.",
+            }
+          : e
+      );
       return {
         ...INITIAL,
         ...stored,
         active: true,
         minimized: false,
         history,
-        // Keep the running job visible in the header + live card.
-        jobId: activePending?.jobId ?? stored.jobId,
-        status: activePending
-          ? (activePending.stageStatus ?? "preparing")
-          : wasMidJob
-            ? "idle"
-            : stored.status,
-        progress: activePending
-          ? activePending.progress
-          : wasMidJob
-            ? 0
-            : (stored.progress ?? 0),
+        // No more in-flight job — bubble lands back on idle.
+        jobId: undefined,
+        status: wasMidJob ? "idle" : stored.status,
+        progress: wasMidJob ? 0 : (stored.progress ?? 0),
       };
     }
     case "BOOT": {
@@ -565,26 +566,24 @@ export function useTryOnAssistant() {
     [stopSimulatorForJob]
   );
 
-  // Hydrate from sessionStorage on the very first mount. Runs before
-  // any boot() / start() the consumer might fire in their own
-  // useEffect (registration order).
+  // Hydrate from sessionStorage on the very first mount.
+  //
+  // IMPORTANT: we never restart a fake simulator for `pending`
+  // entries persisted across an iframe reload — the original
+  // `fetch()` to `/api/try-on` died with the previous iframe so
+  // there's no real response to wait for. Restarting the simulator
+  // would just cap at 92% and freeze, hiding the older ready card
+  // behind a phantom progress bar. Instead, HYDRATE marks any
+  // dangling pending entry as `interrupted` so the customer sees a
+  // friendly "Reprendre" CTA on that card.
   useEffect(() => {
     if (hydratedRef.current) return;
     hydratedRef.current = true;
     const stored = loadFromSession();
     if (stored) {
       dispatch({ type: "HYDRATE", state: stored });
-      const pending = (stored.history ?? []).filter(
-        (e) => e.status === "pending"
-      );
-      for (const entry of pending) {
-        startSimulatorForJob(entry.jobId, entry.category);
-      }
-      if (pending.length > 0) {
-        jobIdRef.current = pending[pending.length - 1]!.jobId;
-      }
     }
-  }, [startSimulatorForJob]);
+  }, []);
 
   // Persist state to sessionStorage whenever it changes (after
   // hydration). Skipped during SSR (no window).

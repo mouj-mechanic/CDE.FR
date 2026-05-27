@@ -1,8 +1,11 @@
 "use client";
 
+import { useState } from "react";
 import { motion } from "framer-motion";
 import {
   AlertCircle,
+  Check,
+  Download,
   Eye,
   Loader2,
   RefreshCw,
@@ -50,6 +53,46 @@ export function HistoryCard({
 
   const cartAdding = entry.cartStatus === "adding";
   const cartAdded = entry.cartStatus === "added";
+
+  const [downloadState, setDownloadState] = useState<
+    "idle" | "saving" | "saved"
+  >("idle");
+
+  const handleDownload = async () => {
+    if (!entry.resultUrl || downloadState === "saving") return;
+    setDownloadState("saving");
+    try {
+      // Fetch the image as a blob so we can trigger a real "Save As"
+      // even for cross-origin CDNs. Same-origin URLs and blob: URLs
+      // work too.
+      const res = await fetch(entry.resultUrl, { mode: "cors" });
+      const blob = await res.blob();
+      const blobUrl = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = blobUrl;
+      const safeTitle = (entry.productTitle ?? "essayage")
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-+|-+$/g, "")
+        .slice(0, 40) || "essayage";
+      a.download = `trywithai-${safeTitle}.png`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(blobUrl);
+      setDownloadState("saved");
+      window.setTimeout(() => setDownloadState("idle"), 1800);
+    } catch {
+      // CORS blocked the fetch — fall back to opening the URL in a
+      // new tab so the customer can long-press / right-click save.
+      try {
+        window.open(entry.resultUrl, "_blank", "noopener,noreferrer");
+      } catch {
+        /* swallow */
+      }
+      setDownloadState("idle");
+    }
+  };
 
   return (
     <motion.article
@@ -135,14 +178,32 @@ export function HistoryCard({
               )}
               {cartAdded ? "Ajouté au panier ✓" : "Ajouter au panier"}
             </button>
-            <button
-              type="button"
-              onClick={() => onAgrandir(entry)}
-              className="flex w-full items-center justify-center gap-2 rounded-xl bg-white px-3 py-1.5 text-xs font-semibold text-ink ring-1 ring-bordeaux/15 transition-colors hover:bg-cream"
-            >
-              <Eye className="h-3.5 w-3.5" aria-hidden />
-              Agrandir
-            </button>
+            <div className="grid grid-cols-2 gap-1.5">
+              <button
+                type="button"
+                onClick={() => onAgrandir(entry)}
+                className="flex items-center justify-center gap-2 rounded-xl bg-white px-3 py-1.5 text-xs font-semibold text-ink ring-1 ring-bordeaux/15 transition-colors hover:bg-cream"
+              >
+                <Eye className="h-3.5 w-3.5" aria-hidden />
+                Agrandir
+              </button>
+              <button
+                type="button"
+                onClick={handleDownload}
+                disabled={downloadState === "saving"}
+                className="flex items-center justify-center gap-2 rounded-xl bg-white px-3 py-1.5 text-xs font-semibold text-ink ring-1 ring-bordeaux/15 transition-colors hover:bg-cream disabled:opacity-60"
+                aria-live="polite"
+              >
+                {downloadState === "saving" ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+                ) : downloadState === "saved" ? (
+                  <Check className="h-3.5 w-3.5 text-emerald-600" aria-hidden />
+                ) : (
+                  <Download className="h-3.5 w-3.5" aria-hidden />
+                )}
+                {downloadState === "saved" ? "Enregistré" : "Enregistrer"}
+              </button>
+            </div>
             <AssistantShareActions
               resultUrl={entry.shareUrl ?? entry.resultUrl}
               shareTitle={entry.productTitle}

@@ -402,7 +402,12 @@
       // so clicks outside still reach the merchant page.
       ".trywithai-overlay{position:fixed;bottom:0;right:0;width:100%;height:100%;z-index:2147483647;background:transparent;pointer-events:none;animation:twa-fadein .3s ease-out;transition:opacity .25s,visibility .25s}",
       "@media (min-width:641px){.trywithai-overlay{width:440px;height:90vh;max-height:760px;bottom:0;right:0;padding:0}}",
-      ".trywithai-overlay--minimized{opacity:0;visibility:hidden;pointer-events:none}",
+      // Minimized mode: shrink the overlay to a small bottom-right
+      // area where ONLY the in-iframe pill is rendered. The host
+      // page is then fully clickable outside that area. We never
+      // render a duplicate host-side pill — see double-bubble fix.
+      ".trywithai-overlay--minimized{width:260px !important;height:80px !important;bottom:8px !important;right:8px !important;max-height:none !important;background:transparent}",
+      "@media (min-width:641px){.trywithai-overlay--minimized{width:260px !important;height:80px !important;max-height:none !important;bottom:8px !important;right:8px !important}}",
       // Fullscreen lightbox mode: the iframe grows to cover the entire
       // merchant viewport so the in-iframe Agrandir overlay is actually
       // large enough to be useful.
@@ -660,9 +665,11 @@
     var overlay = document.getElementById("trywithai-overlay");
     if (!overlay) return;
     overlay.classList.add("trywithai-overlay--minimized");
-    // Body scroll was never locked in bubble-mode — leave it alone.
     currentJob.minimized = true;
-    createOrUpdateJobBubble();
+    // No more host-side pill — the iframe shrinks to pill size and
+    // renders its own (single) minimized pill. Eliminates the
+    // double-bubble visual reported by customers.
+    removeJobBubble();
   }
 
   function restoreModal() {

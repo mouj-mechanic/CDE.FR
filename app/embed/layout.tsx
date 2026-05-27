@@ -29,9 +29,23 @@ export default function EmbedLayout({
   // Transparent body so the merchant page can show through when the
   // iframe is positioned as an overlay. The bubble itself paints its
   // own opaque background.
+  //
+  // The site-wide `globals.css` paints a multi-stop radial+linear
+  // gradient on every `body` — we MUST override it inline here so
+  // the embed iframe doesn't show a violet/pink rectangle over the
+  // merchant page (the bubble is the only opaque surface).
   return (
     <html lang="fr" className={`${cormorant.variable} ${inter.variable}`}>
-      <body className="min-h-screen bg-transparent">{children}</body>
+      <body
+        className="min-h-screen"
+        style={{
+          background: "transparent",
+          backgroundImage: "none",
+          backgroundColor: "transparent",
+        }}
+      >
+        {children}
+      </body>
     </html>
   );
 }

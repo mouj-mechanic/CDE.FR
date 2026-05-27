@@ -52,22 +52,36 @@ export function TryOnAssistantBubble({
   onCardRetry,
 }: TryOnAssistantBubbleProps) {
   const scrollerRef = useRef<HTMLDivElement>(null);
+  const wasNearBottomRef = useRef(true);
 
-  // Auto-scroll to the bottom (current state / latest card) as the
-  // feed grows or the customer arrives.
+  // Track whether the customer was scrolled near the bottom BEFORE
+  // the next render — we only auto-scroll if they were, so manual
+  // scrolling up to read older cards isn't yanked back down every
+  // time the progress number ticks.
   useEffect(() => {
     const node = scrollerRef.current;
     if (!node) return;
+    const onScroll = () => {
+      const distance =
+        node.scrollHeight - node.scrollTop - node.clientHeight;
+      wasNearBottomRef.current = distance < 80;
+    };
+    node.addEventListener("scroll", onScroll, { passive: true });
+    return () => node.removeEventListener("scroll", onScroll);
+  }, []);
+
+  // Auto-scroll only when a NEW card is appended (history.length
+  // changes) or the bubble opens. Progress ticks no longer scroll —
+  // that was hijacking the customer's manual scroll.
+  useEffect(() => {
+    const node = scrollerRef.current;
+    if (!node) return;
+    if (!wasNearBottomRef.current) return;
     const id = window.requestAnimationFrame(() => {
       node.scrollTop = node.scrollHeight;
     });
     return () => window.cancelAnimationFrame(id);
-  }, [
-    state.history.length,
-    state.status,
-    state.active,
-    state.progress,
-  ]);
+  }, [state.history.length, state.active]);
 
   const isWorking = useMemo(
     () =>
@@ -108,7 +122,10 @@ export function TryOnAssistantBubble({
         initial={{ opacity: 0, y: 24, scale: 0.95 }}
         animate={{ opacity: 1, y: 0, scale: 1 }}
         exit={{ opacity: 0, y: 24, scale: 0.95 }}
-        className="fixed bottom-4 right-4 z-[2147483646] flex items-center gap-2 rounded-full bg-gradient-to-r from-bordeaux via-fuchsia-500 to-gold px-4 py-3 text-sm font-semibold text-white shadow-lifted ring-2 ring-white/40"
+        // Anchor to bottom-right of the (now small) iframe so the
+        // host overlay area perfectly matches the pill — no
+        // accidental empty space behind it.
+        className="fixed bottom-2 right-2 z-[2147483646] flex items-center gap-2 rounded-full bg-gradient-to-r from-bordeaux via-fuchsia-500 to-gold px-4 py-3 text-sm font-semibold text-white shadow-lifted ring-2 ring-white/40"
         aria-label={
           isReady
             ? "Votre essayage est prêt — ouvrir"
