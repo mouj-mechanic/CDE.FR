@@ -398,7 +398,14 @@
       ".trywithai-bubble .twa-callout-close:hover{background:rgba(91,33,182,.16)}",
       ".trywithai-bubble .twa-dot{position:absolute;top:6px;right:6px;width:10px;height:10px;background:#EC4899;border:2px solid #fff;border-radius:50%;animation:twa-dot-pulse 1.6s ease-in-out infinite}",
       ".trywithai-bubble[data-pos='left'] .twa-dot{right:auto;left:6px}",
-      ".trywithai-overlay{position:fixed;inset:0;z-index:2147483647;background:rgba(30,27,75,.65);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);display:flex;align-items:center;justify-content:center;padding:16px;animation:twa-fadein .3s ease-out}",
+      ".trywithai-overlay{position:fixed;inset:0;z-index:2147483647;background:rgba(30,27,75,.65);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);display:flex;align-items:center;justify-content:center;padding:16px;animation:twa-fadein .3s ease-out;transition:opacity .25s,visibility .25s}",
+      ".trywithai-overlay--minimized{opacity:0;visibility:hidden;pointer-events:none}",
+      ".trywithai-jobbubble{position:fixed;bottom:24px;right:24px;z-index:2147483646;display:flex;align-items:center;gap:10px;padding:12px 16px;border:none;border-radius:999px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;font-size:13px;font-weight:600;color:#fff;cursor:pointer;animation:twa-rise .55s cubic-bezier(.22,1,.36,1) both;box-shadow:0 10px 30px rgba(124,58,237,.36),0 0 0 2px rgba(255,255,255,.5) inset;transition:transform .25s,box-shadow .25s}",
+      ".trywithai-jobbubble:hover{transform:translateY(-2px) scale(1.03)}",
+      ".trywithai-jobbubble .twa-job-icon{width:10px;height:10px;border-radius:50%;background:#fff;animation:twa-dot-pulse 1.4s ease-in-out infinite}",
+      ".trywithai-jobbubble--ready{animation:twa-rise .55s cubic-bezier(.22,1,.36,1) both,twa-pulse 1.6s ease-out infinite}",
+      ".trywithai-jobbubble--ready .twa-job-icon{animation:none;background:#34D399}",
+      ".trywithai-jobbubble .twa-job-pulse{width:10px;height:10px;border-radius:50%;background:#FBBF24;animation:twa-dot-pulse 1s ease-in-out infinite}",
       ".trywithai-modal{position:relative;width:100%;max-width:1080px;height:92vh;max-height:920px;background:#FDF4FF;border-radius:24px;overflow:hidden;box-shadow:0 28px 80px rgba(91,33,182,.35);animation:twa-zoomin .35s cubic-bezier(.22,1,.36,1) both}",
       ".trywithai-iframe{width:100%;height:100%;border:none;display:block;background:#FDF4FF}",
       ".trywithai-loader{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;background:#FDF4FF;z-index:5}",
@@ -498,8 +505,71 @@
     }
   }
 
+  // ── Async job state shared between overlay / parent bubble ─────────
+  //
+  //   When a try-on job is running we MUST keep the iframe mounted
+  //   even if the customer "closes" the overlay — killing the iframe
+  //   would cancel the fetch and waste an OpenAI call. We instead
+  //   minimise the overlay to a small parent bubble, restore the
+  //   body scroll, and reopen on click.
+  var currentJob = {
+    active: false,
+    status: "idle",
+    progress: 0,
+    resultUrl: "",
+    productTitle: "",
+    category: "",
+    minimized: false,
+    jobId: "",
+  };
+  var currentProductVariantId = "";
+
+  function detectVariantId() {
+    // 1. ?variant= URL param (PDP query string).
+    try {
+      var qs = new URLSearchParams(window.location.search);
+      var v = qs.get("variant");
+      if (v) return String(v);
+    } catch (e) {}
+    // 2. Hidden input in the cart-add form.
+    try {
+      var input = document.querySelector(
+        'form[action*="/cart/add"] [name="id"]'
+      );
+      if (input && input.value) return String(input.value);
+    } catch (e) {}
+    // 3. ShopifyAnalytics selected variant id.
+    try {
+      if (
+        window.ShopifyAnalytics &&
+        window.ShopifyAnalytics.meta &&
+        window.ShopifyAnalytics.meta.selectedVariantId
+      ) {
+        return String(window.ShopifyAnalytics.meta.selectedVariantId);
+      }
+    } catch (e) {}
+    // 4. First variant in ShopifyAnalytics product variants.
+    try {
+      var meta =
+        window.ShopifyAnalytics &&
+        window.ShopifyAnalytics.meta &&
+        window.ShopifyAnalytics.meta.product;
+      if (meta && meta.variants && meta.variants.length) {
+        return String(meta.variants[0].id);
+      }
+    } catch (e) {}
+    return "";
+  }
+
   function openModal() {
-    if (document.getElementById("trywithai-overlay")) return;
+    var existing = document.getElementById("trywithai-overlay");
+    if (existing) {
+      // Restore from minimised state if needed.
+      restoreModal();
+      return;
+    }
+
+    currentProductVariantId = detectVariantId();
 
     var info = detectProductInfo();
     var params = new URLSearchParams();
@@ -517,7 +587,7 @@
     overlay.id = "trywithai-overlay";
     overlay.className = "trywithai-overlay";
     overlay.addEventListener("click", function (e) {
-      if (e.target === overlay) closeModal();
+      if (e.target === overlay) handleCloseRequest();
     });
 
     var modal = document.createElement("div");
@@ -531,6 +601,7 @@
       "<p>Ouverture de TryWithAI…</p>";
 
     var iframe = document.createElement("iframe");
+    iframe.id = "trywithai-iframe";
     iframe.className = "trywithai-iframe";
     iframe.src = iframeSrc;
     iframe.title = "TryWithAI — Cabine d'essayage IA";
@@ -552,7 +623,7 @@
     closeBtn.className = "trywithai-close";
     closeBtn.setAttribute("aria-label", "Fermer");
     closeBtn.innerHTML = "&times;";
-    closeBtn.addEventListener("click", closeModal);
+    closeBtn.addEventListener("click", handleCloseRequest);
 
     modal.appendChild(loader);
     modal.appendChild(iframe);
@@ -576,6 +647,18 @@
     }
   }
 
+  // Request to close — when a job is active, MINIMISE instead of
+  // killing the iframe (which would cancel the fetch).
+  function handleCloseRequest() {
+    if (currentJob.active && currentJob.status !== "ready" &&
+        currentJob.status !== "fallback_ready" &&
+        currentJob.status !== "error") {
+      minimizeModal();
+      return;
+    }
+    closeModal();
+  }
+
   function closeModal() {
     var overlay = document.getElementById("trywithai-overlay");
     if (!overlay) return;
@@ -587,20 +670,226 @@
     }, 260);
     document.removeEventListener("keydown", onKeyDown);
     window.removeEventListener("message", onMessage);
+    removeJobBubble();
+    currentJob = {
+      active: false,
+      status: "idle",
+      progress: 0,
+      resultUrl: "",
+      productTitle: "",
+      category: "",
+      minimized: false,
+      jobId: "",
+    };
+  }
+
+  function minimizeModal() {
+    var overlay = document.getElementById("trywithai-overlay");
+    if (!overlay) return;
+    overlay.classList.add("trywithai-overlay--minimized");
+    document.body.style.overflow = "";
+    currentJob.minimized = true;
+    createOrUpdateJobBubble();
+  }
+
+  function restoreModal() {
+    var overlay = document.getElementById("trywithai-overlay");
+    if (!overlay) return;
+    overlay.classList.remove("trywithai-overlay--minimized");
+    document.body.style.overflow = "hidden";
+    currentJob.minimized = false;
+    removeJobBubble();
+    // Echo the restore down so the iframe's bubble UI follows.
+    var iframe = document.getElementById("trywithai-iframe");
+    if (iframe && iframe.contentWindow) {
+      try {
+        iframe.contentWindow.postMessage(
+          { type: "TRYWITHAI_RESTORE_HOST", source: "trywithai-host" },
+          "*"
+        );
+      } catch (_) {}
+    }
   }
 
   function onKeyDown(e) {
-    if (e.key === "Escape") closeModal();
+    if (e.key === "Escape") handleCloseRequest();
   }
 
   function onMessage(e) {
     if (!e.data || typeof e.data !== "object") return;
-    if (e.data.type === "TRYWITHAI_CLOSE" || e.data.type === "cabines:close") {
-      closeModal();
+    var msg = e.data;
+    // Whitelist by `source` so we never react to Stripe / Klaviyo /
+    // other unrelated postMessages.
+    if (msg.source && msg.source !== "trywithai") return;
+    var type = msg.type;
+    var payload = msg.payload || {};
+
+    switch (type) {
+      case "TRYWITHAI_CLOSE":
+      case "cabines:close":
+        handleCloseRequest();
+        return;
+      case "TRYWITHAI_READY":
+      case "cabines:ready":
+        hideLoader();
+        return;
+      case "TRYWITHAI_JOB_STARTED":
+        currentJob = {
+          active: true,
+          status: "preparing",
+          progress: 0,
+          resultUrl: "",
+          productTitle: payload.productTitle || "",
+          category: payload.category || "",
+          minimized: false,
+          jobId: payload.jobId || "",
+        };
+        return;
+      case "TRYWITHAI_JOB_PROGRESS":
+        currentJob.status = payload.status || currentJob.status;
+        currentJob.progress = payload.progress || currentJob.progress;
+        if (currentJob.minimized) updateJobBubble();
+        return;
+      case "TRYWITHAI_JOB_READY":
+        currentJob.status = payload.fallbackUsed
+          ? "fallback_ready"
+          : "ready";
+        currentJob.progress = 100;
+        currentJob.resultUrl = payload.resultUrl || "";
+        currentJob.active = false;
+        if (currentJob.minimized) updateJobBubble();
+        return;
+      case "TRYWITHAI_JOB_ERROR":
+        currentJob.status = "error";
+        currentJob.active = false;
+        if (currentJob.minimized) updateJobBubble();
+        return;
+      case "TRYWITHAI_MINIMIZE":
+        minimizeModal();
+        return;
+      case "TRYWITHAI_RESTORE":
+        restoreModal();
+        return;
+      case "TRYWITHAI_ADD_TO_CART":
+        handleAddToCart(payload);
+        return;
+      case "TRYWITHAI_SHARE":
+        // Pure analytics hook for now — the iframe handles the share
+        // intent itself (Web Share API / URL open).
+        return;
+      case "TRYWITHAI_OPEN_RESULT":
+        restoreModal();
+        return;
+      default:
+        return;
     }
-    if (e.data.type === "TRYWITHAI_READY" || e.data.type === "cabines:ready") {
-      hideLoader();
+  }
+
+  function handleAddToCart(payload) {
+    var variantId = currentProductVariantId || detectVariantId();
+    if (!variantId) {
+      replyToIframe("TRYWITHAI_CART_ERROR", { message: "no_variant_id" });
+      return;
     }
+    var root =
+      (window.Shopify && window.Shopify.routes && window.Shopify.routes.root) ||
+      "/";
+    var url = root.replace(/\/?$/, "/") + "cart/add.js";
+    var body = {
+      items: [
+        {
+          id: Number(variantId) || variantId,
+          quantity: 1,
+          properties: {
+            _TryWithAI: "Essayé avec TryWithAI",
+            "_TryWithAI Result": (payload && payload.resultUrl) || "",
+          },
+        },
+      ],
+    };
+    try {
+      fetch(url, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json",
+        },
+        body: JSON.stringify(body),
+        credentials: "same-origin",
+      })
+        .then(function (res) {
+          if (!res.ok) throw new Error("cart_http_" + res.status);
+          return res.json();
+        })
+        .then(function (data) {
+          replyToIframe("TRYWITHAI_CART_ADDED", data || {});
+          try {
+            document.dispatchEvent(
+              new CustomEvent("trywithai:cart-added", { detail: data })
+            );
+            document.dispatchEvent(new CustomEvent("cart:refresh"));
+            document.dispatchEvent(new CustomEvent("cart:open"));
+          } catch (_) {}
+        })
+        .catch(function () {
+          replyToIframe("TRYWITHAI_CART_ERROR", { message: "cart_request_failed" });
+        });
+    } catch (e) {
+      replyToIframe("TRYWITHAI_CART_ERROR", { message: "cart_throw" });
+    }
+  }
+
+  function replyToIframe(type, payload) {
+    var iframe = document.getElementById("trywithai-iframe");
+    if (!iframe || !iframe.contentWindow) return;
+    try {
+      iframe.contentWindow.postMessage(
+        { type: type, payload: payload, source: "trywithai-host" },
+        "*"
+      );
+    } catch (_) {}
+  }
+
+  // ── Parent persistent bubble (visible when overlay minimised) ─────
+  function createOrUpdateJobBubble() {
+    var existing = document.getElementById("trywithai-jobbubble");
+    if (existing) {
+      updateJobBubble();
+      return;
+    }
+    var b = document.createElement("button");
+    b.id = "trywithai-jobbubble";
+    b.className = "trywithai-jobbubble";
+    b.setAttribute("aria-live", "polite");
+    b.style.background =
+      "linear-gradient(135deg, " + COLOR + ", " + lighten(COLOR, 12) + ")";
+    b.addEventListener("click", restoreModal);
+    document.body.appendChild(b);
+    updateJobBubble();
+  }
+
+  function updateJobBubble() {
+    var b = document.getElementById("trywithai-jobbubble");
+    if (!b) return;
+    var isReady =
+      currentJob.status === "ready" || currentJob.status === "fallback_ready";
+    var isError = currentJob.status === "error";
+    var label;
+    if (isReady) label = "Votre essayage est prêt — voir";
+    else if (isError) label = "Une erreur — reprendre";
+    else label = "Simulation… " + Math.round(currentJob.progress) + "%";
+    b.innerHTML =
+      '<span class="twa-job-icon" aria-hidden="true"></span>' +
+      '<span class="twa-job-label">' +
+      escapeHtml(label) +
+      "</span>" +
+      (isReady ? '<span class="twa-job-pulse" aria-hidden="true"></span>' : "");
+    b.classList.toggle("trywithai-jobbubble--ready", isReady);
+  }
+
+  function removeJobBubble() {
+    var b = document.getElementById("trywithai-jobbubble");
+    if (b) b.remove();
   }
 
   function escapeHtml(s) {

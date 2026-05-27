@@ -107,6 +107,20 @@ export function tryOnReducer(
         resultUrl: null,
         resultMeta: null,
       };
+    case "RESET_PRODUCT_KEEP_PHOTO":
+      state.products.forEach((p) => {
+        if (p.previewUrl) URL.revokeObjectURL(p.previewUrl);
+      });
+      return {
+        ...state,
+        // Preserve userImage / userImagePreview / notes intentionally.
+        products: [],
+        step: 3,
+        status: "idle",
+        error: null,
+        resultUrl: null,
+        resultMeta: null,
+      };
     case "RESET_ALL":
       if (state.userImagePreview) {
         URL.revokeObjectURL(state.userImagePreview);

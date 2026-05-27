@@ -873,6 +873,97 @@ The widget auto-detects the product image and title from:
 
 ---
 
+## Assistant bubble / background try-on job
+
+The try-on flow ships with a conversational shopping assistant that
+runs alongside the cabin. The goal is to let the customer feel that
+the simulation has already started AT the click, and to free them
+to keep browsing the store while we work.
+
+### What the customer sees
+
+1. They click **Lancer l’essayage IA**.
+2. A small assistant bubble appears immediately bottom-right with
+   the message *"Je prépare votre simulation IA — vous pouvez réduire
+   cette bulle et continuer vos achats."*
+3. A soft progress bar starts moving on the bubble. The bubble
+   message updates through the pipeline stages (analyse photo →
+   préparation produit → placement → génération → vérification
+   qualité), reaching ~92% before the real API responds.
+4. They can **minimise** the cabin overlay. The iframe stays mounted,
+   the fetch keeps running, the page is scrollable again, and a small
+   pill appears on the host Shopify storefront with a live progress.
+5. When the result is ready, the bubble flips to a green "Votre
+   essayage est prêt" + a short shopping opinion + actions:
+   - **Voir le résultat**
+   - **Ajouter au panier** (Shopify Ajax Cart)
+   - **Essayer un autre modèle** (keeps the user photo)
+   - **Partager** (WhatsApp, Viber, Messenger, Instagram / native
+     share, Email, copier le lien)
+
+### Implementation map
+
+| Piece | File | Role |
+| --- | --- | --- |
+| Types | `types/index.ts` | `TryOnAssistantState`, `SharePlatform`, `RESET_PRODUCT_KEEP_PHOTO` |
+| State hook | `components/assistant/useTryOnAssistant.ts` | All assistant transitions + parent messaging |
+| Bubble UI | `components/assistant/TryOnAssistantBubble.tsx` | Expanded chat + minimised pill |
+| Share | `components/assistant/AssistantShareActions.tsx` + `lib/shareLinks.ts` | Web Share API first, then URL/fallback copy |
+| Opinion | `lib/productOpinion.ts` | Safe templated shopping advice (no LLM call) |
+| Progress | `lib/assistantProgress.ts` | Pipeline-aware simulator (caps at 92%) |
+| Paint yield | `lib/nextPaint.ts` | Ensures React paints the bubble before MediaPipe runs |
+| Parent integration | `public/embed.js` | Minimise/restore, persistent host bubble, Shopify cart |
+
+### postMessage protocol (iframe ↔ host)
+
+Iframe → parent (all carry `source: "trywithai"`):
+
+| Type | When | Payload |
+| --- | --- | --- |
+| `TRYWITHAI_READY` | iframe mount | – |
+| `TRYWITHAI_CLOSE` | user closes cabin | – |
+| `TRYWITHAI_JOB_STARTED` | clicked Lancer | `{ jobId, category, productTitle?, productUrl?, productImage?, message }` |
+| `TRYWITHAI_JOB_PROGRESS` | every ~16ms during sim | `{ jobId, status, progress, message }` |
+| `TRYWITHAI_JOB_READY` | API resolved | `{ jobId, resultUrl, shareUrl?, productTitle?, category, opinion, qualityStatus?, fallbackUsed? }` |
+| `TRYWITHAI_JOB_ERROR` | API rejected | `{ jobId, message }` |
+| `TRYWITHAI_MINIMIZE` / `TRYWITHAI_RESTORE` | bubble UI | – |
+| `TRYWITHAI_ADD_TO_CART` | bubble action | `{ jobId?, resultUrl?, productTitle? }` |
+| `TRYWITHAI_SHARE` | bubble action | `{ platform, resultUrl, text, title }` |
+
+Parent → iframe replies (carry `source: "trywithai-host"`):
+
+| Type | Trigger | Payload |
+| --- | --- | --- |
+| `TRYWITHAI_CART_ADDED` | Shopify `/cart/add.js` succeeded | cart line items |
+| `TRYWITHAI_CART_ERROR` | missing variant id / HTTP error | `{ message }` |
+
+### Why a kill-switch matters
+
+When the customer clicks Close during an active job, the embed script
+**minimises** the overlay instead of removing the iframe — killing
+the DOM would cancel the fetch. The job continues, the host bubble
+takes over the "I'm working" duty, and clicking the bubble restores
+the cabin in place.
+
+### Add-to-cart contract
+
+The iframe never calls `/cart/add.js` directly: cross-origin cookies
+on the merchant domain are required. The flow is:
+
+1. Bubble dispatches `TRYWITHAI_ADD_TO_CART`.
+2. `embed.js` detects the current variant id via:
+   - `?variant=` URL param
+   - `form[action*="/cart/add"] [name="id"]`
+   - `window.ShopifyAnalytics.meta.selectedVariantId`
+   - first variant in `window.ShopifyAnalytics.meta.product.variants`
+3. `embed.js` POSTs to `(window.Shopify.routes.root || "/") + "cart/add.js"`.
+4. On success, dispatches DOM events `trywithai:cart-added`,
+   `cart:refresh`, `cart:open` so themes can react.
+5. Replies to the iframe with `TRYWITHAI_CART_ADDED` /
+   `TRYWITHAI_CART_ERROR` so the bubble UI updates.
+
+---
+
 ## Photo guide
 
 Step 1 of the wizard shows `PhotoInstructionSingle`: one icon, the body

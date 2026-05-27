@@ -55,6 +55,15 @@ interface ResultViewProps {
    * note.
    */
   productLocked?: boolean;
+  // ── Assistant-flow extras (optional, fully backward compatible) ──
+  /** When provided, an extra "Ajouter au panier" action is rendered. */
+  onAddToCart?: () => void;
+  /** When provided, an extra "Essayer un autre modèle" action is rendered. */
+  onTryAnotherModel?: () => void;
+  /** Title of the product, surfaces in share text + Shopify cart line item. */
+  productTitle?: string;
+  /** Hides the in-result share menu (the assistant bubble is the canonical share entry point). */
+  hideShareMenu?: boolean;
 }
 
 const REVEAL_START_MS = 150;
@@ -142,6 +151,9 @@ export function ResultView({
   usedLocalRenderer,
   qualityChecks,
   productLocked,
+  onAddToCart,
+  onTryAnotherModel,
+  hideShareMenu,
 }: ResultViewProps) {
   const [phase, setPhase] = useState<Phase>("waiting");
   const [showBurst, setShowBurst] = useState(false);
@@ -520,7 +532,27 @@ export function ResultView({
               <Download className="h-5 w-5" aria-hidden />
               Télécharger
             </button>
-            <ShareMenu resultUrl={imgSrc} />
+            {onAddToCart && (
+              <button
+                type="button"
+                onClick={onAddToCart}
+                className="btn-primary"
+              >
+                <ShoppingBag className="h-5 w-5" aria-hidden />
+                Ajouter au panier
+              </button>
+            )}
+            {onTryAnotherModel && (
+              <button
+                type="button"
+                onClick={onTryAnotherModel}
+                className="btn-secondary"
+              >
+                <RefreshCw className="h-5 w-5" aria-hidden />
+                Essayer un autre
+              </button>
+            )}
+            {!hideShareMenu && <ShareMenu resultUrl={imgSrc} />}
             {isExternalUrl && (
               <button
                 type="button"

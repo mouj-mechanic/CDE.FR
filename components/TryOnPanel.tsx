@@ -31,6 +31,11 @@ import { HandJewelryOptions } from "./HandJewelryOptions";
 import { CategoryIcon } from "./CategoryIcon";
 import { LaunchButton } from "./LaunchButton";
 import { WatchAdjustPanel } from "./WatchAdjustPanel";
+import { useTryOnAssistant } from "./assistant/useTryOnAssistant";
+import { TryOnAssistantBubble } from "./assistant/TryOnAssistantBubble";
+import { generateProductOpinion } from "@/lib/productOpinion";
+import { postAddToCart } from "@/lib/embedMessaging";
+import { nextPaint } from "@/lib/nextPaint";
 
 interface TryOnPanelProps {
   category: Category;
@@ -53,6 +58,7 @@ export function TryOnPanel({
   const [watchOverrideUrl, setWatchOverrideUrl] = useState<string | null>(null);
   const [refining, setRefining] = useState(false);
   const [refineError, setRefineError] = useState<string | null>(null);
+  const assistant = useTryOnAssistant();
 
   useEffect(() => {
     if (initialProducts && initialProducts.length > 0) {
@@ -63,6 +69,23 @@ export function TryOnPanel({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Listen for parent cart confirmations / errors so the bubble UI
+  // stays in sync with the host Shopify storefront.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const onMessage = (e: MessageEvent) => {
+      if (!e.data || typeof e.data !== "object") return;
+      const msg = e.data as { type?: string };
+      if (msg.type === "TRYWITHAI_CART_ADDED") {
+        assistant.cartStatus("added");
+      } else if (msg.type === "TRYWITHAI_CART_ERROR") {
+        assistant.cartStatus("error");
+      }
+    };
+    window.addEventListener("message", onMessage);
+    return () => window.removeEventListener("message", onMessage);
+  }, [assistant]);
 
   const validateAndSubmit = useCallback(async () => {
     if (!state.userImage) {
@@ -91,18 +114,34 @@ export function TryOnPanel({
     dispatch({ type: "SET_STATUS", status: "loading" });
     dispatch({ type: "SET_ERROR", error: null });
 
-    // ── Critical UX: yield to the browser BEFORE the heavy pipeline.
-    // The next pipeline call decodes images, runs MediaPipe, refines
-    // alpha, composites canvases — all CPU-bound work that can block
-    // the UI thread for 1–2 seconds. Without an explicit yield, the
-    // browser never gets a chance to paint the loading scene before
-    // that work starts, so the customer sees nothing happening after
-    // clicking the button. Two animation frames are enough to let
-    // React commit the "loading" status and Framer-Motion start its
-    // entry animation.
-    await new Promise<void>((resolve) =>
-      requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
-    );
+    // ── Conversational assistant boot ─────────────────────────────
+    // BEFORE any CPU-bound work runs we start the assistant bubble.
+    // The bubble is the customer's primary feedback channel from
+    // here on: it shows "Je prépare votre simulation…", drives the
+    // simulated progress bar, and remains visible / minimisable
+    // while the actual API call works in the background. It also
+    // emits TRYWITHAI_JOB_STARTED to the parent Shopify storefront
+    // via postMessage so the host page can show its own minimised
+    // bubble if the iframe is reduced.
+    const firstProductForAssistant = state.products[0];
+    assistant.start({
+      category: category.id,
+      productTitle: firstProductForAssistant?.title,
+      productUrl:
+        firstProductForAssistant?.type === "url"
+          ? firstProductForAssistant.value
+          : undefined,
+      productImage:
+        firstProductForAssistant?.previewUrl ??
+        (firstProductForAssistant?.type === "url"
+          ? firstProductForAssistant.value
+          : undefined),
+    });
+
+    // Yield to the compositor so React can paint the bubble and the
+    // loading scene before we lock the main thread with MediaPipe /
+    // image decoding / canvas compositing.
+    await nextPaint();
 
     const firstProduct = state.products[0];
     const firstProductFile =
@@ -343,6 +382,22 @@ export function TryOnPanel({
           autoMaskGenerated: data.debug?.autoMaskGenerated,
         },
       });
+
+      // Notify the assistant so the bubble flips from "working" to
+      // "ready" + emits TRYWITHAI_JOB_READY to the parent page.
+      const opinion = generateProductOpinion({
+        category: category.id,
+        productTitle: state.products[0]?.title,
+        warnings: data.warnings,
+        qualityStatus: data.qualityStatus,
+        fallbackUsed: data.debug?.fallbackUsed,
+      });
+      assistant.ready({
+        resultUrl: data.resultUrl,
+        opinion,
+        fallbackUsed: data.debug?.fallbackUsed,
+        qualityStatus: data.qualityStatus,
+      });
     } catch (err) {
       dispatch({
         type: "SET_ERROR",
@@ -352,6 +407,11 @@ export function TryOnPanel({
             : "Une erreur est survenue. Veuillez réessayer.",
       });
       dispatch({ type: "SET_STATUS", status: "error" });
+      assistant.error(
+        err instanceof Error
+          ? err.message
+          : "Une erreur est survenue. Veuillez réessayer."
+      );
     }
   }, [
     state,
@@ -360,6 +420,7 @@ export function TryOnPanel({
     merchantId,
     handJewelryType,
     ringFinger,
+    assistant,
   ]);
 
   /**
@@ -490,7 +551,39 @@ export function TryOnPanel({
   const isLoading = state.status === "loading";
   const showStage = isLoading || !!state.resultUrl;
 
+  const handleAssistantAddToCart = useCallback(() => {
+    if (!assistant.state.resultUrl) return;
+    assistant.cartStatus("adding");
+    postAddToCart({
+      jobId: assistant.state.jobId,
+      resultUrl: assistant.state.resultUrl,
+      productTitle: assistant.state.productTitle,
+    });
+    // Safety net: if the parent never replies, surface a soft error
+    // after 8 s so the customer is not stuck on "adding".
+    window.setTimeout(() => {
+      if (assistant.state.cartStatus === "adding") {
+        assistant.cartStatus("error");
+      }
+    }, 8000);
+  }, [assistant]);
+
+  const handleAssistantTryAnother = useCallback(() => {
+    setWatchOverrideUrl(null);
+    dispatch({ type: "RESET_PRODUCT_KEEP_PHOTO" });
+    assistant.pushMessage(
+      "Choisissez un autre modèle, je garde votre photo pour aller plus vite.",
+      "info"
+    );
+    assistant.minimize();
+  }, [assistant]);
+
+  const handleAssistantOpenResult = useCallback(() => {
+    assistant.restore();
+  }, [assistant]);
+
   return (
+    <>
     <motion.div
       layoutId={`card-${category.id}`}
       initial={{ opacity: 0, y: 20 }}
@@ -799,5 +892,15 @@ export function TryOnPanel({
         </>
       )}
     </motion.div>
+    <TryOnAssistantBubble
+      state={assistant.state}
+      onMinimize={assistant.minimize}
+      onRestore={assistant.restore}
+      onOpenResult={handleAssistantOpenResult}
+      onTryAnother={handleAssistantTryAnother}
+      onAddToCart={handleAssistantAddToCart}
+      onClose={assistant.reset}
+    />
+    </>
   );
 }

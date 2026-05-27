@@ -15,7 +15,13 @@ export function LaunchButton({ onClick, disabled }: LaunchButtonProps) {
   const handleClick = () => {
     if (disabled) return;
     setPressed(true);
+    // Fire the click handler synchronously — the assistant bubble
+    // mounts on the same tick, giving the customer immediate
+    // feedback. We auto-release the local "pressed" lock after a
+    // short window so a validation error doesn't leave the button
+    // stuck in its loading state forever.
     onClick();
+    window.setTimeout(() => setPressed(false), 1200);
   };
 
   const isDisabled = disabled || pressed;

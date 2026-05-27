@@ -338,4 +338,63 @@ export type TryOnAction =
   | { type: "SET_RESULT"; resultUrl: string; meta?: TryOnResultMeta }
   | { type: "RESET_ARTICLES" }
   | { type: "RESET_TRY_AGAIN" }
+  /**
+   * Like RESET_ARTICLES but PRESERVES the user photo. Used when the
+   * customer clicks "Try another model" in the assistant bubble — we
+   * want them to land back on the product step without having to
+   * re-upload their selfie.
+   */
+  | { type: "RESET_PRODUCT_KEEP_PHOTO" }
   | { type: "RESET_ALL" };
+
+// ──────────────────────────────────────────────────────────────────
+//  Assistant bubble (shopping-assistant overlay around the try-on)
+// ──────────────────────────────────────────────────────────────────
+
+export type TryOnAssistantStatus =
+  | "idle"
+  | "preparing"
+  | "analyzing_photo"
+  | "preparing_product"
+  | "placing_product"
+  | "generating"
+  | "quality_check"
+  | "ready"
+  | "fallback_ready"
+  | "error";
+
+export interface TryOnAssistantMessage {
+  id: string;
+  role: "assistant" | "system" | "user";
+  text: string;
+  createdAt: number;
+  kind?: "info" | "progress" | "success" | "warning" | "error" | "opinion";
+}
+
+export interface TryOnAssistantState {
+  active: boolean;
+  minimized: boolean;
+  status: TryOnAssistantStatus;
+  progress: number;
+  messages: TryOnAssistantMessage[];
+  resultUrl?: string;
+  productTitle?: string;
+  productUrl?: string;
+  productImage?: string;
+  category?: CategoryId;
+  canAddToCart?: boolean;
+  cartStatus?: "idle" | "adding" | "added" | "error";
+  shareUrl?: string;
+  fallbackUsed?: boolean;
+  /** Stable identifier for the running job — emitted in postMessages. */
+  jobId?: string;
+}
+
+export type SharePlatform =
+  | "native"
+  | "whatsapp"
+  | "viber"
+  | "messenger"
+  | "instagram"
+  | "email"
+  | "copy";
