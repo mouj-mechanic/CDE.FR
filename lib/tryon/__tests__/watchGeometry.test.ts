@@ -47,14 +47,15 @@ describe("validateWatchPlacement", () => {
 
   it("re-anchors a watch placed on the back of the hand", () => {
     const g = baseGeometry();
-    // Pull the watch onto the hand (negative forearm offset → wrist
-    // crease and past it). The target band starts at +16 px (0.08 × palm).
-    g.cx = 505; // only 5px along forearm — too close to wrist
+    // Pull the watch ONTO the hand (negative forearm offset — past
+    // the wrist crease toward the fingers). The band now starts at
+    // 0 px (watch may sit AT the crease) so we need a clearly
+    // negative offset to trigger the re-anchor.
+    g.cx = 480; // -20 px along forearm — on the back of the hand
     const v = validateWatchPlacement(g);
     expect(v.centreInBand).toBe(false);
-    // The corrected centre must satisfy the band rule (16..48 px along forearm).
     const fx = v.corrected.cx - g.wristAnchor.x;
-    expect(fx).toBeGreaterThanOrEqual(16);
+    expect(fx).toBeGreaterThanOrEqual(0);
     expect(fx).toBeLessThanOrEqual(48);
     expect(v.notes.join(" ")).toMatch(/back of the hand|forearm/i);
   });

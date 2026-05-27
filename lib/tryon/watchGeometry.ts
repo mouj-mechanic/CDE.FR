@@ -106,7 +106,12 @@ export interface WatchPlacementValidation {
 //   - Lateral: 0.18 × palmWidth max — the watch stays tightly
 //     centred over the forearm axis. Lowered from 0.20.
 //   - Size: 0.72..0.98 × wristWidth, hard target 0.86. Unchanged.
-const TARGET_MIN_FORE = 0.08;
+// Lowered floor to 0 so the validator no longer clamps the centre
+// back to 0.08 × palmWidth when WATCH_WRIST_ANCHOR_BIAS is set to a
+// smaller value (e.g. 0.03..0.05 — watch sitting right on the
+// wrist joint, the anatomically correct spot for most catalogue
+// shots).
+const TARGET_MIN_FORE = 0.0;
 const TARGET_MAX_FORE = 0.24;
 const TARGET_MAX_LATERAL = 0.18;
 const TARGET_MIN_SIZE = 0.72;
@@ -265,17 +270,32 @@ export function computeWristGeometry(
   // palmWidth = distance(indexMcp, pinkyMcp)
   const palmWidth = dist(indexMcp, pinkyMcp);
 
-  // watchCenter = wrist - handDir * palmWidth * 0.15
+  // watchCenter = wrist - handDir * palmWidth * BIAS
   //
-  //  Anatomical anchor on the styloid process of the ulna (the bump
-  //  on the back of the wrist where a watch case naturally sits).
-  //  MediaPipe landmark 0 (wrist) sits roughly on the wrist crease
-  //  itself; subtracting 0.15 × palmWidth toward the elbow lands us
-  //  on the styloid process. Lowered from 0.26 in the anatomical
-  //  pass — the previous offset placed watches mid-forearm.
-  //  validateWatchPlacement enforces 0.08..0.24 as the hard range.
-  const cx = wrist.x - handDir.x * palmWidth * 0.15;
-  const cy = wrist.y - handDir.y * palmWidth * 0.15;
+  //  Anatomical anchor along the forearm axis from the wrist crease
+  //  toward the elbow. Real watches sit AT the wrist joint, so the
+  //  case CENTRE lies only ~0.03-0.08 × palmWidth past the crease.
+  //  Configurable via WATCH_WRIST_ANCHOR_BIAS so we can dial it in
+  //  per dataset without redeploying. Defaults to 0.05 — a
+  //  significant reduction from the previous 0.15 default which
+  //  reliably parked the watch mid-forearm on portrait wrist shots.
+  //  Client-side bundle reads NEXT_PUBLIC_ mirror.
+  const anchorBiasRaw =
+    process.env.NEXT_PUBLIC_WATCH_WRIST_ANCHOR_BIAS?.trim() ??
+    process.env.WATCH_WRIST_ANCHOR_BIAS?.trim();
+  const parsedBias = anchorBiasRaw ? Number(anchorBiasRaw) : NaN;
+  const anchorBias = Number.isFinite(parsedBias) ? parsedBias : 0.05;
+  const cx = wrist.x - handDir.x * palmWidth * anchorBias;
+  const cy = wrist.y - handDir.y * palmWidth * anchorBias;
+  if (typeof console !== "undefined" && console.info) {
+    console.info("[WATCH_ANCHOR]", {
+      anchorBias,
+      palmWidth: Math.round(palmWidth),
+      wristY: Math.round(wrist.y),
+      cy: Math.round(cy),
+      deltaY: Math.round(cy - wrist.y),
+    });
+  }
 
   // ── Watch width sizing (anatomy-aware) ────────────────────────────
   //
