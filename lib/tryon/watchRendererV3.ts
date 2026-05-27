@@ -361,12 +361,10 @@ export async function renderWatchOverlayV3(
 
   // 4. Rotation — the WHOLE point of V3.
   //
-  //  PATCH (WATCH_FORCE_AXIS_OFFSET_DEG): the customer reported a
-  //  consistent 90° axis error on every render. We expose a direct
-  //  override that ADDS a fixed offset to the geometric base
-  //  rotation. The operator sets `WATCH_FORCE_AXIS_OFFSET_DEG=90`
-  //  (or -90) in `.env.local` until we identify which sign of the
-  //  90° correction matches the product PNG axis convention.
+  //  PATCH (WATCH_FORCE_AXIS_OFFSET_DEG): corrects a fixed product-PNG
+  //  axis convention vs forearm alignment. Validated default: -90 for
+  //  vertical-strap catalogue assets (+90 rotates strap perpendicular
+  //  to the forearm). Set to 0 to use geometric pipeline only.
   //
   //  The patch SHORT-CIRCUITS the anatomical correction + clamp +
   //  force-min pipeline because the previous chain produced the
