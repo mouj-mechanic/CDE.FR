@@ -8,7 +8,7 @@ export default defineConfig({
     },
   },
   test: {
-    include: ["**/__tests__/**/*.{test,spec}.ts"],
+    include: ["**/__tests__/**/*.{test,spec}.{ts,tsx}"],
     environment: "node",
     globals: false,
     testTimeout: 15000,

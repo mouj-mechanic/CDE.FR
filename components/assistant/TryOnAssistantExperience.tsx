@@ -392,20 +392,13 @@ export function TryOnAssistantExperience({
 
   const handleTryAnother = useCallback(() => {
     // Reset products + result but preserve the customer photo so
-    // they don't have to re-upload.
+    // they don't have to re-upload. The assistant.newTry() keeps the
+    // FULL conversation history visible — only the in-progress job
+    // and the current result are dropped.
     dispatch({ type: "RESET_PRODUCT_KEEP_PHOTO" });
-    setConsent(true); // Already agreed once
-    assistant.pushMessage(
-      "Choisissez un autre modèle, je garde votre photo pour aller plus vite.",
-      "info"
-    );
-    // Reset the assistant status so the compose view comes back.
-    assistant.boot({
-      category: categoryId,
-      productTitle: undefined,
-      productImage: undefined,
-    });
-  }, [assistant, categoryId]);
+    setConsent(true);
+    assistant.newTry();
+  }, [assistant]);
 
   const handleOpenLightbox = useCallback(() => {
     if (assistant.state.resultUrl && onOpenLightbox) {
@@ -549,6 +542,14 @@ export function TryOnAssistantExperience({
     ]
   );
 
+  const handleClose = useCallback(() => {
+    // Explicit close = end of conversation. Wipe the bubble state
+    // and the persisted sessionStorage payload so the next visit
+    // starts fresh.
+    assistant.clearSession();
+    if (onClose) onClose();
+  }, [assistant, onClose]);
+
   return (
     <TryOnAssistantBubble
       state={assistant.state}
@@ -559,7 +560,7 @@ export function TryOnAssistantExperience({
       onOpenResult={handleOpenLightbox}
       onTryAnother={handleTryAnother}
       onAddToCart={handleAddToCart}
-      onClose={onClose}
+      onClose={handleClose}
     />
   );
 }
