@@ -23,6 +23,13 @@ import {
 
 type Action =
   | {
+      type: "BOOT";
+      category: CategoryId;
+      productTitle?: string;
+      productUrl?: string;
+      productImage?: string;
+    }
+  | {
       type: "START";
       jobId: string;
       category: CategoryId;
@@ -88,6 +95,26 @@ function reducer(
   action: Action
 ): TryOnAssistantState {
   switch (action.type) {
+    case "BOOT": {
+      // Pre-job state: bubble is visible with the compose view, but
+      // no progress bar / conversation history yet. Used when the
+      // experience boots and we want the bubble to host the photo
+      // upload + consent + launch UI from the very first frame.
+      return {
+        ...INITIAL,
+        active: true,
+        minimized: false,
+        status: "idle",
+        progress: 0,
+        category: action.category,
+        productTitle: action.productTitle,
+        productUrl: action.productUrl,
+        productImage: action.productImage,
+        canAddToCart: true,
+        cartStatus: "idle",
+        messages: [],
+      };
+    }
     case "START": {
       const intro = makeMessage("assistant", action.message, "progress");
       const shoppingTip = makeMessage(
@@ -217,6 +244,16 @@ export function useTryOnAssistant() {
   // Stop the simulator on unmount so we don't leak rAF loops.
   useEffect(() => stopSimulator, [stopSimulator]);
 
+  const boot = useCallback((args: StartArgs) => {
+    dispatch({
+      type: "BOOT",
+      category: args.category,
+      productTitle: args.productTitle,
+      productUrl: args.productUrl,
+      productImage: args.productImage,
+    });
+  }, []);
+
   const start = useCallback(
     (args: StartArgs) => {
       const jobId = generateJobId();
@@ -329,6 +366,7 @@ export function useTryOnAssistant() {
 
   return {
     state,
+    boot,
     start,
     ready,
     error,

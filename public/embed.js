@@ -398,7 +398,10 @@
       ".trywithai-bubble .twa-callout-close:hover{background:rgba(91,33,182,.16)}",
       ".trywithai-bubble .twa-dot{position:absolute;top:6px;right:6px;width:10px;height:10px;background:#EC4899;border:2px solid #fff;border-radius:50%;animation:twa-dot-pulse 1.6s ease-in-out infinite}",
       ".trywithai-bubble[data-pos='left'] .twa-dot{right:auto;left:6px}",
-      ".trywithai-overlay{position:fixed;inset:0;z-index:2147483647;background:rgba(30,27,75,.65);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);display:flex;align-items:center;justify-content:center;padding:16px;animation:twa-fadein .3s ease-out;transition:opacity .25s,visibility .25s}",
+      // Bubble-mode overlay: transparent, sized to the bubble itself
+      // so clicks outside still reach the merchant page.
+      ".trywithai-overlay{position:fixed;bottom:0;right:0;width:100%;height:100%;z-index:2147483647;background:transparent;pointer-events:none;animation:twa-fadein .3s ease-out;transition:opacity .25s,visibility .25s}",
+      "@media (min-width:641px){.trywithai-overlay{width:440px;height:90vh;max-height:760px;bottom:0;right:0;padding:0}}",
       ".trywithai-overlay--minimized{opacity:0;visibility:hidden;pointer-events:none}",
       ".trywithai-jobbubble{position:fixed;bottom:24px;right:24px;z-index:2147483646;display:flex;align-items:center;gap:10px;padding:12px 16px;border:none;border-radius:999px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;font-size:13px;font-weight:600;color:#fff;cursor:pointer;animation:twa-rise .55s cubic-bezier(.22,1,.36,1) both;box-shadow:0 10px 30px rgba(124,58,237,.36),0 0 0 2px rgba(255,255,255,.5) inset;transition:transform .25s,box-shadow .25s}",
       ".trywithai-jobbubble:hover{transform:translateY(-2px) scale(1.03)}",
@@ -406,21 +409,12 @@
       ".trywithai-jobbubble--ready{animation:twa-rise .55s cubic-bezier(.22,1,.36,1) both,twa-pulse 1.6s ease-out infinite}",
       ".trywithai-jobbubble--ready .twa-job-icon{animation:none;background:#34D399}",
       ".trywithai-jobbubble .twa-job-pulse{width:10px;height:10px;border-radius:50%;background:#FBBF24;animation:twa-dot-pulse 1s ease-in-out infinite}",
-      ".trywithai-modal{position:relative;width:100%;max-width:1080px;height:92vh;max-height:920px;background:#FDF4FF;border-radius:24px;overflow:hidden;box-shadow:0 28px 80px rgba(91,33,182,.35);animation:twa-zoomin .35s cubic-bezier(.22,1,.36,1) both}",
-      ".trywithai-iframe{width:100%;height:100%;border:none;display:block;background:#FDF4FF}",
-      ".trywithai-loader{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;background:#FDF4FF;z-index:5}",
-      ".trywithai-loader-spinner{width:44px;height:44px;border:3px solid rgba(124,58,237,.15);border-top-color:#7C3AED;border-radius:50%;animation:twa-spin .8s linear infinite}",
-      ".trywithai-loader p{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;font-size:14px;color:#4C1D95;margin:0}",
-      ".trywithai-close{position:absolute;top:14px;right:14px;width:38px;height:38px;border:none;border-radius:50%;background:rgba(255,255,255,.95);color:#1E1B4B;font-size:18px;cursor:pointer;z-index:10;display:flex;align-items:center;justify-content:center;box-shadow:0 4px 16px rgba(91,33,182,.18);transition:transform .2s}",
-      ".trywithai-close:hover{transform:scale(1.1) rotate(90deg);background:#fff}",
+      ".trywithai-iframe{position:absolute;inset:0;width:100%;height:100%;border:none;background:transparent;pointer-events:auto;color-scheme:light}",
       "@media (max-width:640px){",
       " .trywithai-bubble .twa-label{display:none}",
       " .trywithai-bubble{padding:14px;border-radius:50%;width:64px;height:64px;justify-content:center;animation:twa-rise .55s cubic-bezier(.22,1,.36,1) both,twa-pulse 2.6s ease-out 1.2s infinite}",
       " .trywithai-bubble .twa-char{width:34px;height:38px}",
       " .trywithai-bubble .twa-callout{bottom:calc(100% + 12px);font-size:12px;padding:9px 12px}",
-      " .trywithai-overlay{padding:0}",
-      " .trywithai-modal{height:100vh;max-height:100vh;border-radius:0}",
-      " .trywithai-close{top:10px;right:10px}",
       "}",
       "@media (min-width:641px){.trywithai-bubble .twa-dot{display:none}}",
     ].join("");
@@ -583,22 +577,12 @@
 
     var iframeSrc = APP_URL + "/embed?" + params.toString();
 
+    // Bubble-mode: transparent overlay sized to the bubble itself.
+    // No card, no close button (the bubble has its own X), no
+    // backdrop. Clicks outside the bubble fall through to Shopify.
     var overlay = document.createElement("div");
     overlay.id = "trywithai-overlay";
     overlay.className = "trywithai-overlay";
-    overlay.addEventListener("click", function (e) {
-      if (e.target === overlay) handleCloseRequest();
-    });
-
-    var modal = document.createElement("div");
-    modal.className = "trywithai-modal";
-
-    var loader = document.createElement("div");
-    loader.className = "trywithai-loader";
-    loader.id = "trywithai-loader";
-    loader.innerHTML =
-      '<div class="trywithai-loader-spinner" aria-hidden="true"></div>' +
-      "<p>Ouverture de TryWithAI…</p>";
 
     var iframe = document.createElement("iframe");
     iframe.id = "trywithai-iframe";
@@ -607,43 +591,28 @@
     iframe.title = "TryWithAI — Cabine d'essayage IA";
     iframe.allow = "camera; clipboard-write; fullscreen";
     iframe.setAttribute("allowfullscreen", "");
+    iframe.setAttribute(
+      "allowtransparency",
+      "true"
+    ); // legacy IE/safari hint for transparent body
+    iframe.style.background = "transparent";
 
-    iframe.addEventListener("load", hideLoader);
-    iframe.addEventListener("error", function () {
-      var el = document.getElementById("trywithai-loader");
-      if (el) {
-        el.innerHTML =
-          "<p style='color:#7C3AED;text-align:center;padding:0 24px'>Impossible de charger la cabine.<br>Vérifiez l'URL : " +
-          escapeHtml(APP_URL) +
-          "</p>";
-      }
-    });
-
-    var closeBtn = document.createElement("button");
-    closeBtn.className = "trywithai-close";
-    closeBtn.setAttribute("aria-label", "Fermer");
-    closeBtn.innerHTML = "&times;";
-    closeBtn.addEventListener("click", handleCloseRequest);
-
-    modal.appendChild(loader);
-    modal.appendChild(iframe);
-    modal.appendChild(closeBtn);
-    overlay.appendChild(modal);
+    overlay.appendChild(iframe);
     document.body.appendChild(overlay);
-    document.body.style.overflow = "hidden";
+    // The page stays scrollable — the user can keep browsing the
+    // merchant catalogue while the bubble is open.
 
     document.addEventListener("keydown", onKeyDown);
     window.addEventListener("message", onMessage);
   }
 
   function hideLoader() {
+    // No-op kept for backwards compatibility with existing event
+    // handlers. The bubble mode does not render a loader overlay —
+    // the bubble itself appears as soon as the iframe boots.
     var el = document.getElementById("trywithai-loader");
-    if (el) {
-      el.style.opacity = "0";
-      el.style.transition = "opacity .3s";
-      setTimeout(function () {
-        if (el.parentNode) el.parentNode.removeChild(el);
-      }, 300);
+    if (el && el.parentNode) {
+      el.parentNode.removeChild(el);
     }
   }
 
@@ -666,7 +635,6 @@
     overlay.style.transition = "opacity .25s";
     setTimeout(function () {
       overlay.remove();
-      document.body.style.overflow = "";
     }, 260);
     document.removeEventListener("keydown", onKeyDown);
     window.removeEventListener("message", onMessage);
@@ -687,7 +655,7 @@
     var overlay = document.getElementById("trywithai-overlay");
     if (!overlay) return;
     overlay.classList.add("trywithai-overlay--minimized");
-    document.body.style.overflow = "";
+    // Body scroll was never locked in bubble-mode — leave it alone.
     currentJob.minimized = true;
     createOrUpdateJobBubble();
   }
@@ -696,7 +664,6 @@
     var overlay = document.getElementById("trywithai-overlay");
     if (!overlay) return;
     overlay.classList.remove("trywithai-overlay--minimized");
-    document.body.style.overflow = "hidden";
     currentJob.minimized = false;
     removeJobBubble();
     // Echo the restore down so the iframe's bubble UI follows.

@@ -26,9 +26,12 @@ export default function EmbedLayout({
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  // Transparent body so the merchant page can show through when the
+  // iframe is positioned as an overlay. The bubble itself paints its
+  // own opaque background.
   return (
     <html lang="fr" className={`${cormorant.variable} ${inter.variable}`}>
-      <body className="min-h-screen bg-cream">{children}</body>
+      <body className="min-h-screen bg-transparent">{children}</body>
     </html>
   );
 }

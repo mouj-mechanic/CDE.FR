@@ -1,0 +1,565 @@
+"use client";
+
+import { useCallback, useEffect, useMemo, useReducer, useState } from "react";
+import {
+  Camera,
+  Settings2,
+  ShieldCheck,
+  Sparkles,
+} from "lucide-react";
+import type {
+  Category,
+  CategoryId,
+  FingerId,
+  HandJewelryType,
+  ProductItem,
+  TryOnResponse,
+} from "@/types";
+import { CATEGORIES, getCategory } from "@/lib/categories";
+import { initialTryOnState, tryOnReducer } from "@/lib/tryOnReducer";
+import { runTryOnPipeline } from "@/lib/tryon/pipeline";
+import {
+  compressImageBlob,
+  compressImageFile,
+} from "@/lib/clientImageCompression";
+import { safeFetchJson } from "@/lib/safeFetchJson";
+import { ImageUploader } from "../ImageUploader";
+import { HandJewelryOptions } from "../HandJewelryOptions";
+import { LaunchButton } from "../LaunchButton";
+import { useTryOnAssistant } from "./useTryOnAssistant";
+import { TryOnAssistantBubble } from "./TryOnAssistantBubble";
+import { generateProductOpinion } from "@/lib/productOpinion";
+import { postAddToCart } from "@/lib/embedMessaging";
+import { nextPaint } from "@/lib/nextPaint";
+import { cn } from "@/lib/utils";
+
+export interface TryOnAssistantExperienceProps {
+  /**
+   * Initial category. When the embed iframe ships with a product
+   * detected on the merchant page, this is auto-detected; when the
+   * user lands without a product they pick one from the inline
+   * category picker.
+   */
+  initialCategoryId: CategoryId;
+  /** Optional initial product (Shopify auto-flow). */
+  product?: ProductItem;
+  productTitle?: string | null;
+  productImage?: string | null;
+  merchantId?: string | null;
+  /**
+   * Optional callback fired when the user explicitly closes the
+   * bubble. The embed layer uses this to dispatch
+   * `TRYWITHAI_CLOSE` to the parent storefront.
+   */
+  onClose?: () => void;
+  /**
+   * Optional callback when the user taps the "Agrandir" / image
+   * preview. Lets the host page open its own lightbox. Defaults to
+   * a no-op (the bubble itself already shows the result image).
+   */
+  onOpenLightbox?: (resultUrl: string) => void;
+}
+
+/**
+ * Full conversational try-on flow rendered ENTIRELY inside the
+ * floating bubble. There is no big modal anymore — the bubble hosts
+ * photo upload, instructions, consent, launch button, progress,
+ * result image, opinion, and the cart/share/try-another actions.
+ */
+export function TryOnAssistantExperience({
+  initialCategoryId,
+  product,
+  productTitle,
+  productImage,
+  merchantId,
+  onClose,
+  onOpenLightbox,
+}: TryOnAssistantExperienceProps) {
+  const [categoryId, setCategoryId] = useState<CategoryId>(initialCategoryId);
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [consent, setConsent] = useState(false);
+  const [handJewelryType, setHandJewelryType] =
+    useState<HandJewelryType>("ring");
+  const [ringFinger, setRingFinger] = useState<FingerId>("ring");
+  const category = getCategory(categoryId) as Category;
+
+  const [state, dispatch] = useReducer(tryOnReducer, {
+    ...initialTryOnState,
+    products: product ? [product] : [],
+  });
+
+  const assistant = useTryOnAssistant();
+
+  // Boot the bubble on mount so the compose view is visible from
+  // frame 1. This is the whole point of the refactor: no big modal,
+  // the bubble IS the experience.
+  useEffect(() => {
+    assistant.boot({
+      category: categoryId,
+      productTitle: productTitle ?? product?.title ?? undefined,
+      productUrl:
+        product?.type === "url" ? product.value : undefined,
+      productImage:
+        productImage ?? product?.previewUrl ?? undefined,
+    });
+    // We deliberately depend only on the boot identity; subsequent
+    // category changes do NOT re-boot (it would wipe the conversation).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Listen for parent cart confirmations / errors.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const onMessage = (e: MessageEvent) => {
+      if (!e.data || typeof e.data !== "object") return;
+      const msg = e.data as { type?: string };
+      if (msg.type === "TRYWITHAI_CART_ADDED") {
+        assistant.cartStatus("added");
+      } else if (msg.type === "TRYWITHAI_CART_ERROR") {
+        assistant.cartStatus("error");
+      }
+    };
+    window.addEventListener("message", onMessage);
+    return () => window.removeEventListener("message", onMessage);
+  }, [assistant]);
+
+  // ── Main submit handler ───────────────────────────────────────────
+  const submit = useCallback(async () => {
+    if (!state.userImage) {
+      assistant.pushMessage(
+        "Importez d’abord une photo pour lancer l’essayage.",
+        "warning"
+      );
+      return;
+    }
+    if (state.products.length === 0) {
+      assistant.pushMessage(
+        "Aucun article détecté — ajoutez une image ou un lien produit.",
+        "warning"
+      );
+      return;
+    }
+    if (!consent) {
+      assistant.pushMessage(
+        "Cochez l’accord d’utilisation de votre photo pour continuer.",
+        "warning"
+      );
+      return;
+    }
+
+    dispatch({ type: "SET_STATUS", status: "loading" });
+    dispatch({ type: "SET_ERROR", error: null });
+
+    const firstProduct = state.products[0];
+    assistant.start({
+      category: categoryId,
+      productTitle: firstProduct?.title ?? productTitle ?? undefined,
+      productUrl:
+        firstProduct?.type === "url" ? firstProduct.value : undefined,
+      productImage:
+        firstProduct?.previewUrl ??
+        (firstProduct?.type === "url" ? firstProduct.value : undefined),
+    });
+
+    await nextPaint();
+
+    const firstProductFile =
+      state.products.find((p) => p.type === "image" && p.file)?.file ?? null;
+    const firstProductUrl =
+      state.products.find((p) => p.type === "url")?.value ?? null;
+    const firstProductCutout = firstProduct?.cutoutUrl ?? null;
+
+    let pipelineResult: Awaited<ReturnType<typeof runTryOnPipeline>> | null =
+      null;
+    try {
+      pipelineResult = await runTryOnPipeline({
+        category: categoryId,
+        userFile: state.userImage,
+        productFile: firstProductFile,
+        productUrl: firstProductUrl,
+        productCutoutUrl: firstProductCutout,
+        mode: "auto",
+        handJewelryType,
+        ringFinger,
+      });
+    } catch (err) {
+      console.warn("[tryon] pipeline failed", err);
+    }
+
+    let uploadUser: File = state.userImage;
+    try {
+      uploadUser = await compressImageFile(state.userImage, {
+        maxDim: 1600,
+        quality: 0.88,
+        mimeType: "image/jpeg",
+        skipIfSmallerThan: 1.4 * 1024 * 1024,
+      });
+    } catch (err) {
+      console.warn("[tryon] user image compression failed", err);
+    }
+
+    let compositeBlob: Blob | null = pipelineResult?.previewBlob ?? null;
+    let maskBlob: Blob | null = pipelineResult?.maskBlob ?? null;
+    if (compositeBlob) {
+      try {
+        compositeBlob = await compressImageBlob(compositeBlob, {
+          maxDim: 1280,
+          quality: 0.92,
+          mimeType: "image/png",
+        });
+      } catch (err) {
+        console.warn("[tryon] composite resize failed", err);
+      }
+    }
+    if (maskBlob) {
+      try {
+        maskBlob = await compressImageBlob(maskBlob, {
+          maxDim: 1280,
+          quality: 0.92,
+          mimeType: "image/png",
+        });
+      } catch (err) {
+        console.warn("[tryon] mask resize failed", err);
+      }
+    }
+
+    const formData = new FormData();
+    formData.append("category", categoryId);
+    formData.append("userImage", uploadUser);
+    formData.append("renderModeRequest", "auto");
+    formData.append("handJewelryType", handJewelryType);
+    formData.append("ringFinger", ringFinger);
+
+    if (compositeBlob) {
+      formData.append(
+        "compositeImage",
+        new File([compositeBlob], "trywithai-composite.png", {
+          type: "image/png",
+        })
+      );
+      formData.append(
+        "warnings",
+        JSON.stringify(pipelineResult?.warnings ?? [])
+      );
+    }
+    if (maskBlob) {
+      formData.append(
+        "maskImage",
+        new File([maskBlob], "trywithai-mask.png", { type: "image/png" })
+      );
+    }
+    if (pipelineResult) {
+      formData.append(
+        "productHasAlpha",
+        pipelineResult.productHasAlpha ? "true" : "false"
+      );
+      formData.append("productMimeType", pipelineResult.productMimeType);
+      formData.append("productImageSource", pipelineResult.productImageSource);
+      if (pipelineResult.watchPlacement) {
+        formData.append(
+          "watchPlacement",
+          JSON.stringify(pipelineResult.watchPlacement)
+        );
+      }
+      if (typeof pipelineResult.edgeQuality === "number") {
+        formData.append("edgeQuality", String(pipelineResult.edgeQuality));
+      }
+    }
+
+    const urls = state.products
+      .filter((p) => p.type === "url")
+      .map((p) => p.value);
+    formData.append("productUrls", JSON.stringify(urls));
+
+    const cutoutUrls = state.products
+      .map((p) => p.cutoutUrl)
+      .filter((u): u is string => Boolean(u));
+    if (cutoutUrls.length > 0) {
+      formData.append("productCutoutUrls", JSON.stringify(cutoutUrls));
+    }
+
+    const productFiles = state.products
+      .filter((p) => p.type === "image" && p.file)
+      .map((p) => p.file as File);
+    for (const file of productFiles) {
+      let upload = file;
+      try {
+        upload = await compressImageFile(file, {
+          maxDim: 1400,
+          quality: 0.9,
+          mimeType: file.type === "image/png" ? "image/png" : "image/jpeg",
+          skipIfSmallerThan: 1.2 * 1024 * 1024,
+        });
+      } catch (err) {
+        console.warn("[tryon] product image compression failed", err);
+      }
+      formData.append("productImages", upload);
+    }
+
+    if (productTitle) formData.append("notes", `Article : ${productTitle}`);
+    if (merchantId) formData.append("merchantId", merchantId);
+
+    try {
+      const result = await safeFetchJson<
+        TryOnResponse & {
+          error?: string;
+          details?: string;
+          provider?: string;
+        }
+      >("/api/try-on", { method: "POST", body: formData });
+
+      if (result.nonJson || !result.data) {
+        throw new Error(
+          result.errorMessage ?? "Réponse inattendue du serveur."
+        );
+      }
+
+      const data = result.data;
+      const hasShowableResult = Boolean(data.resultUrl);
+      if (!result.ok && !hasShowableResult) {
+        throw new Error(
+          "Le rendu IA n’a pas pu être généré. Veuillez réessayer ou importer une autre photo."
+        );
+      }
+
+      dispatch({
+        type: "SET_RESULT",
+        resultUrl: data.resultUrl,
+        meta: {
+          provider: data.provider,
+          model: data.model,
+          mock: data.mock,
+          renderMode: data.renderMode,
+          qualityStatus: data.qualityStatus,
+          warnings: data.warnings,
+          maskUsed: data.debug?.maskUsed,
+          usedLocalRenderer: data.debug?.usedLocalRenderer,
+          qualityChecks: data.qualityChecks,
+          productLocked: data.productLocked ?? data.debug?.productLocked,
+          fallbackUsed: data.debug?.fallbackUsed,
+          autoMaskGenerated: data.debug?.autoMaskGenerated,
+        },
+      });
+
+      const opinion = generateProductOpinion({
+        category: categoryId,
+        productTitle: state.products[0]?.title ?? productTitle ?? undefined,
+        warnings: data.warnings,
+        qualityStatus: data.qualityStatus,
+        fallbackUsed: data.debug?.fallbackUsed,
+      });
+      assistant.ready({
+        resultUrl: data.resultUrl,
+        opinion,
+        fallbackUsed: data.debug?.fallbackUsed,
+        qualityStatus: data.qualityStatus,
+      });
+    } catch (err) {
+      const msg =
+        err instanceof Error
+          ? err.message
+          : "Une erreur est survenue. Veuillez réessayer.";
+      dispatch({ type: "SET_ERROR", error: msg });
+      dispatch({ type: "SET_STATUS", status: "error" });
+      assistant.error(msg);
+    }
+  }, [
+    state,
+    categoryId,
+    consent,
+    productTitle,
+    merchantId,
+    handJewelryType,
+    ringFinger,
+    assistant,
+  ]);
+
+  // ── Bubble action handlers ────────────────────────────────────────
+  const handleAddToCart = useCallback(() => {
+    if (!assistant.state.resultUrl) return;
+    assistant.cartStatus("adding");
+    postAddToCart({
+      jobId: assistant.state.jobId,
+      resultUrl: assistant.state.resultUrl,
+      productTitle: assistant.state.productTitle,
+    });
+    window.setTimeout(() => {
+      if (assistant.state.cartStatus === "adding") {
+        assistant.cartStatus("error");
+      }
+    }, 8000);
+  }, [assistant]);
+
+  const handleTryAnother = useCallback(() => {
+    // Reset products + result but preserve the customer photo so
+    // they don't have to re-upload.
+    dispatch({ type: "RESET_PRODUCT_KEEP_PHOTO" });
+    setConsent(true); // Already agreed once
+    assistant.pushMessage(
+      "Choisissez un autre modèle, je garde votre photo pour aller plus vite.",
+      "info"
+    );
+    // Reset the assistant status so the compose view comes back.
+    assistant.boot({
+      category: categoryId,
+      productTitle: undefined,
+      productImage: undefined,
+    });
+  }, [assistant, categoryId]);
+
+  const handleOpenLightbox = useCallback(() => {
+    if (assistant.state.resultUrl && onOpenLightbox) {
+      onOpenLightbox(assistant.state.resultUrl);
+    }
+  }, [assistant.state.resultUrl, onOpenLightbox]);
+
+  // ── Compose view (rendered inside the bubble while status=idle) ──
+  const composeNode = useMemo(
+    () => (
+      <div className="space-y-3">
+        {productImage && (
+          <div className="flex items-center gap-3 rounded-2xl border border-gold/40 bg-gradient-to-r from-gold/10 to-transparent p-3">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={productImage}
+              alt={productTitle ?? "Article"}
+              className="h-12 w-12 shrink-0 rounded-lg bg-cream-dark object-cover ring-1 ring-ink/10"
+            />
+            <div className="min-w-0 flex-1">
+              <span className="inline-flex items-center gap-1 rounded-md bg-bordeaux/10 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-bordeaux">
+                Article boutique
+              </span>
+              <p className="mt-0.5 truncate text-xs font-medium text-ink">
+                {productTitle ?? "Article détecté"}
+              </p>
+            </div>
+          </div>
+        )}
+
+        {/* Category picker — compact, inline. */}
+        <div className="flex items-center gap-2 rounded-xl bg-cream-light px-3 py-2 ring-1 ring-bordeaux/10">
+          <Sparkles className="h-3.5 w-3.5 shrink-0 text-bordeaux" aria-hidden />
+          <span className="truncate text-xs font-medium text-ink">
+            {category.label}
+          </span>
+          <button
+            type="button"
+            onClick={() => setPickerOpen((v) => !v)}
+            className="ml-auto inline-flex items-center gap-1 rounded-md bg-white px-2 py-1 text-[10px] font-semibold text-bordeaux ring-1 ring-bordeaux/15"
+            aria-expanded={pickerOpen}
+          >
+            <Settings2 className="h-3 w-3" aria-hidden />
+            Changer
+          </button>
+        </div>
+        {pickerOpen && (
+          <div className="grid grid-cols-3 gap-1.5">
+            {CATEGORIES.map((c) => {
+              const isActive = c.id === categoryId;
+              return (
+                <button
+                  key={c.id}
+                  type="button"
+                  onClick={() => {
+                    setCategoryId(c.id);
+                    setPickerOpen(false);
+                  }}
+                  className={cn(
+                    "rounded-lg border px-2 py-2 text-[10px] font-medium leading-tight",
+                    isActive
+                      ? "border-bordeaux bg-bordeaux/5 text-bordeaux"
+                      : "border-ink/10 bg-white text-ink hover:border-bordeaux/30"
+                  )}
+                >
+                  {c.label.split(" / ")[0]}
+                </button>
+              );
+            })}
+          </div>
+        )}
+
+        {/* Single-line instruction */}
+        <div className="flex items-start gap-2 rounded-xl bg-bordeaux/5 px-3 py-2 text-[11px] leading-snug text-ink">
+          <Camera className="mt-0.5 h-3.5 w-3.5 shrink-0 text-bordeaux" aria-hidden />
+          <p>{category.photoSingleInstruction}</p>
+        </div>
+
+        {/* Photo uploader */}
+        <ImageUploader
+          previewUrl={state.userImagePreview}
+          onImageSelect={(file, previewUrl) =>
+            dispatch({ type: "SET_USER_IMAGE", file, previewUrl })
+          }
+          onImageClear={() => dispatch({ type: "CLEAR_USER_IMAGE" })}
+          error={state.error}
+          preferredFacingMode={
+            categoryId === "glasses" ? "user" : "environment"
+          }
+        />
+
+        {categoryId === "hand-jewelry" && (
+          <HandJewelryOptions
+            type={handJewelryType}
+            onTypeChange={setHandJewelryType}
+            finger={ringFinger}
+            onFingerChange={setRingFinger}
+          />
+        )}
+
+        {/* Compact consent */}
+        <label className="flex cursor-pointer items-start gap-2 rounded-xl bg-cream-light px-3 py-2 text-[11px] leading-snug text-ink-muted ring-1 ring-bordeaux/10">
+          <input
+            type="checkbox"
+            checked={consent}
+            onChange={(e) => setConsent(e.target.checked)}
+            className="mt-0.5 h-4 w-4 shrink-0 rounded border-bordeaux/30 text-bordeaux focus:ring-bordeaux"
+          />
+          <span>
+            <ShieldCheck className="mr-1 inline-block h-3 w-3 text-bordeaux" aria-hidden />
+            J’accepte que ma photo soit utilisée le temps de générer l’aperçu IA.
+            <span className="block text-[10px] text-ink-muted/70">
+              Aucune sauvegarde permanente.
+            </span>
+          </span>
+        </label>
+
+        <LaunchButton onClick={submit} disabled={!consent || !state.userImage} />
+
+        {state.error && (
+          <p className="text-[11px] text-bordeaux" role="alert">
+            {state.error}
+          </p>
+        )}
+      </div>
+    ),
+    [
+      productImage,
+      productTitle,
+      category.label,
+      category.photoSingleInstruction,
+      pickerOpen,
+      categoryId,
+      state.userImagePreview,
+      state.error,
+      state.userImage,
+      handJewelryType,
+      ringFinger,
+      consent,
+      submit,
+    ]
+  );
+
+  return (
+    <TryOnAssistantBubble
+      state={assistant.state}
+      composeNode={composeNode}
+      resultImageUrl={assistant.state.resultUrl}
+      onMinimize={assistant.minimize}
+      onRestore={assistant.restore}
+      onOpenResult={handleOpenLightbox}
+      onTryAnother={handleTryAnother}
+      onAddToCart={handleAddToCart}
+      onClose={onClose}
+    />
+  );
+}
