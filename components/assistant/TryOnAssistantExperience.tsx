@@ -13,6 +13,7 @@ import type {
   FingerId,
   HandJewelryType,
   ProductItem,
+  TryOnHistoryEntry,
   TryOnResponse,
 } from "@/types";
 import { CATEGORIES, getCategory } from "@/lib/categories";
@@ -28,6 +29,7 @@ import { HandJewelryOptions } from "../HandJewelryOptions";
 import { LaunchButton } from "../LaunchButton";
 import { useTryOnAssistant } from "./useTryOnAssistant";
 import { TryOnAssistantBubble } from "./TryOnAssistantBubble";
+import { AssistantLightbox } from "./AssistantLightbox";
 import { generateProductOpinion } from "@/lib/productOpinion";
 import { postAddToCart } from "@/lib/embedMessaging";
 import { nextPaint } from "@/lib/nextPaint";
@@ -107,16 +109,39 @@ export function TryOnAssistantExperience({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Listen for parent cart confirmations / errors.
+  // Listen for parent cart confirmations / errors. The host echoes
+  // back the entryId we sent with the add-to-cart so we can update
+  // the right card; we fall back to the most recent entry if the
+  // host omits it (legacy embed scripts). The host emits messages
+  // shaped as `{ type, payload, source: "trywithai-host" }`.
   useEffect(() => {
     if (typeof window === "undefined") return;
     const onMessage = (e: MessageEvent) => {
       if (!e.data || typeof e.data !== "object") return;
-      const msg = e.data as { type?: string };
+      const msg = e.data as {
+        type?: string;
+        entryId?: string;
+        payload?: { entryId?: string };
+      };
+      const entryIdFromPayload =
+        msg.payload && typeof msg.payload === "object"
+          ? msg.payload.entryId
+          : undefined;
+      const fallbackId =
+        assistant.state.history[assistant.state.history.length - 1]?.id;
+      const targetId = msg.entryId ?? entryIdFromPayload ?? fallbackId;
       if (msg.type === "TRYWITHAI_CART_ADDED") {
-        assistant.cartStatus("added");
+        if (targetId) {
+          assistant.cartStatusForEntry(targetId, "added");
+        } else {
+          assistant.cartStatus("added");
+        }
       } else if (msg.type === "TRYWITHAI_CART_ERROR") {
-        assistant.cartStatus("error");
+        if (targetId) {
+          assistant.cartStatusForEntry(targetId, "error");
+        } else {
+          assistant.cartStatus("error");
+        }
       }
     };
     window.addEventListener("message", onMessage);
@@ -374,37 +399,48 @@ export function TryOnAssistantExperience({
     assistant,
   ]);
 
-  // ── Bubble action handlers ────────────────────────────────────────
-  const handleAddToCart = useCallback(() => {
-    if (!assistant.state.resultUrl) return;
-    assistant.cartStatus("adding");
-    postAddToCart({
-      jobId: assistant.state.jobId,
-      resultUrl: assistant.state.resultUrl,
-      productTitle: assistant.state.productTitle,
-    });
-    window.setTimeout(() => {
-      if (assistant.state.cartStatus === "adding") {
-        assistant.cartStatus("error");
-      }
-    }, 8000);
-  }, [assistant]);
+  // ── Per-card action handlers ──────────────────────────────────────
+  // Each history card carries its own buttons; clicks dispatch using
+  // the card's entry.id so only that card's state updates.
+  const [lightboxEntry, setLightboxEntry] = useState<TryOnHistoryEntry | null>(
+    null
+  );
+
+  const handleCardAddToCart = useCallback(
+    (entry: TryOnHistoryEntry) => {
+      assistant.cartStatusForEntry(entry.id, "adding");
+      postAddToCart({
+        jobId: entry.jobId,
+        resultUrl: entry.resultUrl,
+        productTitle: entry.productTitle,
+        // Pass the entry id through so the host can echo it back
+        // and we update the right card on reply.
+        entryId: entry.id,
+      });
+      window.setTimeout(() => {
+        const stillAdding = assistant.state.history.find(
+          (e) => e.id === entry.id
+        )?.cartStatus;
+        if (stillAdding === "adding") {
+          assistant.cartStatusForEntry(entry.id, "error");
+        }
+      }, 8000);
+    },
+    [assistant]
+  );
+
+  const handleCardAgrandir = useCallback((entry: TryOnHistoryEntry) => {
+    setLightboxEntry(entry);
+    // Also call the host hook (no-op in bubble-mode) for backwards
+    // compatibility with consumers that expect a window.open.
+    onOpenLightbox?.(entry.resultUrl);
+  }, [onOpenLightbox]);
 
   const handleTryAnother = useCallback(() => {
-    // Reset products + result but preserve the customer photo so
-    // they don't have to re-upload. The assistant.newTry() keeps the
-    // FULL conversation history visible — only the in-progress job
-    // and the current result are dropped.
     dispatch({ type: "RESET_PRODUCT_KEEP_PHOTO" });
     setConsent(true);
     assistant.newTry();
   }, [assistant]);
-
-  const handleOpenLightbox = useCallback(() => {
-    if (assistant.state.resultUrl && onOpenLightbox) {
-      onOpenLightbox(assistant.state.resultUrl);
-    }
-  }, [assistant.state.resultUrl, onOpenLightbox]);
 
   // ── Compose view (rendered inside the bubble while status=idle) ──
   const composeNode = useMemo(
@@ -547,20 +583,27 @@ export function TryOnAssistantExperience({
     // and the persisted sessionStorage payload so the next visit
     // starts fresh.
     assistant.clearSession();
+    setLightboxEntry(null);
     if (onClose) onClose();
   }, [assistant, onClose]);
 
   return (
-    <TryOnAssistantBubble
-      state={assistant.state}
-      composeNode={composeNode}
-      resultImageUrl={assistant.state.resultUrl}
-      onMinimize={assistant.minimize}
-      onRestore={assistant.restore}
-      onOpenResult={handleOpenLightbox}
-      onTryAnother={handleTryAnother}
-      onAddToCart={handleAddToCart}
-      onClose={handleClose}
-    />
+    <>
+      <TryOnAssistantBubble
+        state={assistant.state}
+        composeNode={composeNode}
+        onMinimize={assistant.minimize}
+        onRestore={assistant.restore}
+        onTryAnother={handleTryAnother}
+        onCardAddToCart={handleCardAddToCart}
+        onCardAgrandir={handleCardAgrandir}
+        onClose={handleClose}
+      />
+      <AssistantLightbox
+        imageUrl={lightboxEntry?.resultUrl ?? null}
+        productTitle={lightboxEntry?.productTitle ?? undefined}
+        onClose={() => setLightboxEntry(null)}
+      />
+    </>
   );
 }

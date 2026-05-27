@@ -66,6 +66,14 @@ type Action =
       status: NonNullable<TryOnAssistantState["cartStatus"]>;
     }
   | {
+      // Per-card cart status update — when the customer has multiple
+      // history entries and adds one to the cart, only that entry's
+      // status should change.
+      type: "CART_STATUS_FOR_ENTRY";
+      entryId: string;
+      status: NonNullable<TryOnAssistantState["cartStatus"]>;
+    }
+  | {
       // Soft reset for "Try another model" — clears the result and
       // pending job, but PRESERVES the whole conversation history so
       // the customer sees a continuous chat thread until they
@@ -102,6 +110,7 @@ export const INITIAL: TryOnAssistantState = {
   progress: 0,
   messages: [],
   cartStatus: "idle",
+  history: [],
 };
 
 // Exported so the reducer is unit-testable in isolation.
@@ -133,17 +142,20 @@ export function reducer(
         minimized: false,
         status: wasMidJob ? "idle" : stored.status,
         progress: wasMidJob ? 0 : stored.progress,
+        // Fallback if older payloads predate the history field.
+        history: stored.history ?? [],
       };
     }
     case "BOOT": {
-      // Soft init: bubble becomes visible with the compose view, but
-      // we PRESERVE the entire conversation history so refreshes /
-      // navigations don't wipe the chat thread. Only the explicit
-      // close (X button) clears the conversation.
+      // Soft init: bubble becomes visible. The HISTORY feed of every
+      // article the customer already tried is ALWAYS preserved so
+      // they can scroll up and see them, no matter which PDP they
+      // navigate to. Only the X close button wipes the history.
       //
-      // When the customer navigates to a *different* product page,
-      // we drop the previous result so the compose view appears
-      // again for the new product. Messages stay visible above.
+      // When the customer navigates to a different product page, we
+      // bring back the compose view (status → idle) for the new
+      // product. The previous history cards keep their cart/share
+      // controls intact above.
       const productChanged =
         (Boolean(action.productUrl) &&
           action.productUrl !== state.productUrl) ||
@@ -164,6 +176,8 @@ export function reducer(
         jobId: productChanged ? undefined : state.jobId,
         canAddToCart: state.canAddToCart ?? true,
         cartStatus: productChanged ? "idle" : (state.cartStatus ?? "idle"),
+        // History is NEVER cleared by BOOT — only by RESET/clearSession.
+        history: state.history ?? [],
       };
     }
     case "START": {
@@ -206,16 +220,23 @@ export function reducer(
     case "RESTORE":
       return { ...state, minimized: false };
     case "READY": {
-      const successMessage = makeMessage(
-        "assistant",
-        "Votre simulation est prête ✨",
-        "success"
-      );
-      const opinionMessage = makeMessage(
-        "assistant",
-        action.opinion,
-        "opinion"
-      );
+      // Snapshot the just-finished try-on into the history feed so
+      // the customer can scroll up later and see every article they
+      // tried. The card carries its own opinion + share/cart state.
+      const entry: NonNullable<TryOnAssistantState["history"]>[number] = {
+        id: `entry_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+        jobId: state.jobId ?? `job_${Date.now()}`,
+        category: state.category ?? "watch",
+        productTitle: state.productTitle,
+        productUrl: state.productUrl,
+        productImage: state.productImage,
+        resultUrl: action.resultUrl,
+        shareUrl: action.shareUrl,
+        opinion: action.opinion,
+        fallbackUsed: action.fallbackUsed,
+        cartStatus: "idle",
+        createdAt: Date.now(),
+      };
       return {
         ...state,
         status: action.fallbackUsed ? "fallback_ready" : "ready",
@@ -223,7 +244,9 @@ export function reducer(
         resultUrl: action.resultUrl,
         shareUrl: action.shareUrl,
         fallbackUsed: action.fallbackUsed,
-        messages: [...state.messages, successMessage, opinionMessage],
+        history: [...state.history, entry],
+        // No more "Votre simulation est prête ✨" + opinion chat
+        // bubbles — the card itself surfaces those.
       };
     }
     case "ERROR": {
@@ -239,28 +262,38 @@ export function reducer(
       };
     }
     case "CART_STATUS": {
-      // Append a short confirmation/error message when relevant.
-      let nextMessages = state.messages;
-      if (action.status === "added") {
-        nextMessages = [
-          ...state.messages,
-          makeMessage(
-            "assistant",
-            "Article ajouté au panier — vous pouvez continuer vos achats.",
-            "success"
-          ),
-        ];
-      } else if (action.status === "error") {
-        nextMessages = [
-          ...state.messages,
-          makeMessage(
-            "assistant",
-            "Je n’ai pas pu ajouter l’article au panier. Essayez depuis la fiche produit.",
-            "warning"
-          ),
-        ];
+      // Backwards-compatible global cart status: apply to the LAST
+      // history entry (the one whose buttons sit at the bottom of
+      // the bubble) AND to the legacy cartStatus field used by the
+      // minimised pill.
+      let nextHistory = state.history;
+      if (state.history.length > 0) {
+        nextHistory = state.history.map((e, i) =>
+          i === state.history.length - 1
+            ? { ...e, cartStatus: action.status }
+            : e
+        );
       }
-      return { ...state, cartStatus: action.status, messages: nextMessages };
+      return {
+        ...state,
+        cartStatus: action.status,
+        history: nextHistory,
+      };
+    }
+    case "CART_STATUS_FOR_ENTRY": {
+      const nextHistory = state.history.map((e) =>
+        e.id === action.entryId ? { ...e, cartStatus: action.status } : e
+      );
+      // Sync the legacy field too when it's the latest entry — keeps
+      // the minimised pill consistent.
+      const isLatest =
+        state.history.length > 0 &&
+        state.history[state.history.length - 1].id === action.entryId;
+      return {
+        ...state,
+        history: nextHistory,
+        cartStatus: isLatest ? action.status : state.cartStatus,
+      };
     }
     case "NEW_TRY": {
       // Reset just enough to bring the compose view back; the entire
@@ -489,6 +522,21 @@ export function useTryOnAssistant() {
     []
   );
 
+  /**
+   * Per-card cart status update. Use when the customer triggers an
+   * add-to-cart on an older history card — only that card's status
+   * changes.
+   */
+  const cartStatusForEntry = useCallback(
+    (
+      entryId: string,
+      status: NonNullable<TryOnAssistantState["cartStatus"]>
+    ) => {
+      dispatch({ type: "CART_STATUS_FOR_ENTRY", entryId, status });
+    },
+    []
+  );
+
   const pushMessage = useCallback(
     (
       text: string,
@@ -538,6 +586,7 @@ export function useTryOnAssistant() {
     minimize,
     restore,
     cartStatus,
+    cartStatusForEntry,
     pushMessage,
     reset,
     newTry,

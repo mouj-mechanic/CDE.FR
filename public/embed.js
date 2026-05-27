@@ -753,9 +753,16 @@
   }
 
   function handleAddToCart(payload) {
+    // Echo back the entryId the iframe sent so the bubble can update
+    // the correct history card (the customer may have multiple
+    // try-ons visible at once now).
+    var entryId = (payload && payload.entryId) || "";
     var variantId = currentProductVariantId || detectVariantId();
     if (!variantId) {
-      replyToIframe("TRYWITHAI_CART_ERROR", { message: "no_variant_id" });
+      replyToIframe("TRYWITHAI_CART_ERROR", {
+        message: "no_variant_id",
+        entryId: entryId,
+      });
       return;
     }
     var root =
@@ -789,7 +796,8 @@
           return res.json();
         })
         .then(function (data) {
-          replyToIframe("TRYWITHAI_CART_ADDED", data || {});
+          var reply = Object.assign({}, data || {}, { entryId: entryId });
+          replyToIframe("TRYWITHAI_CART_ADDED", reply);
           try {
             document.dispatchEvent(
               new CustomEvent("trywithai:cart-added", { detail: data })
@@ -799,10 +807,16 @@
           } catch (_) {}
         })
         .catch(function () {
-          replyToIframe("TRYWITHAI_CART_ERROR", { message: "cart_request_failed" });
+          replyToIframe("TRYWITHAI_CART_ERROR", {
+            message: "cart_request_failed",
+            entryId: entryId,
+          });
         });
     } catch (e) {
-      replyToIframe("TRYWITHAI_CART_ERROR", { message: "cart_throw" });
+      replyToIframe("TRYWITHAI_CART_ERROR", {
+        message: "cart_throw",
+        entryId: entryId,
+      });
     }
   }
 

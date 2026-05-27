@@ -371,23 +371,56 @@ export interface TryOnAssistantMessage {
   kind?: "info" | "progress" | "success" | "warning" | "error" | "opinion";
 }
 
+/**
+ * A single completed try-on. The bubble keeps an array of these so
+ * the customer can scroll up and see every article they tried during
+ * the visit — each card has its own share / add-to-cart / agrandir
+ * controls.
+ */
+export interface TryOnHistoryEntry {
+  id: string;
+  jobId: string;
+  category: CategoryId;
+  productTitle?: string;
+  productUrl?: string;
+  productImage?: string;
+  resultUrl: string;
+  shareUrl?: string;
+  opinion: string;
+  fallbackUsed?: boolean;
+  cartStatus: "idle" | "adding" | "added" | "error";
+  createdAt: number;
+}
+
 export interface TryOnAssistantState {
   active: boolean;
   minimized: boolean;
   status: TryOnAssistantStatus;
   progress: number;
   messages: TryOnAssistantMessage[];
+  /**
+   * @deprecated The latest entry lives in `history[history.length-1]`.
+   * Kept here for backward compatibility with older persisted state
+   * and minimised-pill behaviour.
+   */
   resultUrl?: string;
   productTitle?: string;
   productUrl?: string;
   productImage?: string;
   category?: CategoryId;
   canAddToCart?: boolean;
+  /** Cart status of the CURRENT in-flight job (per-card lives on each entry). */
   cartStatus?: "idle" | "adding" | "added" | "error";
   shareUrl?: string;
   fallbackUsed?: boolean;
   /** Stable identifier for the running job — emitted in postMessages. */
   jobId?: string;
+  /**
+   * Chronological list of completed try-ons. Newest at the END so
+   * the bubble can render them in chat-style order with the latest
+   * pinned at the bottom and older ones revealed by scrolling up.
+   */
+  history: TryOnHistoryEntry[];
 }
 
 export type SharePlatform =

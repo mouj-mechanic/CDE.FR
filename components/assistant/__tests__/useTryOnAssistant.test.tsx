@@ -159,6 +159,171 @@ describe("assistant reducer — conversation history is preserved", () => {
     expect(next.active).toBe(false);
     expect(next.messages).toHaveLength(0);
     expect(next.resultUrl).toBeUndefined();
+    expect(next.history).toHaveLength(0);
+  });
+});
+
+describe("assistant reducer — try-on history across PDPs", () => {
+  it("READY appends a new history entry with product context", () => {
+    const seeded: TryOnAssistantState = {
+      ...INITIAL,
+      active: true,
+      jobId: "job_1",
+      category: "watch",
+      productTitle: "Rolex GMT",
+      productImage: "https://example.com/rolex.jpg",
+      status: "generating",
+    };
+
+    const next = reducer(seeded, {
+      type: "READY",
+      resultUrl: "https://cdn.example.com/r1.png",
+      opinion: "Très lisible et raffinée.",
+      shareUrl: "https://share.example.com/1",
+    });
+
+    expect(next.history).toHaveLength(1);
+    expect(next.history[0].resultUrl).toBe("https://cdn.example.com/r1.png");
+    expect(next.history[0].productTitle).toBe("Rolex GMT");
+    expect(next.history[0].productImage).toBe("https://example.com/rolex.jpg");
+    expect(next.history[0].category).toBe("watch");
+    expect(next.history[0].opinion).toBe("Très lisible et raffinée.");
+    expect(next.history[0].cartStatus).toBe("idle");
+  });
+
+  it("BOOT to a different product preserves the previous history cards", () => {
+    const seeded: TryOnAssistantState = {
+      ...INITIAL,
+      active: true,
+      productUrl: "https://shop.com/A",
+      productImage: "https://shop.com/A.jpg",
+      history: [
+        {
+          id: "entry_A",
+          jobId: "job_A",
+          category: "watch",
+          productTitle: "Watch A",
+          productImage: "https://shop.com/A.jpg",
+          resultUrl: "https://cdn.example.com/A.png",
+          opinion: "A is great",
+          cartStatus: "idle",
+          createdAt: 1000,
+        },
+      ],
+    };
+
+    const next = reducer(seeded, {
+      type: "BOOT",
+      category: "glasses",
+      productUrl: "https://shop.com/B",
+      productImage: "https://shop.com/B.jpg",
+    });
+
+    // History remains intact across PDPs.
+    expect(next.history).toHaveLength(1);
+    expect(next.history[0].productTitle).toBe("Watch A");
+    // Current PDP context is updated.
+    expect(next.productImage).toBe("https://shop.com/B.jpg");
+    expect(next.status).toBe("idle");
+  });
+
+  it("Two consecutive try-ons appear as two cards (oldest first)", () => {
+    let state: TryOnAssistantState = {
+      ...INITIAL,
+      active: true,
+      category: "watch",
+      productTitle: "Watch A",
+      productImage: "https://shop.com/A.jpg",
+      jobId: "job_A",
+    };
+
+    state = reducer(state, {
+      type: "READY",
+      resultUrl: "https://cdn.example.com/A.png",
+      opinion: "A!",
+    });
+
+    // Switch to a different product and finish a 2nd try-on.
+    state = reducer(state, {
+      type: "BOOT",
+      category: "glasses",
+      productTitle: "Glasses B",
+      productImage: "https://shop.com/B.jpg",
+    });
+    state = reducer(state, {
+      type: "START",
+      jobId: "job_B",
+      category: "glasses",
+      productTitle: "Glasses B",
+      productImage: "https://shop.com/B.jpg",
+      message: "Je prépare…",
+    });
+    state = reducer(state, {
+      type: "READY",
+      resultUrl: "https://cdn.example.com/B.png",
+      opinion: "B!",
+    });
+
+    expect(state.history).toHaveLength(2);
+    expect(state.history[0].productTitle).toBe("Watch A");
+    expect(state.history[1].productTitle).toBe("Glasses B");
+  });
+
+  it("CART_STATUS_FOR_ENTRY updates only the matching card", () => {
+    const seeded: TryOnAssistantState = {
+      ...INITIAL,
+      active: true,
+      history: [
+        {
+          id: "e1",
+          jobId: "j1",
+          category: "watch",
+          resultUrl: "r1",
+          opinion: "o1",
+          cartStatus: "idle",
+          createdAt: 1,
+        },
+        {
+          id: "e2",
+          jobId: "j2",
+          category: "glasses",
+          resultUrl: "r2",
+          opinion: "o2",
+          cartStatus: "idle",
+          createdAt: 2,
+        },
+      ],
+    };
+
+    const next = reducer(seeded, {
+      type: "CART_STATUS_FOR_ENTRY",
+      entryId: "e1",
+      status: "added",
+    });
+
+    expect(next.history[0].cartStatus).toBe("added");
+    expect(next.history[1].cartStatus).toBe("idle");
+  });
+
+  it("clearSession wipes the history along with the rest of the state", () => {
+    const seeded: TryOnAssistantState = {
+      ...INITIAL,
+      active: true,
+      history: [
+        {
+          id: "e1",
+          jobId: "j1",
+          category: "watch",
+          resultUrl: "r1",
+          opinion: "o1",
+          cartStatus: "idle",
+          createdAt: 1,
+        },
+      ],
+    };
+
+    const next = reducer(seeded, { type: "RESET" });
+    expect(next.history).toHaveLength(0);
   });
 });
 

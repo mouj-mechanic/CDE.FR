@@ -64,6 +64,13 @@ export interface AddToCartPayload {
   jobId?: string;
   resultUrl?: string;
   productTitle?: string;
+  /**
+   * Stable identifier of the bubble's history entry being added.
+   * The host MUST echo it back in TRYWITHAI_CART_ADDED /
+   * TRYWITHAI_CART_ERROR so the iframe knows which card to update —
+   * critical now that the bubble holds multiple try-on cards at once.
+   */
+  entryId?: string;
 }
 
 export interface SharePayload {
